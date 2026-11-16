@@ -653,9 +653,10 @@ This section describes the vouchfx repository's own pipeline in `.github/workflo
 `.github/workflows/dotnet-compatibility.yml`, not the reusable workflow and GitLab template that
 consumers call.
 
-Each pull request to `main` runs the build and unit tests (Linux and Windows), the memory-leak gate, the
-Docker-free .NET 8, 9 and 10 compatibility matrix, the .NET 9 and 10 memory gate, the native TLS
-lanes, the documentation build and the workflow contract. The Docker integration suites (the
+Each pull request to `main` runs the build and unit tests (Linux and Windows) on the .NET 10 SDK, the
+memory-leak gate, the Docker-free .NET 10 compatibility lane, the .NET 11 roll-forward lane (the packed
+tool started with only a .NET 11 runtime present), the .NET 10 provider-closure memory gate, the native
+TLS lane, the documentation build and the workflow contract. The Docker integration suites (the
 `integration` job and the `docker` matrix) do not run on pull requests or pushes. They run daily on
 `main`, scheduled for 06:17 UTC in `build.yml` and 06:47 UTC in `dotnet-compatibility.yml`, and on
 manual dispatch from any branch. A Docker-test failure therefore surfaces on the next daily run, not
@@ -665,7 +666,8 @@ them from the Actions tab if the daily runs stop.
 
 To run them on a branch before merging, open the Actions tab, choose the `CI` or `.NET compatibility`
 workflow, select **Run workflow** and pick the branch. The two workflows are separate, so run both to
-cover .NET 8 (`CI`) and .NET 9 and 10 (`.NET compatibility`). Manual dispatch needs write access to
+cover the Docker suites of each: `CI` runs them on the .NET 10 SDK, and `.NET compatibility` runs them
+again with only the .NET 10 SDK and runtime installed. Manual dispatch needs write access to
 this repository: a fork contributor runs the workflows from their own fork's Actions tab (once
 Actions is enabled there) or runs the `requires=docker` tests locally.
 

@@ -216,7 +216,7 @@ source "$1"
         badge_concurrency = data["jobs"]["coverage-badge"]["concurrency"]
         self.assertEqual("coverage-badge-main", badge_concurrency["group"])
         self.assertIs(False, badge_concurrency["cancel-in-progress"])
-        for per_pr_job in ["compatibility", "memory", "tls"]:
+        for per_pr_job in ["compatibility", "roll-forward", "memory", "tls"]:
             with self.subTest(job=per_pr_job):
                 self.assertNotIn("if", compatibility["jobs"][per_pr_job])
         self.assertNotIn("if", step(PULL_NAME, data))

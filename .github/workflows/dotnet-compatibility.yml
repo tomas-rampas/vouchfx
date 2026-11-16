@@ -10,9 +10,14 @@
 # SDK and shared frameworks and runs the installed tool with only a newer major
 # runtime present. It is a runtime-only lane: the solution's test hosts cannot be
 # run on the newer runtime there, because `dotnet test` needs the .NET 10 SDK and
-# that SDK needs the .NET 10 runtime. The existing CI retains Docker and release
-# checks; this workflow exercises the source and Docker-free runtime paths in
-# isolation.
+# that SDK needs the .NET 10 runtime.
+#
+# Layout: the Docker-free compatibility lane, the roll-forward lane, the memory
+# gate and the native TLS lane run on every pull request to `main` and every
+# push to `main`; the Docker suites on .NET 10 run daily and on manual dispatch
+# only. build.yml retains the other Docker lane, the release checks and the
+# remaining per-PR gates; this workflow exercises the source and Docker-free
+# runtime paths in isolation.
 name: .NET compatibility
 
 on:
@@ -264,9 +269,12 @@ jobs:
             | tee "$RUNNER_TEMP/compatibility-runtime.log"
           grep -F "RUNTIME=$expected_major." "$RUNNER_TEMP/compatibility-runtime.log"
 
-  # build.yml keeps its existing CI lanes and check names. These lanes exercise
-  # all Docker tests and the permanent memory gate with only the selected SDK
-  # and runtime installed.
+  # build.yml keeps its existing CI lanes and check names. The `docker` lane
+  # exercises all Docker tests with only the selected SDK and runtime installed.
+  # It no longer runs on pull requests or pushes: daily on main via the schedule
+  # and on demand via workflow_dispatch on any branch, so a failure is found on
+  # the next daily run, not before merge. The `memory` lane below still runs on
+  # every pull request and push.
   docker:
     name: Docker integration .NET ${{ matrix.dotnet }}
     runs-on: ubuntu-22.04
