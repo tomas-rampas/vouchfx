@@ -19,7 +19,7 @@ A step provider is a **compile-time, source-level plugin**. The CLI supports tru
 provider directory loading before registry freeze, alongside bundled project references.
 Provider code executes in the default assembly context without sandboxing. You add a project, reference `Vouchfx.Sdk`,
 implement the contract interfaces, and mark your provider class `[StepProvider]`. Target
-`net8.0`, the frozen contract target framework: `vouchfx provider install` accepts only
+`net8.0`, the frozen contract target framework: `vouchfx providers install` accepts only
 `net8.0` assets, and a `net8.0` provider loads into the current .NET 10 CLI. The
 engine's reflective `StepKindRegistry` (frozen at startup) discovers it.
 

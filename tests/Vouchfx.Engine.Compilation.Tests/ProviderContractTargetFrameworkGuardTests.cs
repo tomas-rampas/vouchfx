@@ -12,7 +12,7 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// <remarks>
 /// <para>
 /// External providers built against the frozen v1 contract target <c>net8.0</c>, and
-/// <c>vouchfx provider install</c> selects <c>net8.0</c> assets. The five published contract
+/// <c>vouchfx providers install</c> selects <c>net8.0</c> assets. The five published contract
 /// libraries (<c>Vouchfx.Sdk</c>, <c>Vouchfx.Sdk.Testing</c>, <c>Vouchfx.Engine.Abstractions</c>,
 /// <c>.Authoring</c> and <c>.Compilation</c>) therefore keep a <c>net8.0</c> asset, and the two
 /// provider templates (<c>Example.Steps.Echo</c> and <c>Example.Steps.Hello</c>) build a provider
@@ -46,7 +46,7 @@ public sealed class ProviderContractTargetFrameworkGuardTests
     private const string ContractPropertyReference = "$(" + ContractPropertyName + ")";
 
     private const string WhyHint =
-        "Providers built against the frozen v1 contract target net8.0, and `vouchfx provider install` "
+        "Providers built against the frozen v1 contract target net8.0, and `vouchfx providers install` "
         + "selects net8.0 assets, so the provider contract libraries and the example provider templates "
         + "must keep building for net8.0 for the whole v1.x series.";
 

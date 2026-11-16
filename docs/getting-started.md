@@ -46,7 +46,7 @@ The runtime used by vouchfx and the runtime used by your application are separat
 | Run a global tool built from current source | A .NET 10 runtime, or a newer major runtime when .NET 10 is absent. A machine with only .NET 8 or 9 cannot run it. Older published packages retain their original runtime policy. |
 | Run a self-contained archive or native installer | Uses its bundled runtime; no machine-wide .NET installation is required for the CLI. |
 | Build vouchfx from source | SDK 10.0.100 or a later 10.0 feature band, as `global.json` selects. |
-| Build an external provider | Reference `Vouchfx.Sdk` and target `net8.0`, the frozen contract target framework. `vouchfx provider install` accepts only `net8.0` assets, and a `net8.0` provider loads into the .NET 10 CLI. A new class library defaults to the SDK's own target framework, so set `net8.0` explicitly. |
+| Build an external provider | Reference `Vouchfx.Sdk` and target `net8.0`, the frozen contract target framework. `vouchfx providers install` accepts only `net8.0` assets, and a `net8.0` provider loads into the .NET 10 CLI. A new class library defaults to the SDK's own target framework, so set `net8.0` explicitly. |
 | Test an application packaged as a container image | The image supplies the application's runtime, independently of vouchfx's runtime. |
 | Test an application through `environment.services[].project` | Install the SDK/runtime required by that application and ensure the application's SDK selection allows its target framework. |
 

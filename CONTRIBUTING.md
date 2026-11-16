@@ -8,7 +8,7 @@ vouchfx providers emit source fragments that the engine compiles into the suite.
 
 ### Getting Started
 
-**Install the Provider SDK.** Reference the [`Vouchfx.Sdk`](https://www.nuget.org/packages/Vouchfx.Sdk) NuGet package in a class library that targets `net8.0`, the frozen contract target framework (a new project defaults to the SDK's own target framework, so set it explicitly; `vouchfx provider install` accepts only `net8.0` assets, and a `net8.0` provider loads into the .NET 10 CLI). This package is the frozen v1 contract — all interfaces and types you need to implement. Stable SDK packages are published on NuGet.org; the snippets below use the `1.0.0` provider-contract baseline.
+**Install the Provider SDK.** Reference the [`Vouchfx.Sdk`](https://www.nuget.org/packages/Vouchfx.Sdk) NuGet package in a class library that targets `net8.0`, the frozen contract target framework (a new project defaults to the SDK's own target framework, so set it explicitly; `vouchfx providers install` accepts only `net8.0` assets, and a `net8.0` provider loads into the .NET 10 CLI). This package is the frozen v1 contract — all interfaces and types you need to implement. Stable SDK packages are published on NuGet.org; the snippets below use the `1.0.0` provider-contract baseline.
 
 ```xml
 <PackageReference Include="Vouchfx.Sdk" Version="1.0.0" />
