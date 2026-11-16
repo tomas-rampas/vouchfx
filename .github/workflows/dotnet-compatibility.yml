@@ -1,6 +1,9 @@
 # The net8.0 compatibility baseline must build and execute without a .NET 8
-# installation on the .NET 9 and 10 lanes. The existing CI retains Docker and
-# release checks; this matrix exercises the source and Docker-free runtime paths.
+# installation on the .NET 9 and 10 lanes. Layout: the Docker-free compatibility
+# matrix, the memory gate and the native TLS lane run on every pull request to
+# `main` and every push to `main`; the Docker suites on .NET 9 and 10 run daily
+# and on manual dispatch only. The existing CI retains the .NET 8 Docker and
+# release checks.
 name: .NET compatibility
 
 on:
@@ -8,13 +11,20 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Scheduled workflows run only on the default branch. The daily run also
+  # repeats the per-PR jobs; offset from build.yml so the two do not start together.
+  schedule:
+    - cron: "47 6 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# The event name is part of the group so that a push to the same ref cannot
+# cancel the scheduled or dispatched run, which is the only run that carries the
+# Docker lanes; runs of the same event on the same ref still cancel each other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -129,11 +139,16 @@ jobs:
             | tee "$RUNNER_TEMP/compatibility-runtime.log"
           grep -F "RUNTIME=$expected_major." "$RUNNER_TEMP/compatibility-runtime.log"
 
-  # SDK 8 keeps its existing CI lanes and check names. These lanes exercise
-  # all Docker tests and the permanent memory gate on the newer runtimes.
+  # SDK 8 keeps its existing CI lanes and check names. The `docker` lanes
+  # exercise all Docker tests on the newer runtimes. They no longer run on pull
+  # requests or pushes: daily on main via the schedule and on demand via
+  # workflow_dispatch on any branch, so a failure is found on the next daily run,
+  # not before merge. The `memory` lanes below still run on every pull request
+  # and push.
   docker:
     name: Docker integration .NET ${{ matrix.dotnet }}
     runs-on: ubuntu-22.04
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 180
     strategy:
       fail-fast: false

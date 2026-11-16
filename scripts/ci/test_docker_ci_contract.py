@@ -23,6 +23,9 @@ from docker_ci_support import (BASH, PREWARM_WORKFLOW, PULL_NAME, ROOT, TEST_NAM
 
 SCRATCH = Path(tempfile.mkdtemp(prefix="vouchfx-docker-ci-contract-"))
 STUB = Path(__file__).with_name("pull_stub.py")
+COMPATIBILITY_WORKFLOW = ROOT / ".github/workflows/dotnet-compatibility.yml"
+CONCURRENCY_GROUP = "${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}"
+DOCKER_JOB_IF = "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
 
 
 def reply(code=0, stdout=b"pulled", stderr=b""):
@@ -193,9 +196,29 @@ source "$1"
         self.assertIn("python -B scripts/ci/lint_workflows.py", [s.get("run") for s in gate["steps"]])
         self.assertIn("python -B -m unittest discover -s scripts/ci -p test_docker_ci_contract.py -v",
                       [s.get("run") for s in gate["steps"]])
-        self.assertEqual([{"cron": "0 6 * * 1"}], data["on"]["schedule"])
+        self.assertEqual([{"cron": "17 6 * * *"}], data["on"]["schedule"])
+        self.assertIn("workflow_dispatch", data["on"])
         self.assertEqual("build", integration["needs"])
-        self.assertNotIn("if", integration)
+        for concurrent in [data, workflow(COMPATIBILITY_WORKFLOW)]:
+            self.assertEqual(CONCURRENCY_GROUP, concurrent["concurrency"]["group"])
+            self.assertIs(True, concurrent["concurrency"]["cancel-in-progress"])
+        self.assertEqual(DOCKER_JOB_IF, integration["if"])
+        compatibility = workflow(COMPATIBILITY_WORKFLOW)
+        self.assertEqual([{"cron": "47 6 * * *"}], compatibility["on"]["schedule"])
+        self.assertIn("workflow_dispatch", compatibility["on"])
+        self.assertEqual(DOCKER_JOB_IF, compatibility["jobs"]["docker"]["if"])
+        self.assertEqual(["main"], compatibility["on"]["pull_request"]["branches"])
+        self.assertEqual(["main"], compatibility["on"]["push"]["branches"])
+        for always_job in ["build", "windows-unit", "memory-leak", "docs-build"]:
+            with self.subTest(job=always_job):
+                self.assertNotIn("if", data["jobs"][always_job])
+        self.assertEqual("build", data["jobs"]["memory-leak"]["needs"])
+        badge_concurrency = data["jobs"]["coverage-badge"]["concurrency"]
+        self.assertEqual("coverage-badge-main", badge_concurrency["group"])
+        self.assertIs(False, badge_concurrency["cancel-in-progress"])
+        for per_pr_job in ["compatibility", "memory", "tls"]:
+            with self.subTest(job=per_pr_job):
+                self.assertNotIn("if", compatibility["jobs"][per_pr_job])
         self.assertNotIn("if", step(PULL_NAME, data))
         self.assertNotIn("continue-on-error", step(PULL_NAME, data))
         self.assertNotIn("paths", data["on"]["push"])

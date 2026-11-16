@@ -387,8 +387,10 @@ recorded in the same log.
 
 CI (`.github/workflows/build.yml`) defines a blocking Linux **build** job (build + format + unit
 tests), a blocking **windows-unit** job (restore + Release build + Docker-free unit tests), a
-blocking **memory-leak** job over 5,000 load-unload cycles, a blocking Linux **integration** job
-for Docker/Aspire tests, and a blocking **documentation** job that builds the site and checks its
+blocking **memory-leak** job over 5,000 load-unload cycles, a Linux **integration** job for
+Docker/Aspire tests that runs daily on `main` and on manual dispatch from any branch (Actions tab, CI,
+Run workflow, choose the branch) rather than on each pull request or push, so a failure there surfaces on
+the next daily run, not before merge. A blocking **documentation** job builds the site and checks its
 publication boundary.
 
 <details>
