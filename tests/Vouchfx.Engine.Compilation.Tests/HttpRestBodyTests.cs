@@ -718,8 +718,8 @@ public sealed class HttpRestBodyTests
         sb.Append("path: /orders\n");
         sb.Append("body:\n");
         for (var i = 0; i < levels - 1; i++)
-            sb.Append(new string(' ', (i + 1) * 2)).Append("k:\n");
-        sb.Append(new string(' ', levels * 2)).Append("leaf\n");
+            sb.Append(' ', (i + 1) * 2).Append("k:\n");
+        sb.Append(' ', levels * 2).Append("leaf\n");
         return sb.ToString();
     }
 
