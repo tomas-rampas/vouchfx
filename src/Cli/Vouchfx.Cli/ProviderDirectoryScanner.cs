@@ -245,7 +245,11 @@ internal static class ProviderDirectoryScanner
         || ns.StartsWith("Vouchfx.Engine.", StringComparison.Ordinal) || ns.StartsWith("Vouchfx.Steps.", StringComparison.Ordinal);
     // Assemblies the host resolves from a shared framework listed in its runtimeconfig (Microsoft.NETCore.App and, for the
     // CLI, Microsoft.AspNetCore.App) are runtime-owned: a provider built against an older framework package may reference
-    // a lower version, never a higher one. App-local assemblies keep needing an exact identity.
+    // a lower version, never a higher one. In the framework-dependent tool (dotnet tool install) the assemblies the CLI
+    // ships itself sit in the app directory, are app-local and keep needing an exact identity. In the self-contained
+    // archives and installers the runtime directory is the app directory, so every bundled assembly follows the same-or-lower
+    // rule, as it did before shared frameworks were recognised. A provider admitted at a lower version that calls an API
+    // removed since fails when the step runs, not at suite start; a higher version is always refused at suite start.
     private static bool CompatibleHost(AssemblyName requested, Image host) =>
         requested.Name is "Vouchfx.Sdk" or "Vouchfx.Engine.Abstractions"
             ? requested.Version?.Major == 1 && host.Identity.Version?.Major == 1 && SameToken(requested, host.Identity)
@@ -258,7 +262,9 @@ internal static class ProviderDirectoryScanner
         Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     // The host publishes the deps.json of every file it resolved from (APP_CONTEXT_DEPS_FILES: the app's own, then one per
     // shared framework in the runtimeconfig; FX_DEPS_FILE: the root framework). Each framework's deps.json sits in that
-    // framework's directory; the app's own directory is app-local and is never treated as a framework.
+    // framework's directory. In the framework-dependent tool the app's own directory is app-local and is not added from the
+    // deps files; in a self-contained build GetRuntimeDirectory() is the app directory and FX_DEPS_FILE is empty, so the
+    // app directory is added through the runtime directory below and its assemblies are treated as framework assemblies.
     private static readonly Lazy<HashSet<string>> s_frameworkDirectories = new(() =>
     {
         var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
