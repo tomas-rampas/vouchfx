@@ -154,6 +154,9 @@ jobs:
       - name: Exercise DCP capture artefact contracts
         run: python -B -m unittest discover -s scripts/ci -p test_dcp_capture_artifacts.py -v
 
+      - name: Exercise the session-start hook's global.json gate
+        run: python -B -m unittest discover -s scripts/ci -p test_session_start_global_json.py -v
+
   build:
     name: Build & unit tests
     runs-on: ubuntu-latest

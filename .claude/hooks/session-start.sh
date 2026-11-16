@@ -69,9 +69,13 @@
 # has no global.json) into a root-owned mktemp directory that is removed on exit. EVERY
 # dotnet call in this hook runs with that directory as its working directory. So the host
 # never reads the repository's file (no TOCTOU between check and use), and never walks
-# up from the repository into a parent directory's global.json. On a refusal the hook also
-# prints one line on stdout, so the session context says not to run dotnet in the
-# checkout, because the agent's own later dotnet calls would honour the same file.
+# up from the repository into a parent directory's global.json. On a refusal the hook
+# writes one ERROR line on stderr naming the reason (never the file's content) and exits
+# non-zero. It prints nothing on stdout: Claude Code adds a SessionStart hook's stdout to
+# the session context only when the hook exits 0, so a notice there would not be seen. A
+# refused global.json therefore stays unreviewed until someone reads that line; do not
+# run dotnet in the checkout before then, because dotnet calls made later would honour
+# the same file.
 set -euo pipefail
 
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
@@ -105,24 +109,36 @@ is_root() { [ "$(id -u)" -eq 0 ]; }
 # code as root. Rather than blacklist keys, this accepts only a strict shape (whitespace
 # aside): an optional "sdk" object holding only version, rollForward and allowPrerelease
 # with plain values, and nothing else at the top level. Anything it cannot classify
-# (comments, escapes, other keys, malformed or empty JSON, "sdk" not an object, a file over
-# 4 KiB, a symlink, a directory) is refused. A missing file is allowed: there is then
-# nothing to redirect. The allowlist is extended key by key, only when the repository
-# adopts another global.json feature, and never with "paths" or "errorMessage".
+# (comments, escapes, other keys, malformed or empty JSON, "sdk" not an object, a file
+# over 4096 bytes, a file with a NUL byte, a symlink, a directory) is refused. The size is
+# counted in bytes (wc -c, under LC_ALL=C) before anything is read, and the NUL check
+# compares that count with the count after deleting NULs, so the text that is validated
+# is the whole file, never a truncated or NUL-stripped part of it. Only the four JSON
+# whitespace characters (space, tab, CR, LF) are ignored; vertical tab and form feed are
+# not. A missing file is allowed: there is then nothing to redirect. The allowlist is
+# extended key by key, only when the repository adopts another global.json feature, and
+# never with "paths" or "errorMessage".
 # Pure bash on purpose: no interpreter beyond the shell is assumed at this point.
 GLOBAL_JSON_BYTES='{}'
+GLOBAL_JSON_REFUSAL=''
 global_json_ok() {
-  local file="$1" content member re
+  local file="$1" content member re size without_nul ws=$' \t\r\n'
   local LC_ALL=C
   GLOBAL_JSON_BYTES='{}'
-  if [ -L "$file" ]; then return 1; fi
+  GLOBAL_JSON_REFUSAL=''
+  if [ -L "$file" ]; then GLOBAL_JSON_REFUSAL='it is a symbolic link'; return 1; fi
   [ -e "$file" ] || return 0
-  [ -f "$file" ] || return 1
-  content="$(head -c 4097 -- "$file")" || return 1
-  [ "${#content}" -le 4096 ] || return 1
+  [ -f "$file" ] || { GLOBAL_JSON_REFUSAL='it is not a regular file'; return 1; }
+  size="$(wc -c <"$file")" || { GLOBAL_JSON_REFUSAL='it cannot be read'; return 1; }
+  size="${size//[$ws]/}"
+  [ "$size" -le 4096 ] || { GLOBAL_JSON_REFUSAL='it is larger than 4096 bytes'; return 1; }
+  without_nul="$(tr -d '\000' <"$file" | wc -c)" || { GLOBAL_JSON_REFUSAL='it cannot be read'; return 1; }
+  [ "${without_nul//[$ws]/}" = "$size" ] || { GLOBAL_JSON_REFUSAL='it contains a NUL byte'; return 1; }
+  content="$(head -c 4097 -- "$file")" || { GLOBAL_JSON_REFUSAL='it cannot be read'; return 1; }
+  [ "${#content}" -le 4096 ] || { GLOBAL_JSON_REFUSAL='it is larger than 4096 bytes'; return 1; }
   member='("version":"[0-9A-Za-z.+-]+"|"rollForward":"[A-Za-z]+"|"allowPrerelease":(true|false))'
   re='^\{("sdk":\{('"$member"'(,'"$member"')*)?\})?\}$'
-  [[ "${content//[[:space:]]/}" =~ $re ]] || return 1
+  [[ "${content//[$ws]/}" =~ $re ]] || { GLOBAL_JSON_REFUSAL='it is outside the plain shape the hook accepts'; return 1; }
   GLOBAL_JSON_BYTES="$content"
 }
 
@@ -290,8 +306,7 @@ export DOTNET_NOLOGO=1'
 # nothing, and the pin is rewritten with the same content. install_sdk relies on the pin
 # written here.
 if ! global_json_ok "$REPO_DIR/global.json"; then
-  log "ERROR: ${REPO_DIR}/global.json is not a regular file with the plain shape this hook accepts (only an \"sdk\" object with version, rollForward and allowPrerelease), or it redirects SDK resolution (for example sdk.paths). Refusing to run dotnet as root against it."
-  echo "session-start: global.json refused (not on the allowlist): do not run dotnet in this checkout until it is reviewed."
+  log "ERROR: ${REPO_DIR}/global.json refused: ${GLOBAL_JSON_REFUSAL:-it is outside the plain shape the hook accepts}. The hook accepts only a regular file holding an \"sdk\" object with version, rollForward and allowPrerelease, and refuses anything that could redirect SDK resolution (for example sdk.paths). It will not run dotnet as root against this file; do not run dotnet in this checkout until it is reviewed."
   exit 1
 fi
 make_scratch
