@@ -11,15 +11,23 @@ The release pipeline (`release.yml`) publishes only when a GitHub Release is
 published. Pushing a version tag alone does not start the pipeline. Manual
 `workflow_dispatch` remains available as a non-publishing preflight.
 
-1. Navigate to the GitHub Releases page for this repository.
-2. Click **Draft a new release**.
-3. Create a new tag in the format `v<semver>` (e.g. `v1.2.3`) at the reviewed
+1. In `CHANGELOG.md`, rename the `## [Unreleased]` heading to
+   `## [<version>] — <date>` and add a fresh, empty `## [Unreleased]` heading
+   above it, so the file keeps exactly one `## [Unreleased]` heading
+   (`scripts/check_site.py` enforces this). Do this in the reviewed commit
+   before tagging. Check that the `VouchfxEngineVersion` fallback in
+   `Directory.Build.props` is at least `<version>`: the
+   `SourceCapabilityStamp_IsAtLeastTheNewestChangelogVersion` test fails when the
+   newest versioned heading is higher than the fallback.
+2. Navigate to the GitHub Releases page for this repository.
+3. Click **Draft a new release**.
+4. Create a new tag in the format `v<semver>` (e.g. `v1.2.3`) at the reviewed
    commit, or select an existing reviewed version tag.
-4. Fill in the release notes. Mark alpha, beta and release candidate versions
+5. Fill in the release notes. Mark alpha, beta and release candidate versions
    as pre-releases.
-5. Click **Publish release**. Publishing a reviewed draft or creating a published
+6. Click **Publish release**. Publishing a reviewed draft or creating a published
    Release through the GitHub API emits the same event.
-6. The pipeline builds all artifacts, signs them, and attaches them to the
+7. The pipeline builds all artifacts, signs them, and attaches them to the
    release automatically.
 
 A tag push followed by Release publication starts one publishing run. A newer
