@@ -3,7 +3,7 @@
 //
 // Before this type existed, seven independent test methods each re-derived the repo root by
 // walking a FIXED number of parent directories up from the test assembly's own build output
-// (net8.0 -> <configuration> -> bin -> <project> -> tests -> repo root), with no check that the
+// (net10.0 -> <configuration> -> bin -> <project> -> tests -> repo root), with no check that the
 // directory landed on actually WAS the repository:
 //
 //   Vouchfx.Engine.Runtime.Tests:       ExamplesCompileTests.ResolveRepoRoot,

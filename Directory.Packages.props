@@ -13,7 +13,7 @@
          Scripting package above — they ship in lockstep from the same Roslyn release. -->
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
   </ItemGroup>
-  <ItemGroup Label="Aspire orchestration (§4) — net8.0 compatible">
+  <ItemGroup Label="Aspire orchestration (§4)">
     <PackageVersion Include="Aspire.Hosting" Version="13.4.6" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.4.6" />
     <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.4.6" />

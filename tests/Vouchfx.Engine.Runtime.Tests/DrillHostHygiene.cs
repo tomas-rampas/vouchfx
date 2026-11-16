@@ -1,7 +1,7 @@
 // Drill-lane process hygiene — issue #378.
 //
 // Two symptoms, one family. A drill row launches the built CLI as a child process
-// (`dotnet <repo>/src/Cli/Vouchfx.Cli/bin/<cfg>/net8.0/vouchfx.dll run <suite>`), and that
+// (`dotnet <repo>/src/Cli/Vouchfx.Cli/bin/<cfg>/net10.0/vouchfx.dll run <suite>`), and that
 // child is itself a parent: DCP runs beneath it, holding containers and an
 // aspire-session-network-*. A row that ends any way other than "the child exited" leaves that
 // host running, and the host keeps the CLI's own DLLs mapped. The developer sees nothing until
