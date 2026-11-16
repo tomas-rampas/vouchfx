@@ -863,7 +863,7 @@ internal static class SecuredEndpointProbe
             // by a peer-initiated TLS 1.2 renegotiation, and neither door is shut here — the
             // options built above pin no protocol version (EnabledSslProtocols = SslProtocols.None)
             // so a 1.2 session is not excluded, and AllowRenegotiation was MEASURED defaulting to
-            // True on the pinned runtime (net8.0, a bare SslClientAuthenticationOptions). A fault
+            // True as measured on net8.0 (a bare SslClientAuthenticationOptions). A fault
             // raised during ConfirmKafkaRoundTripAsync or ReadForRejectionAsync therefore left by
             // the anchor-load raw-escape route. No reachability was demonstrated — it needs a peer that
             // renegotiates mid-exchange AND a coincident host crypto fault — so this is symmetry

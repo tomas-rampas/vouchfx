@@ -53,7 +53,7 @@ ready-to-run `vouchfx-run` job that `extends:` it.
 | `VOUCHFX_SCENARIO_PATH` | `.` | Directory (relative to the cloned project root) to search recursively for `*.e2e.yaml`. |
 | `VOUCHFX_REPO_URL` | `$CI_REPOSITORY_URL` | Git URL to clone vouchfx from for the build-from-source install (defaults to the including project, whose CI job token clones a private repo without extra credentials). |
 | `VOUCHFX_REF` | `$CI_COMMIT_SHA` | Git ref (branch, tag, or — recommended — a full commit SHA) of `VOUCHFX_REPO_URL` to build. |
-| `VOUCHFX_DOTNET_IMAGE` | `mcr.microsoft.com/dotnet/sdk:10.0` | SDK image the job runs in. The default is .NET 10, which current source (`net10.0`) needs; `global.json` selects a 10.0 SDK. An older `VOUCHFX_REF` built for .NET 8 can use the `8.0` image. Pin to a digest in production. |
+| `VOUCHFX_DOTNET_IMAGE` | `mcr.microsoft.com/dotnet/sdk:10.0` | SDK image the job runs in. The default is .NET 10, which current source (`net10.0`) needs; `global.json` selects a 10.0 SDK. An older `VOUCHFX_REF` built for .NET 8 can use the `8.0` image, but move an `sdk:8.0` tag or digest to `sdk:10.0` when `VOUCHFX_REF` moves to a release that targets .NET 10. Pin to a digest in production. |
 | `VOUCHFX_FAIL_ON_ENV_ERROR` | `"false"` | When truthy, append `--fail-on-env-error` (Environment-error verdict fails the job, exit 3). |
 | `VOUCHFX_FAIL_ON_INCONCLUSIVE` | `"false"` | When truthy, append `--fail-on-inconclusive` (Inconclusive verdict fails the job, exit 4). |
 | `VOUCHFX_PREWARM_IMAGES` | `""` | Optional whitespace/newline-separated list of images to `docker pull` before the run (best-effort, non-fatal). Pin each entry to a digest. |
@@ -155,7 +155,7 @@ GitLab pipeline / MR test report. `expire_in: 7 days` mirrors the GitHub `retent
 - **Pin the `include:` `ref:` to a full commit SHA**, not a moving branch/tag.
 - **Pin `VOUCHFX_REF` to a commit SHA or release tag**, never a branch.
 - **Pin every `VOUCHFX_PREWARM_IMAGES` entry to an image digest** (`name@sha256:…`).
-- **Pin `VOUCHFX_DOTNET_IMAGE` to a digest** (`mcr.microsoft.com/dotnet/sdk:10.0@sha256:…`).
+- **Pin `VOUCHFX_DOTNET_IMAGE` to a digest** (`mcr.microsoft.com/dotnet/sdk:10.0@sha256:…`). A digest of an `sdk:8.0` image, pinned for an older `VOUCHFX_REF`, must be replaced by an `sdk:10.0` digest when `VOUCHFX_REF` moves to a release that targets .NET 10.
 
 (The defaults in the template use tags only to stay legible; production callers should
 supply digests — mirroring the GitHub header guidance.)

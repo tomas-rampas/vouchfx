@@ -804,7 +804,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 // straight to the platform loader as its ReadOnlySpan<char> argument and never
                 // bound to a local, a Vars key or a diagnostic.
                 //
-                // MEASURED against the pinned net8.0 ref pack, because the two overloads do NOT
+                // MEASURED on net8.0, because the two overloads do NOT
                 // take their arguments in the same order and the mistake compiles:
                 //   CreateFromPemFile(string certPemFilePath, string? keyPemFilePath = null)
                 //   CreateFromEncryptedPemFile(string certPemFilePath, ReadOnlySpan<char> password,
