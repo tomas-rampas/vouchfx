@@ -7,7 +7,9 @@
 # leading and trailing zeros, signs, exponents and hex, and literal and folded block
 # scalars. It also pins nested
 # and flow-style collections, a top-level sequence body, a string body, an anchor
-# reused through aliases (inside a body and across steps), and `<<` merge keys.
+# reused through aliases (inside a body and across steps), `<<` merge keys, a quoted
+# and a plain scalar reached through an alias, and explicit tags (`!!str 123` and
+# `!!int "5"`; the binder looks at quoting, not tags, today).
 #
 # The golden records whatever the engine does today; nothing here is a statement of
 # what it should do. Used only by EmittedCodeBaselineTests; no topology is started.
@@ -94,6 +96,12 @@ steps:
         currency: EUR
         amount: 10
       aliasCopy: *base
+      quotedAnchor: &q "123"
+      fromAlias: *q
+      plainAnchor: &p 123
+      plainFromAlias: *p
+      taggedString: !!str 123
+      taggedInt: !!int "5"
       merged:
         <<: *base
         amount: 20

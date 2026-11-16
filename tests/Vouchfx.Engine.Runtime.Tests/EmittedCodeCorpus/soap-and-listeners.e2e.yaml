@@ -6,10 +6,9 @@
 # match.headers and match.bodyContains. XPath and attribute values appear in plain
 # and quoted form.
 #
-# Not pinned here: match.peerCertificateSha256 on either listener step. The engine
-# accepts it only for a listener with profile: mtls, whose server certificate must
-# exist beside the suite and be valid at the time of the run, so it cannot be a
-# committed, time-independent fixture.
+# match.peerCertificateSha256 on a trace-expect.otlp step is pinned by otlp-peer-certificate, a suite
+# the security preflight refuses by design. The webhook-listen.http form is pinned by the compilation
+# corpus's inbound-listener-mtls-fingerprint.
 #
 # Used only by EmittedCodeBaselineTests; no topology is started.
 metadata:

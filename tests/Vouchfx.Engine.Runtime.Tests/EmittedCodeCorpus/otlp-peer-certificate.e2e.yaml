@@ -1,0 +1,27 @@
+# Emitted-code baseline corpus: trace-expect.otlp match.peerCertificateSha256.
+#
+# Refused at the security preflight BY DESIGN: the receiver's declared certificate files
+# do not exist, so the pipeline reports them missing and emits nothing. The gate binds
+# every step whatever the pipeline decides, so the golden still records the step's bound
+# model, which is what this suite pins: the fingerprint value reaching the provider's
+# binder. It is its own suite so that its refusal cannot stop another suite's steps from
+# emitting. The listener shape follows the compilation corpus's inbound-listener-otlp-mtls.
+#
+# Used only by EmittedCodeBaselineTests; no topology is started.
+metadata:
+  name: emitted-code-corpus-otlp-peer-certificate
+listeners:
+  telemetry:
+    kind: otlp-receiver
+    security:
+      profile: mtls
+      serverCert: certs/server.pem
+      serverKey: certs/key.pem
+      clientCaCert: certs/ca.pem
+steps:
+  - id: await-pinned-span
+    type: trace-expect.otlp
+    receiver: telemetry
+    match:
+      traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+      peerCertificateSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

@@ -30,10 +30,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Vouchfx.TestSupport;
 using Xunit;
 
@@ -91,6 +93,28 @@ public sealed class EmittedCodeBaselineTests
     public static IEnumerable<object[]> Suites() =>
         DiscoverSuites().Where(path => !s_exclusions.ContainsKey(path)).Select(path => new object[] { path });
 
+    /// <summary>
+    /// Renders under the invariant culture, so the text (schema diagnostics included, which format with the
+    /// current culture) is the same whatever the system language, and restores the caller's cultures afterwards.
+    /// </summary>
+    private static string RenderInvariant(string suite, string absolute)
+    {
+        var thread = Thread.CurrentThread;
+        var culture = thread.CurrentCulture;
+        var uiCulture = thread.CurrentUICulture;
+        try
+        {
+            thread.CurrentCulture = CultureInfo.InvariantCulture;
+            thread.CurrentUICulture = CultureInfo.InvariantCulture;
+            return EmittedCodeBaseline.Render(suite, absolute, ExamplesCompileTests.CoreRegistry);
+        }
+        finally
+        {
+            thread.CurrentCulture = culture;
+            thread.CurrentUICulture = uiCulture;
+        }
+    }
+
     [Theory]
     [MemberData(nameof(Suites))]
     public void EmittedCode_MatchesGolden(string suite)
@@ -98,7 +122,7 @@ public sealed class EmittedCodeBaselineTests
         var absolute = Path.Combine(RepoRoot.Resolve(), suite.Replace('/', Path.DirectorySeparatorChar));
         ExamplesCompileTests.EnsureFixtureMaterial(absolute);
 
-        var actual = EmittedCodeBaseline.Render(suite, absolute, ExamplesCompileTests.CoreRegistry);
+        var actual = RenderInvariant(suite, absolute);
         var goldenPath = GoldenPathFor(suite);
 
         if (IsRegenRequested())
