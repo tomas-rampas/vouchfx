@@ -1623,7 +1623,7 @@ Provider registration refused: Provider 'rpc.json-rpc' requires engine 1.2.0; th
 
 The CLI compares `MinEngineVersion` with `VouchfxEngineVersion` metadata on `Vouchfx.Engine.Runtime` before the provider contributes a schema. Comparison is strict SemVer 2. A prerelease sorts before the matching stable version, and build metadata is ignored.
 
-`Directory.Build.props` copies `-p:Version` into that stamp when release packaging sets it. A plain source build, including the main CI build, omits `-p:Version` and uses the checked-in fallback. A stale fallback refuses providers the source can host; see the 1.3.0 entry in the [changelog](changelog.md). Adding a newer changelog heading without raising the fallback fails `HostProviderAdmissionTests.SourceCapabilityStamp_IsAtLeastTheNewestChangelogVersion` in the unit-test run, not in the build.
+`Directory.Build.props` copies `-p:Version` into that stamp when release packaging sets it. A plain source build, including the main CI build, omits `-p:Version` and uses the checked-in fallback. A stale fallback refuses providers the source can host; see the 1.4.0 entry in the [changelog](changelog.md). Adding a newer changelog heading without raising the fallback fails `HostProviderAdmissionTests.SourceCapabilityStamp_IsAtLeastTheNewestChangelogVersion` in the unit-test run, not in the build.
 
 `vouchfx --version` and JSON `engineVersion` report the informational version. A build or pack without `-p:Version` reports `1.0.0-0.local` plus a `+<commit>` suffix. That string is not the capability stamp.
 
