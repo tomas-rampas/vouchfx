@@ -402,7 +402,9 @@ public sealed class ExamplesCompileTests
         ObserveIfItEverFaults(both);
 
         // Never adopts a fault from either argument — see the remarks.
-        await Task.WhenAny(both, Task.Delay(grace ?? s_drainGrace)).ConfigureAwait(false);
+        using var delayCts = new CancellationTokenSource();
+        await Task.WhenAny(both, Task.Delay(grace ?? s_drainGrace, delayCts.Token)).ConfigureAwait(false);
+        delayCts.Cancel();
 
         var outText = TextOfCompleted(stdout);
         var errText = TextOfCompleted(stderr);
@@ -461,7 +463,9 @@ public sealed class ExamplesCompileTests
     private static async Task<string> ReadTextOrExplainAsync(Task<string> read, string streamName, TimeSpan? grace = null)
     {
         ObserveIfItEverFaults(read);
-        await Task.WhenAny(read, Task.Delay(grace ?? s_drainGrace)).ConfigureAwait(false);
+        using var delayCts = new CancellationTokenSource();
+        await Task.WhenAny(read, Task.Delay(grace ?? s_drainGrace, delayCts.Token)).ConfigureAwait(false);
+        delayCts.Cancel();
 
         if (read.Status == TaskStatus.RanToCompletion)
         {

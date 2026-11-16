@@ -337,7 +337,9 @@ public sealed class ExternalEnvironmentWatchTests
         var sibling = Directory.CreateDirectory(Path.Combine(directory, "inputs-sibling")).FullName;
         await File.WriteAllTextAsync(Path.Combine(sibling, "manifest.yaml"), "unrelated-input");
         var staging = Directory.CreateDirectory(Path.Combine(directory, "staging")).FullName;
-        await Task.WhenAny(changed.Task, Task.Delay(250));
+        using var settleCts = new CancellationTokenSource();
+        await Task.WhenAny(changed.Task, Task.Delay(250, settleCts.Token));
+        settleCts.Cancel();
         Assert.False(changed.Task.IsCompleted, "An unrelated sibling directory signalled a known input change.");
         if (rename) Directory.Move(staging, parent);
         else Directory.CreateDirectory(parent);

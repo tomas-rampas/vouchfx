@@ -277,7 +277,7 @@ public sealed class EventPayloadTests
     public void StepAttemptEvent_RoundTrip_PreservesAllFields()
     {
         // Arrange
-        var observation = JsonDocument.Parse("""{"matched":1}""").RootElement.Clone();
+        var observation = JsonElement.Parse("""{"matched":1}""");
         var evt = new StepAttemptEvent
         {
             RunId = "run-020",

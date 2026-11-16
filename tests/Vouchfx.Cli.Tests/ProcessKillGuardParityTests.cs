@@ -90,8 +90,8 @@ public sealed class ProcessKillGuardParityTests
     public void BothKillTreeQuietlyCopies_CatchTheSameExceptionTypes()
     {
         var repoRoot = RepositoryRoot();
-        var testSupportPath = Path.Combine(repoRoot, Path.Combine(s_testSupportCopy));
-        var productPath = Path.Combine(repoRoot, Path.Combine(s_productCopy));
+        var testSupportPath = Path.Combine(s_testSupportCopy.Prepend(repoRoot).ToArray());
+        var productPath = Path.Combine(s_productCopy.Prepend(repoRoot).ToArray());
 
         var testSupport = CaughtExceptionTypes(testSupportPath, repoRoot);
         var product = CaughtExceptionTypes(productPath, repoRoot);

@@ -729,7 +729,9 @@ public sealed class SecurityPathDisclosureLedgerTests
         Assert.Equal(2, ledger.Count);   // not vacuous: the empty form really is recorded
 
         var worker = Task.Run(() => ledger.Scrub("could not open /host/x/ca.pem"));
-        var finished = await Task.WhenAny(worker, Task.Delay(TimeSpan.FromSeconds(10)));
+        using var delayCts = new CancellationTokenSource();
+        var finished = await Task.WhenAny(worker, Task.Delay(TimeSpan.FromSeconds(10), delayCts.Token));
+        delayCts.Cancel();
 
         Assert.True(
             ReferenceEquals(finished, worker),
