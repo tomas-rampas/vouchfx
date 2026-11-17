@@ -198,7 +198,10 @@ public sealed class HttpRestProvider
     /// nodes and a generated bulk payload to a few thousand, so 50,000 leaves between one
     /// and three orders of magnitude of room. The count is of nodes PRODUCED, so an aliased
     /// subtree is charged its full expansion at every site, which is what makes this the
-    /// amplification defence rather than a size limit.
+    /// amplification defence rather than a size limit. A YAML merge key (<c>&lt;&lt;</c>,
+    /// ZEB-67) is charged the same way: every member a merged mapping offers at a merge site
+    /// costs one unit, whether or not an explicit key overrides it, on top of the nodes the
+    /// members that are kept then produce.
     /// </para>
     /// <para>
     /// <strong>IT COUNTS NODES, NOT BYTES, and the difference is reachable rather than
@@ -1162,11 +1165,13 @@ public sealed class HttpRestProvider
             {
                 // Mapping / sequence: serialise the YAML structure to a JSON string, under
                 // the depth and node bounds documented on MaxBodyDepth / MaxBodyNodes
-                // (issue #346).  The step mapping is threaded in so a breach can name the
-                // step; it is read only on the failure path.
-                var budget = MaxBodyNodes;
+                // (issue #346), following YAML's meaning for merge keys, block scalars,
+                // empty values and explicit tags (ZEB-67; see YamlToJsonElement).  The step
+                // mapping is threaded in so a breach or a bind error can name the step; it
+                // is read only on the failure path.
+                var conversion = new BodyConversion(mapping);
                 body = JsonSerializer.Serialize(
-                    YamlToJsonElement(bodyNode, mapping, depth: 1, ref budget));
+                    YamlToJsonElement(bodyNode, conversion, depth: 1));
             }
         }
 
@@ -2004,16 +2009,15 @@ public sealed class HttpRestProvider
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Scalars are emitted as the matching JSON type when YAML 1.1 typing is
-    /// unambiguous (<c>true</c>/<c>false</c> → boolean, <c>null</c>/<c>~</c> → null,
-    /// an integer/decimal literal → number), and as a JSON string otherwise.  This
-    /// keeps a structured YAML body's types faithful while leaving any
-    /// <c>{placeholder}</c> / <c>${secret:source/path}</c> token as a quoted string
-    /// for execution-time resolution.
+    /// Scalars follow <see cref="ScalarToJsonNode"/>: an untagged PLAIN scalar is typed
+    /// from its text (boolean, null, number, otherwise string); a quoted or block scalar
+    /// is always a string; a plain empty value is null; an explicit core-schema tag
+    /// decides the type. Any <c>{placeholder}</c> / <c>${secret:source/path}</c> token
+    /// therefore stays inside a JSON string for execution-time resolution.
     /// </para>
     /// <para>
-    /// A scalar whose YAML style is quoted is always treated as a string (the author
-    /// explicitly quoted it), so a quoted <c>"123"</c> survives as a JSON string.
+    /// Mappings honour YAML merge keys (ZEB-67) through <see cref="ResolveEntries"/>, which
+    /// also fixes the member order; the <c>&lt;&lt;</c> key itself is never sent.
     /// </para>
     /// <para>
     /// The walk is BOUNDED in two independent dimensions (issue #346): nesting depth
@@ -2026,59 +2030,260 @@ public sealed class HttpRestProvider
     /// </para>
     /// </remarks>
     /// <param name="node">The YAML node to convert.</param>
-    /// <param name="step">
-    /// The whole step mapping, carried purely so a breach can name the offending step in
-    /// its message; read only on the failure path.
+    /// <param name="conversion">
+    /// The state of one body's conversion: the step mapping (read only on the failure path,
+    /// to name the step), the shared node budget and the merge-key memo.
     /// </param>
     /// <param name="depth">Nesting depth of <paramref name="node"/>; the body node is 1.</param>
-    /// <param name="budget">
-    /// Remaining node allowance, decremented once per node PRODUCED and shared across the
-    /// whole walk. Passed by reference because an alias expansion has to be charged against
-    /// the same allowance as its siblings — that sharing is the amplification defence.
-    /// </param>
     /// <exception cref="InvalidOperationException">
-    /// The body nests deeper than <see cref="MaxBodyDepth"/>, or expands to more than
-    /// <see cref="MaxBodyNodes"/> nodes.
+    /// The body nests deeper than <see cref="MaxBodyDepth"/>, expands to more than
+    /// <see cref="MaxBodyNodes"/> nodes, carries a merge key whose value is not a mapping or
+    /// a sequence of mappings, or carries a tag that is unsupported or does not fit its
+    /// value.
     /// </exception>
     private static System.Text.Json.Nodes.JsonNode? YamlToJsonElement(
         YamlNode node,
-        YamlMappingNode step,
-        int depth,
-        ref int budget)
+        BodyConversion conversion,
+        int depth)
     {
         if (depth > MaxBodyDepth)
-            throw new InvalidOperationException(DescribeBodyTooDeep(step, node));
+            throw new InvalidOperationException(DescribeBodyTooDeep(conversion.Step, node));
 
         // Charge the node BEFORE materialising it: the budget bounds work still to be done,
         // not work already completed, so an amplifying alias stops AT the ceiling rather
         // than one whole subtree past it.
-        if (--budget < 0)
-            throw new InvalidOperationException(DescribeBodyTooLarge(step));
+        conversion.Charge();
 
         switch (node)
         {
             case YamlMappingNode map:
                 {
+                    RequireCollectionTag(map, YamlMapTag, conversion.Step);
                     var obj = new System.Text.Json.Nodes.JsonObject();
-                    foreach (var (k, v) in map.Children)
+                    if (!HasMergeKey(map))
                     {
-                        var key = k is YamlScalarNode ks ? ks.Value ?? string.Empty : k.ToString();
-                        obj[key] = YamlToJsonElement(v, step, depth + 1, ref budget);
+                        // No merge key: exactly the walk this method has always done.
+                        foreach (var (k, v) in map.Children)
+                            obj[KeyText(k)] = YamlToJsonElement(v, conversion, depth + 1);
+                        return obj;
                     }
+
+                    foreach (var (key, value) in ResolveEntries(map, conversion, mergeDepth: 1))
+                        obj[key] = YamlToJsonElement(value, conversion, depth + 1);
                     return obj;
                 }
             case YamlSequenceNode seq:
                 {
+                    RequireCollectionTag(seq, YamlSeqTag, conversion.Step);
                     var arr = new System.Text.Json.Nodes.JsonArray();
                     foreach (var item in seq.Children)
-                        arr.Add(YamlToJsonElement(item, step, depth + 1, ref budget));
+                        arr.Add(YamlToJsonElement(item, conversion, depth + 1));
                     return arr;
                 }
             case YamlScalarNode scalar:
-                return ScalarToJsonNode(scalar);
+                return ScalarToJsonNode(scalar, conversion.Step);
             default:
                 return System.Text.Json.Nodes.JsonValue.Create(node.ToString());
         }
+    }
+
+    /// <summary>
+    /// The state of one structured body's conversion, shared by every frame of the walk.
+    /// </summary>
+    /// <remarks>
+    /// The node budget lives here rather than in a <see langword="ref"/> parameter because
+    /// merge-key resolution charges it too, and both walks must draw on ONE allowance — that
+    /// sharing is the amplification defence (issue #346). The merge memo is created only for
+    /// a body that actually contains a merge key.
+    /// </remarks>
+    private sealed class BodyConversion
+    {
+        private int _budget = MaxBodyNodes;
+        private Dictionary<YamlMappingNode, List<KeyValuePair<string, YamlNode>>>? _resolved;
+        private HashSet<YamlMappingNode>? _resolving;
+
+        internal BodyConversion(YamlMappingNode step) => Step = step;
+
+        /// <summary>The whole step mapping; read only to name the step in a diagnostic.</summary>
+        internal YamlMappingNode Step { get; }
+
+        /// <summary>
+        /// Mappings whose merged entries are already known, keyed by REFERENCE: an alias is
+        /// the same node instance as its anchor, so a mapping merged at many sites is
+        /// resolved once. <see cref="YamlNode"/> overrides equality by value, which would
+        /// conflate distinct but equal mappings, hence the reference comparer.
+        /// </summary>
+        internal Dictionary<YamlMappingNode, List<KeyValuePair<string, YamlNode>>> Resolved =>
+            _resolved ??= new Dictionary<YamlMappingNode, List<KeyValuePair<string, YamlNode>>>(
+                ReferenceEqualityComparer.Instance);
+
+        /// <summary>Mappings whose resolution is in progress; a revisit is a merge cycle.</summary>
+        internal HashSet<YamlMappingNode> Resolving =>
+            _resolving ??= new HashSet<YamlMappingNode>(ReferenceEqualityComparer.Instance);
+
+        /// <summary>Draws one unit from the node budget, refusing the body once it is spent.</summary>
+        internal void Charge()
+        {
+            if (--_budget < 0)
+                throw new InvalidOperationException(DescribeBodyTooLarge(Step));
+        }
+    }
+
+    /// <summary>The YAML core-schema tag of a mapping.</summary>
+    private const string YamlMapTag = "tag:yaml.org,2002:map";
+
+    /// <summary>The YAML core-schema tag of a sequence.</summary>
+    private const string YamlSeqTag = "tag:yaml.org,2002:seq";
+
+    /// <summary>The prefix every YAML core-schema tag shares; written <c>!!</c> in a document.</summary>
+    private const string YamlTagPrefix = "tag:yaml.org,2002:";
+
+    /// <summary>The text of a mapping key, exactly as the walk has always read it.</summary>
+    private static string KeyText(YamlNode key) =>
+        key is YamlScalarNode ks ? ks.Value ?? string.Empty : key.ToString();
+
+    /// <summary>
+    /// True for a YAML merge key: the PLAIN, untagged scalar <c>&lt;&lt;</c>, or a key
+    /// explicitly tagged <c>!!merge</c>.
+    /// </summary>
+    /// <remarks>
+    /// A quoted <c>"&lt;&lt;"</c> is an ordinary key, as YAML defines it, so an author who
+    /// needs a literal <c>&lt;&lt;</c> member quotes it. Same test as the compose reader's
+    /// <c>ManifestInputMappings</c> applies.
+    /// </remarks>
+    private static bool IsMergeKey(YamlNode key) =>
+        key is YamlScalarNode { Value: "<<" } scalar
+        && (scalar.Tag.IsEmpty
+            ? IsPlain(scalar)
+            : string.Equals(scalar.Tag.Value, YamlTagPrefix + "merge", StringComparison.Ordinal));
+
+    private static bool HasMergeKey(YamlMappingNode map)
+    {
+        foreach (var (key, _) in map.Children)
+        {
+            if (IsMergeKey(key))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns the members of <paramref name="map"/> after YAML merge keys are applied, in
+    /// the order they are sent.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The rules (YAML merge-key type).</strong> A <c>&lt;&lt;</c> key's value is a
+    /// mapping or a sequence of mappings, usually aliases. Their members are merged into the
+    /// containing mapping; a key the containing mapping writes explicitly wins over a merged
+    /// one wherever either appears, and within a sequence an earlier mapping wins over a
+    /// later one. A merged mapping's own merge keys are applied first, by the same rules. The
+    /// <c>&lt;&lt;</c> key itself is not a member.
+    /// </para>
+    /// <para>
+    /// <strong>The order (vouchfx's choice; YAML leaves mapping order unspecified).</strong>
+    /// Members appear in document order of the containing mapping: an explicit key at its own
+    /// position, and the merged members at the position of the <c>&lt;&lt;</c> key, in the
+    /// order of the merged mapping (for a sequence, the first mapping's members, then each
+    /// later mapping's members not already supplied). Members a merged mapping supplies but
+    /// the containing mapping overrides are not emitted at the merge position; the explicit
+    /// key keeps its own position.
+    /// </para>
+    /// <para>
+    /// <strong>Bounded.</strong> Each mapping is resolved once per body and the result reused
+    /// at every site that merges it (the memo is keyed by reference, so this is the
+    /// representation model's DAG, not its expansion). Every merged member examined at a
+    /// site is charged to the body's node budget, so a merge chain that amplifies runs the
+    /// same budget out as an amplifying alias does. Merge chains are limited to
+    /// <see cref="MaxBodyDepth"/> levels, which also bounds this recursion's stack.
+    /// </para>
+    /// </remarks>
+    private static List<KeyValuePair<string, YamlNode>> ResolveEntries(
+        YamlMappingNode map,
+        BodyConversion conversion,
+        int mergeDepth)
+    {
+        if (conversion.Resolved.TryGetValue(map, out var cached))
+            return cached;
+
+        if (!conversion.Resolving.Add(map))
+            throw new InvalidOperationException(DescribeMergeCycle(conversion.Step, map));
+
+        try
+        {
+            var explicitKeys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (key, _) in map.Children)
+            {
+                if (!IsMergeKey(key))
+                    explicitKeys.Add(KeyText(key));
+            }
+
+            var placed = new HashSet<string>(StringComparer.Ordinal);
+            var entries = new List<KeyValuePair<string, YamlNode>>(map.Children.Count);
+            foreach (var (key, value) in map.Children)
+            {
+                if (!IsMergeKey(key))
+                {
+                    var text = KeyText(key);
+                    placed.Add(text);
+                    entries.Add(new KeyValuePair<string, YamlNode>(text, value));
+                    continue;
+                }
+
+                if (mergeDepth > MaxBodyDepth)
+                    throw new InvalidOperationException(DescribeMergeTooDeep(conversion.Step, key));
+
+                IEnumerable<YamlNode> sources;
+                if (value is YamlSequenceNode sequence)
+                {
+                    RequireCollectionTag(sequence, YamlSeqTag, conversion.Step);
+                    sources = sequence.Children;
+                }
+                else
+                {
+                    sources = new[] { value };
+                }
+
+                foreach (var source in sources)
+                {
+                    if (source is not YamlMappingNode merged)
+                        throw new InvalidOperationException(
+                            DescribeMergeNotMapping(conversion.Step, key, value, source));
+
+                    RequireCollectionTag(merged, YamlMapTag, conversion.Step);
+                    foreach (var member in ResolveEntries(merged, conversion, mergeDepth + 1))
+                    {
+                        conversion.Charge();
+                        if (!explicitKeys.Contains(member.Key) && placed.Add(member.Key))
+                            entries.Add(member);
+                    }
+                }
+            }
+
+            conversion.Resolved.Add(map, entries);
+            return entries;
+        }
+        finally
+        {
+            conversion.Resolving.Remove(map);
+        }
+    }
+
+    /// <summary>
+    /// Refuses a mapping or sequence carrying an explicit tag other than its own core-schema
+    /// tag (<c>!!map</c> / <c>!!seq</c>) or the non-specific <c>!</c>.
+    /// </summary>
+    private static void RequireCollectionTag(YamlNode node, string allowedTag, YamlMappingNode step)
+    {
+        var tag = node.Tag;
+        if (tag.IsEmpty || tag.IsNonSpecific
+            || string.Equals(tag.Value, allowedTag, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(DescribeUnsupportedTag(step, node));
     }
 
     /// <summary>
@@ -2102,8 +2307,11 @@ public sealed class HttpRestProvider
     /// Renders the 1-based line and column of <paramref name="node"/> for a diagnostic.
     /// </summary>
     /// <remarks>
-    /// Used ONLY by the depth message, where the offending node is a node the parser read at
-    /// that position. It is deliberately NOT used by the node-budget message: YamlDotNet's
+    /// Used by the depth message, where the offending node is a node the parser read at that
+    /// position, and by the tag and merge-key messages, where the offending node is the tagged
+    /// node or the <c>&lt;&lt;</c> key. For those an aliased node carries its ANCHOR's mark,
+    /// which is where the tag or the merge key is actually written, so the position is the
+    /// one to edit. It is deliberately NOT used by the node-budget message: YamlDotNet's
     /// representation model shares one node instance across every alias site, so the node a
     /// budget breach lands on carries the ANCHOR's mark, and printing it would point the author
     /// at the definition rather than at the <c>*alias</c> that multiplied it.
@@ -2154,23 +2362,185 @@ public sealed class HttpRestProvider
     }
 
     /// <summary>
-    /// Maps a YAML scalar to the closest JSON node, preserving YAML 1.1 typing for
-    /// unquoted plain scalars and treating any explicitly-quoted scalar as a string.
+    /// Message for a merge key whose value, or one of whose sequence entries, is not a
+    /// mapping.
     /// </summary>
-    private static System.Text.Json.Nodes.JsonValue? ScalarToJsonNode(YamlScalarNode scalar)
+    private static string DescribeMergeNotMapping(
+        YamlMappingNode step,
+        YamlNode mergeKey,
+        YamlNode value,
+        YamlNode offending)
+    {
+        var found = ReferenceEquals(value, offending)
+            ? "its value is " + DescribeKind(offending)
+            : "its sequence holds " + DescribeKind(offending) + " at " + DescribeMark(offending);
+        return "http.rest: the 'body' of "
+            + DescribeStep(step)
+            + " has a merge key '<<' at "
+            + DescribeMark(mergeKey)
+            + " that cannot be applied: "
+            + found
+            + ". A merge key takes a mapping, usually an alias such as '<<: *defaults', or a "
+            + "sequence of mappings such as '<<: [*first, *second]'. This is an authoring "
+            + "fault, not a fault in the service under test: fix the merge, or quote the key "
+            + "(\"<<\") to send a member literally named '<<'.";
+    }
+
+    /// <summary>Message for a mapping that merges itself, directly or through other mappings.</summary>
+    private static string DescribeMergeCycle(YamlMappingNode step, YamlMappingNode map)
+    {
+        return "http.rest: the 'body' of "
+            + DescribeStep(step)
+            + " merges the mapping at "
+            + DescribeMark(map)
+            + " into itself through a chain of merge keys ('<<'). This is an authoring fault, "
+            + "not a fault in the service under test: break the cycle and re-run.";
+    }
+
+    /// <summary>Message for a chain of merged mappings deeper than <see cref="MaxBodyDepth"/>.</summary>
+    private static string DescribeMergeTooDeep(YamlMappingNode step, YamlNode mergeKey)
+    {
+        return "http.rest: the 'body' of "
+            + DescribeStep(step)
+            + " chains merge keys ('<<') more than "
+            + MaxBodyDepth.ToString(CultureInfo.InvariantCulture)
+            + " mappings deep (reached at "
+            + DescribeMark(mergeKey)
+            + "). This is an authoring fault, not a fault in the service under test: "
+            + "flatten the merged mappings and re-run.";
+    }
+
+    /// <summary>
+    /// Message for a body node carrying a tag a request body does not support, or a
+    /// collection tag on the wrong kind of node.
+    /// </summary>
+    private static string DescribeUnsupportedTag(YamlMappingNode step, YamlNode node)
+    {
+        return "http.rest: the 'body' of "
+            + DescribeStep(step)
+            + " uses the YAML tag '"
+            + DescribeTag(node.Tag)
+            + "' on "
+            + DescribeKind(node)
+            + " at "
+            + DescribeMark(node)
+            + ", which a request body does not support. A body value accepts only the YAML "
+            + "core-schema tags !!str, !!int, !!float, !!bool and !!null (and !!timestamp, "
+            + "sent as the text written); a mapping accepts only !!map and a sequence only "
+            + "!!seq. This is an authoring fault, not a fault in the service under test: "
+            + "remove the tag, or quote the value to send it as a string.";
+    }
+
+    /// <summary>Message for a scalar whose content does not fit its explicit tag.</summary>
+    private static string DescribeTagMismatch(YamlMappingNode step, YamlScalarNode scalar, string reason)
+    {
+        var tag = DescribeTag(scalar.Tag);
+        return "http.rest: the 'body' of "
+            + DescribeStep(step)
+            + " tags the value at "
+            + DescribeMark(scalar)
+            + " as "
+            + tag
+            + ", but "
+            + reason
+            + ". An explicit tag decides the JSON type whether or not the value is quoted. "
+            + "This is an authoring fault, not a fault in the service under test: correct "
+            + "the value, or remove the tag and let the value's own form decide its type.";
+    }
+
+    /// <summary>Names a node's kind for a diagnostic.</summary>
+    private static string DescribeKind(YamlNode node) => node switch
+    {
+        YamlMappingNode => "a mapping",
+        YamlSequenceNode => "a sequence",
+        YamlScalarNode => "a scalar",
+        _ => "an unresolved node",
+    };
+
+    /// <summary>
+    /// Renders a tag the way an author writes it (<c>!!int</c> for a core-schema tag, the
+    /// local form such as <c>!money</c> as written, <c>!&lt;…&gt;</c> otherwise), with any
+    /// character outside printable ASCII escaped so the diagnostic stays ASCII.
+    /// </summary>
+    private static string DescribeTag(YamlDotNet.Core.TagName tag)
+    {
+        if (tag.IsEmpty)
+            return "?";
+
+        var value = tag.Value;
+        string written;
+        if (value.StartsWith(YamlTagPrefix, StringComparison.Ordinal))
+            written = string.Concat("!!", value.AsSpan(YamlTagPrefix.Length));
+        else if (value.StartsWith('!'))
+            written = value;
+        else
+            written = "!<" + value + ">";
+
+        if (written.Length > 128)
+            written = string.Concat(written.AsSpan(0, 128), "...");
+
+        var sb = new System.Text.StringBuilder(written.Length);
+        foreach (var ch in written)
+        {
+            if (ch is >= ' ' and <= '~' && ch != '\'')
+                sb.Append(ch);
+            else
+                sb.Append("\\u").Append(((int)ch).ToString("X4", CultureInfo.InvariantCulture));
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Maps a YAML scalar in a structured body to its JSON value.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The rules, in the order they apply (ZEB-67):
+    /// </para>
+    /// <list type="number">
+    ///   <item>An explicit tag decides the type, whatever the style: see
+    ///   <see cref="TaggedScalarToJsonNode"/>.</item>
+    ///   <item>A single- or double-quoted scalar is a string, so <c>"123"</c> stays a
+    ///   string and so does an inline JSON fragment.</item>
+    ///   <item>A literal (<c>|</c>) or folded (<c>&gt;</c>) block scalar is a string, in
+    ///   every chomping form, carrying exactly the text YAML defines for it — the
+    ///   representation model has already applied folding and chomping, so <c>|</c> keeps
+    ///   one trailing newline, <c>|-</c> none and <c>|+</c> all of them.</item>
+    ///   <item>A plain empty value (<c>note:</c>) is null, the same as <c>null</c> and
+    ///   <c>~</c>, as YAML's core schema defines it.</item>
+    ///   <item>Any other plain scalar is typed from its text, unchanged since S07-B-02a:
+    ///   <c>true</c>/<c>false</c> (three spellings each) are booleans, <c>null</c>/<c>~</c>
+    ///   are null, and text that parses as a decimal integer or a floating-point number is
+    ///   a number (<c>007</c> is 7, <c>1.50</c> is 1.5, <c>1e3</c> is 1000). Everything else,
+    ///   including <c>0x1F</c>, <c>.inf</c>, <c>yes</c> and every <c>{placeholder}</c> or
+    ///   <c>${secret:...}</c> token, is a string.</item>
+    /// </list>
+    /// </remarks>
+    private static System.Text.Json.Nodes.JsonValue? ScalarToJsonNode(
+        YamlScalarNode scalar,
+        YamlMappingNode step)
     {
         var value = scalar.Value ?? string.Empty;
 
-        // An explicitly-quoted scalar is always a string — honour the author's intent
-        // (e.g. "123" stays a string, an inline JSON fragment stays a string).
+        if (!scalar.Tag.IsEmpty)
+            return TaggedScalarToJsonNode(scalar, value, step);
+
+        // A quoted scalar is always a string — honour the author's intent (e.g. "123" stays
+        // a string, an inline JSON fragment stays a string). A block scalar is the same:
+        // YAML gives '|' and '>' no implicit typing, so '|' holding 123 is the text "123\n".
         if (scalar.Style is YamlDotNet.Core.ScalarStyle.SingleQuoted
-            or YamlDotNet.Core.ScalarStyle.DoubleQuoted)
+            or YamlDotNet.Core.ScalarStyle.DoubleQuoted
+            or YamlDotNet.Core.ScalarStyle.Literal
+            or YamlDotNet.Core.ScalarStyle.Folded)
         {
             return System.Text.Json.Nodes.JsonValue.Create(value);
         }
 
+        // A plain empty value is YAML's null, as 'null' and '~' are (and as expect.json
+        // already reads it). An empty STRING is written quoted: "" or ''.
         if (value.Length == 0)
-            return System.Text.Json.Nodes.JsonValue.Create(string.Empty);
+            return null;
 
         // YAML 1.1 null tokens.
         if (value is "null" or "Null" or "NULL" or "~")
@@ -2190,5 +2560,224 @@ public sealed class HttpRestProvider
 
         // Everything else (including {placeholder} / ${secret:...} tokens) is a string.
         return System.Text.Json.Nodes.JsonValue.Create(value);
+    }
+
+    /// <summary>
+    /// Maps an explicitly tagged scalar to the JSON value its tag names, or refuses it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The tag wins over the style: <c>!!int "5"</c> is the number 5 and <c>!!str 123</c>
+    /// the string "123". Content is checked against YAML 1.2's core schema:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><c>!!str</c> and the non-specific <c>!</c>: the text, as a string (an empty
+    ///   value is <c>""</c>, not null).</item>
+    ///   <item><c>!!int</c>: <c>[-+]?[0-9]+</c> (decimal, so <c>010</c> is 10, as for an
+    ///   untagged value), <c>0o[0-7]+</c> or <c>0x[0-9a-fA-F]+</c>. A decimal integer of any
+    ///   length is sent exactly; octal and hexadecimal must fit in 64 bits.</item>
+    ///   <item><c>!!float</c>: a decimal number with optional fraction and exponent. JSON
+    ///   has no infinity or NaN, so <c>.inf</c>/<c>.nan</c> and a value that overflows a
+    ///   double are refused.</item>
+    ///   <item><c>!!bool</c>: <c>true</c>, <c>True</c>, <c>TRUE</c>, <c>false</c>,
+    ///   <c>False</c>, <c>FALSE</c>. YAML 1.1's <c>yes</c>/<c>no</c>/<c>on</c>/<c>off</c> are
+    ///   refused, matching how an untagged <c>yes</c> stays a string.</item>
+    ///   <item><c>!!null</c>: empty, <c>~</c>, <c>null</c>, <c>Null</c>, <c>NULL</c>.</item>
+    ///   <item><c>!!timestamp</c>: the text as written, as a string — what the body sent
+    ///   before tags were read, since JSON has no timestamp type.</item>
+    /// </list>
+    /// <para>
+    /// Any other tag (a local tag such as <c>!money</c>, <c>!!binary</c>, a global tag) is
+    /// refused naming the tag, rather than silently ignored. That agrees with schema
+    /// validation, which already refuses an unresolved tag before any step binds.
+    /// </para>
+    /// </remarks>
+    private static System.Text.Json.Nodes.JsonValue? TaggedScalarToJsonNode(
+        YamlScalarNode scalar,
+        string value,
+        YamlMappingNode step)
+    {
+        if (scalar.Tag.IsNonSpecific)
+            return System.Text.Json.Nodes.JsonValue.Create(value);
+
+        var tag = scalar.Tag.Value;
+        if (!tag.StartsWith(YamlTagPrefix, StringComparison.Ordinal))
+            throw new InvalidOperationException(DescribeUnsupportedTag(step, scalar));
+
+        switch (tag.Substring(YamlTagPrefix.Length))
+        {
+            case "str":
+            case "timestamp":
+                return System.Text.Json.Nodes.JsonValue.Create(value);
+
+            case "null":
+                if (value is "" or "~" or "null" or "Null" or "NULL")
+                    return null;
+                throw new InvalidOperationException(DescribeTagMismatch(
+                    step, scalar, "the value is not one of the null forms (empty, ~, null, Null, NULL)"));
+
+            case "bool":
+                if (value is "true" or "True" or "TRUE")
+                    return System.Text.Json.Nodes.JsonValue.Create(true);
+                if (value is "false" or "False" or "FALSE")
+                    return System.Text.Json.Nodes.JsonValue.Create(false);
+                throw new InvalidOperationException(DescribeTagMismatch(
+                    step, scalar, "the value is not one of true, True, TRUE, false, False, FALSE"));
+
+            case "int":
+                return ParseTaggedInt(scalar, value, step);
+
+            case "float":
+                return ParseTaggedFloat(scalar, value, step);
+
+            default:
+                throw new InvalidOperationException(DescribeUnsupportedTag(step, scalar));
+        }
+    }
+
+    /// <summary>Converts the content of a <c>!!int</c> scalar, or refuses it.</summary>
+    private static System.Text.Json.Nodes.JsonValue ParseTaggedInt(
+        YamlScalarNode scalar,
+        string value,
+        YamlMappingNode step)
+    {
+        // 0o / 0x: core-schema octal and hexadecimal, unsigned, at most 64 bits.
+        if (value.Length > 2 && value[0] == '0' && (value[1] == 'o' || value[1] == 'x'))
+        {
+            var radix = value[1] == 'o' ? 8 : 16;
+            ulong accumulated = 0;
+            var digits = value.AsSpan(2);
+            var valid = true;
+            foreach (var ch in digits)
+            {
+                var digit = ch switch
+                {
+                    >= '0' and <= '9' => ch - '0',
+                    >= 'a' and <= 'f' => ch - 'a' + 10,
+                    >= 'A' and <= 'F' => ch - 'A' + 10,
+                    _ => int.MaxValue,
+                };
+                if (digit >= radix)
+                {
+                    valid = false;
+                    break;
+                }
+
+                if (accumulated > (ulong.MaxValue - (ulong)digit) / (ulong)radix)
+                {
+                    throw new InvalidOperationException(DescribeTagMismatch(
+                        step, scalar, "the value does not fit in 64 bits"));
+                }
+
+                accumulated = (accumulated * (ulong)radix) + (ulong)digit;
+            }
+
+            if (valid)
+                return System.Text.Json.Nodes.JsonValue.Create(accumulated);
+        }
+        else
+        {
+            // [-+]?[0-9]+, read as decimal whatever its leading zeros.
+            var start = value.Length > 0 && (value[0] == '-' || value[0] == '+') ? 1 : 0;
+            var allDigits = value.Length > start;
+            for (var i = start; i < value.Length && allDigits; i++)
+                allDigits = value[i] is >= '0' and <= '9';
+
+            if (allDigits)
+            {
+                if (long.TryParse(value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var l))
+                    return System.Text.Json.Nodes.JsonValue.Create(l);
+
+                // Beyond 64 bits: JSON numbers have no width, so send the exact integer as a
+                // canonical JSON number token rather than rounding it through a double.
+                var negative = value[0] == '-';
+                var significant = value.AsSpan(start).TrimStart('0');
+                var canonical = (negative ? "-" : string.Empty) + significant.ToString();
+                return System.Text.Json.Nodes.JsonNode.Parse(canonical)!.AsValue();
+            }
+        }
+
+        throw new InvalidOperationException(DescribeTagMismatch(
+            step, scalar, "the value is not an integer (digits with an optional sign, or 0o / 0x followed by octal / hexadecimal digits)"));
+    }
+
+    /// <summary>Converts the content of a <c>!!float</c> scalar, or refuses it.</summary>
+    private static System.Text.Json.Nodes.JsonValue ParseTaggedFloat(
+        YamlScalarNode scalar,
+        string value,
+        YamlMappingNode step)
+    {
+        if (value is ".inf" or ".Inf" or ".INF" or "+.inf" or "+.Inf" or "+.INF"
+            or "-.inf" or "-.Inf" or "-.INF" or ".nan" or ".NaN" or ".NAN")
+        {
+            throw new InvalidOperationException(DescribeTagMismatch(
+                step, scalar, "JSON has no infinity or NaN"));
+        }
+
+        if (!IsCoreSchemaFloat(value))
+        {
+            throw new InvalidOperationException(DescribeTagMismatch(
+                step, scalar, "the value is not a number (digits with an optional sign, fraction and exponent)"));
+        }
+
+        var d = double.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture);
+        if (!double.IsFinite(d))
+        {
+            throw new InvalidOperationException(DescribeTagMismatch(
+                step, scalar, "the value is too large for a JSON number"));
+        }
+
+        return System.Text.Json.Nodes.JsonValue.Create(d);
+    }
+
+    /// <summary>
+    /// True for YAML 1.2 core-schema float text without the infinity and NaN forms:
+    /// <c>[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?</c>.
+    /// </summary>
+    private static bool IsCoreSchemaFloat(string value)
+    {
+        var i = 0;
+        if (i < value.Length && (value[i] == '-' || value[i] == '+'))
+            i++;
+
+        var integerDigits = 0;
+        while (i < value.Length && value[i] is >= '0' and <= '9')
+        {
+            i++;
+            integerDigits++;
+        }
+
+        var fractionDigits = 0;
+        if (i < value.Length && value[i] == '.')
+        {
+            i++;
+            while (i < value.Length && value[i] is >= '0' and <= '9')
+            {
+                i++;
+                fractionDigits++;
+            }
+        }
+
+        if (integerDigits == 0 && fractionDigits == 0)
+            return false;
+
+        if (i < value.Length && (value[i] == 'e' || value[i] == 'E'))
+        {
+            i++;
+            if (i < value.Length && (value[i] == '-' || value[i] == '+'))
+                i++;
+
+            var exponentDigits = 0;
+            while (i < value.Length && value[i] is >= '0' and <= '9')
+            {
+                i++;
+                exponentDigits++;
+            }
+
+            if (exponentDigits == 0)
+                return false;
+        }
+
+        return i == value.Length;
     }
 }

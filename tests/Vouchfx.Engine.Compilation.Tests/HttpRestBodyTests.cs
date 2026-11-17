@@ -42,6 +42,10 @@
 //      inside the budget and still produces a body orders of magnitude larger than the
 //      node count suggests.
 //
+// ZEB-67 addition (execution): a body bound from YAML with a merge key and a block scalar
+// still has its placeholder and secret resolved at run time. The bind-level rows for merge
+// keys, block scalars, empty values and tags are in HttpRestBodyYamlSemanticsTests.
+//
 // The in-process responder is an extension of the JSON responder in
 // HttpRestCaptureTests: it ECHOES the inbound request body back as the response
 // body AND records it for direct assertion, so the sent body can be observed
@@ -356,6 +360,76 @@ public sealed class HttpRestBodyTests
             }
             Assert.NotNull(outcome.Observation);
             Assert.DoesNotContain(secretValue, outcome.Observation!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            responder.Dispose();
+            Environment.SetEnvironmentVariable(envName, null);
+        }
+    }
+
+    /// <summary>
+    /// ZEB-67: a body bound from YAML with a merge key and a block scalar, both carrying a
+    /// <c>{placeholder}</c> and a <c>${secret:env/...}</c> reference, is resolved at run time
+    /// exactly like any other body string — the YAML conversion happens at bind time, the
+    /// substitution at execution time, and the responder receives the resolved JSON.
+    /// </summary>
+    [Fact]
+    public async Task Execute_MergedAndBlockScalarBody_ResolvesPlaceholderAndSecret_AtRuntime()
+    {
+        var envName = "VOUCHFX_BODY_MERGE_" + Guid.NewGuid().ToString("N");
+        const string secretValue = "merged-s3cr3t";
+
+        Environment.SetEnvironmentVariable(envName, secretValue);
+        var port = FindFreePort();
+        var (baseUrl, responder) = StartEchoResponder(port);
+        try
+        {
+            var model = BindYaml($$"""
+                id: merged-run
+                target: svc
+                method: POST
+                path: /orders
+                shared: &auth
+                  token: "${secret:env/{{envName}}}"
+                  amount: 10
+                body:
+                  <<: *auth
+                  amount: 20
+                  note: |
+                    order {orderId}
+                  done: true
+                """);
+
+            Assert.Equal(
+                "{\"token\":\"${secret:env/" + envName + "}\",\"amount\":20,\"note\":\"order {orderId}\\n\",\"done\":true}",
+                model.Body);
+
+            var provider = new HttpRestProvider();
+            var fragment = provider.Emit(model with { Expect = new HttpExpect(Status: 200) }, new StubCtx("merged-run"));
+            var assembled = CsxAssembler.Assemble(new[] { ("merged-run", fragment) });
+            var compiled = RoslynScriptCompiler.CompileOnce(
+                assembled.CsxSource, additionalReferencePaths: s_refs);
+
+            var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                [VarKeys.Service("svc")] = baseUrl,
+                ["orderId"] = "order-42",
+            };
+            var accessor = new SecretAccessor(
+                new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() }));
+            var globals = new ScriptGlobalVariables(
+                vars,
+                new Dictionary<string, object>(StringComparer.Ordinal),
+                accessor);
+
+            await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+            var outcome = Assert.IsType<StepOutcome>(vars[VarKeys.Outcome(CsxFragment.SanitiseId("merged-run"))]);
+            Assert.Equal(Verdict.Pass, outcome.Verdict);
+            Assert.Equal(
+                "{\"token\":\"" + secretValue + "\",\"amount\":20,\"note\":\"order order-42\\n\",\"done\":true}",
+                responder.LastBody);
         }
         finally
         {
