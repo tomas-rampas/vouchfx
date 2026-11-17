@@ -57,6 +57,8 @@ ready-to-run `vouchfx-run` job that `extends:` it.
 | `VOUCHFX_FAIL_ON_ENV_ERROR` | `"false"` | When truthy, append `--fail-on-env-error` (Environment-error verdict fails the job, exit 3). |
 | `VOUCHFX_FAIL_ON_INCONCLUSIVE` | `"false"` | When truthy, append `--fail-on-inconclusive` (Inconclusive verdict fails the job, exit 4). |
 | `VOUCHFX_PREWARM_IMAGES` | `""` | Optional whitespace/newline-separated list of images to `docker pull` before the run (best-effort, non-fatal). Pin each entry to a digest. |
+| `VOUCHFX_SETUP_SCRIPT` | `""` | Optional path (relative to the project root) of a shell script run before the suite, to produce fixture files the suite declares but does not ship. A named-but-missing script fails the job. |
+| `VOUCHFX_TELEMETRY_ENDPOINT`, `VOUCHFX_TELEMETRY_INSTALL_ID`, `VOUCHFX_TELEMETRY_TOKEN` | unset | Optional telemetry. All three must be set for telemetry from CI to activate; set the token as a masked variable and use one GUID per project as the install id. The template header documents them. |
 
 Truthy = `true` / `1` / `yes` / `on` (any case). Anything else (including the `"false"`
 default) contributes no flag.
@@ -219,9 +221,11 @@ supply digests — mirroring the GitHub header guidance.)
   its own `docker exec` before the suite, so a failed build keeps its exit code and prints
   no verdict legend; and no longer sets `TESTCONTAINERS_HOST_OVERRIDE`, which the runner
   script already cleared before starting the engine. These three post-release changes
-  remain under `Unreleased`; the live acceptance below does not make them part of Core 1.2.0.
+  shipped in Core 1.2.1; the live acceptance below exercised them before that release.
 
 ### Live verification, 23 October 2026 (UTC)
+
+This measurement used the `sdk:8.0` image and predates the .NET 10 default image, which has not been measured on GitLab SaaS.
 
 Template and engine source were both pinned to
 `93881722b5ccba2631814394d76f10e7dd36568e`; the private acceptance consumer was

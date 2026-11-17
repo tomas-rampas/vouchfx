@@ -32,7 +32,8 @@ source use runtime `RollForward=Major`, so they also run on a newer major runtim
 is absent, but never on .NET 8 or 9. The provider SDK packages (`Vouchfx.Sdk`,
 `Vouchfx.Sdk.Testing` and the engine libraries they depend on) keep their `net8.0` assets for
 the v1.x series, so providers built against them keep working. Older published tools retain
-their original runtime requirements; releases built before this change target .NET 8.
+their original runtime requirements; releases up to v1.2.1 target .NET 8, so the .NET 10 requirement
+applies to builds of current source and to the first release built from it.
 
 Run `dotnet --version` from the repository to check the selected SDK. See Microsoft's
 [SDK selection rules](https://learn.microsoft.com/en-us/dotnet/core/tools/global-json#rollforward).
@@ -99,7 +100,7 @@ carries a non-empty password are affected; the
 [security policy](https://github.com/tomas-rampas/vouchfx/blob/main/SECURITY.md#published-121-tool-and-ghsa-473q-m89c-ghf8)
 lists every exclusion. On 1.2.1, set `SslCa`, or use 1.4.0 once it is published.
 
-**Using vouchfx-mcp?** Keep its CLI at the version required by the installed MCP package. Published MCP 1.1.0 [pins Core 1.2.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN), whose full version is `1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8`; it does not accept Core 1.2.1. If you also need another Core version, install the MCP-compatible CLI in a separate tool directory and put that directory first on `PATH` for the MCP server process.
+**Using vouchfx-mcp?** Keep its CLI at the version required by the installed MCP package. Published MCP 1.1.0 [pins Core 1.2.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN), whose full version is `1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8`; it does not accept any other Core version, including 1.2.1 and a later release, until an MCP release pins it. If you also need another Core version, install the MCP-compatible CLI in a separate tool directory and put that directory first on `PATH` for the MCP server process.
 
 ### Native installers
 
@@ -142,11 +143,12 @@ bundle beside its host assembly, so changing directories does not change the exe
 
 **Legacy rc.6 and source/custom AppHosts:** `1.0.0-rc.6` lacks this bundled payload; on a clean machine
 its container topology fails before Docker starts. Upgrade the global tool to the latest stable release.
-If you must retain the legacy package or use an unbundled custom AppHost, supply the exact Aspire 13.4.2 tools
+If you must retain the legacy package or use an unbundled custom AppHost, supply the exact Aspire tools that build pins
+(13.4.2 for rc.6; for a source build, the Aspire version in `Directory.Packages.props`)
 through `ASPIRE_DCP_PATH`. Set it to the directory containing `dcp`/`dcp.exe`, not the executable:
 
 ```powershell
-$env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/13.4.2/tools"
+$env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/<aspire-version>/tools"
 ```
 
 This override requires those matching tools to exist; setting a path does not install them. Older
@@ -186,7 +188,7 @@ A source build admits providers against the `VouchfxEngineVersion` fallback in `
 
 A test file has four top-level sections; only `steps` is mandatory:
 
-- **`metadata`** — name, owner, tags, description. Used for reporting and filtering; no execution effect.
+- **`metadata`** — name, owner, tags, description. Used for reporting and for selecting scenarios (`--tag`, `--owner`); it does not change how a step runs.
 - **`environment`** — inline `services` (containers under test), `dependencies` (managed Aspire resources like databases), optional `seed` (SQL/fixtures applied after topology is healthy); or an exclusive `source` selecting an owned Compose environment.
 - **`variables`** — optional constants pre-loaded into the shared context, available to all steps.
 - **`steps`** — the ordered list of actions and assertions (HTTP calls, database queries, scripts, listeners).
@@ -669,16 +671,16 @@ Now that you have a passing test, here's where to go:
 
 ### Recipes & cookbook
 
-The `docs/recipes.md` file collects common testing patterns: capturing and reusing values across steps, waiting for eventual consistency with `verifyMode: RETRY`, seeding databases, calling webhooks, and publishing/consuming Kafka events. Also see `docs/common-patterns.md` for authoring patterns and `docs/troubleshooting.md` for failure modes and fixes.
+The [Recipes](recipes.md) page collects common testing patterns: capturing and reusing values across steps, waiting for eventual consistency with `verifyMode: RETRY`, seeding databases, calling webhooks, and publishing/consuming Kafka events. Also see [Common patterns](common-patterns.md) for authoring patterns and [Troubleshooting](troubleshooting.md) for failure modes and fixes.
 
 ### Full DSL specification
 
-For step types beyond `http.rest` (database assertions, scripts, message queues, webhooks), see [`docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md`](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md). It covers:
+For step types beyond `http.rest` (database assertions, scripts, message queues, webhooks), see the [YAML DSL specification](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md). It covers:
 
 - Every step family across twenty-five Core providers — eleven families: HTTP calls (`http`: REST, SOAP), database assertions (`db-assert`: PostgreSQL, MySQL, SQL Server, MongoDB, DynamoDB), message publishing (`mq-publish`) and message expectations (`mq-expect`) — both over Kafka, RabbitMQ, NATS, Azure Service Bus, and Redis Streams — cache assertions (`cache-assert`: Redis, Elasticsearch), email (`mail-expect`: SMTP), metrics (`metrics-assert`: Prometheus), storage (`storage-assert`: S3), distributed tracing (`trace-expect`: OTLP), webhooks (`webhook-listen`), and scripts (`script`: C#).
 - Capture and placeholder syntax: threading state forward.
 - Verifymode: `IMMEDIATE` (assert now) vs. `RETRY` (engine-owned polling with backoff).
-- Secrets: reference-only syntax (`${secret:env/NAME}` / `${secret:vault/path}`), resolved at execution time.
+- Secrets: reference-only syntax (`${secret:env/NAME}` / `${secret:vault/<kvPath>#<field>}`), resolved at run time, never at compile time.
 - Seed: SQL fixtures and warm-up logic applied before the first step.
 
 ### Real-world sample applications
@@ -687,7 +689,7 @@ For worked end-to-end examples with real C#, Python, and Java services, see the 
 
 ### Architecture Blueprint
 
-For deep understanding of how the platform is built, memory safety, orchestration, and the provider model, read [`docs/01_Technical_Architecture_and_Engineering_Blueprint.md`](01_Technical_Architecture_and_Engineering_Blueprint.md).
+For deep understanding of how the platform is built, memory safety, orchestration, and the provider model, read the [architecture blueprint](01_Technical_Architecture_and_Engineering_Blueprint.md).
 
 ### CI integration
 

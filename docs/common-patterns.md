@@ -531,7 +531,7 @@ steps:
 
 ## The four verdicts and `continueOnFailure`
 
-vouchfx distinguishes four outcomes (see `docs/01` §12.1):
+vouchfx distinguishes four outcomes (see blueprint [§12.1](01_Technical_Architecture_and_Engineering_Blueprint.md#121-the-verdict-taxonomy)):
 
 | Verdict | Meaning | CI impact |
 |---------|---------|-----------|

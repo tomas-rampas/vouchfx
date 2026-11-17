@@ -39,9 +39,9 @@ implementation, not a claim that every release requirement or open defect is res
   confirmation probe connects with the same material a step will and reports a named level —
   `TransportConfirmed`, or `AuthenticatedRoundTrip` where the engine can complete a protocol round trip
   and, under `mtls`, show that the peer *refused* an anonymous client. A declaration the engine cannot
-  confirm breaks CI with no gating flags set — one of four deliberate exceptions to "only `Fail` breaks
-  CI by default" (the others are a parse failure, a suite refused before anything ran, and a scenario
-  refused at a provider- or engine-surface guard; see
+  confirm breaks CI with no gating flags set — one of five deliberate exceptions to "only `Fail` breaks
+  CI by default" (the others are a parse failure, a suite refused before anything ran, a scenario
+  refused at a provider- or engine-surface guard, and a typed authoring, schema or compilation refusal; see
   [CI integration](ci-integration.md)). Which technologies this reaches, and which it does not, is set out per integration in the
   [security compatibility matrix](security-matrix.md).
 - **Frozen public contracts** — golden files guard the language schema, provider SDK surface and

@@ -10,7 +10,10 @@
 > absent, never on .NET 8 or 9. The provider-contract libraries keep `net8.0` for the v1.x series.
 > Releases published before the move remain `net8.0` tools. The choice of a framework-dependent
 > `PackAsTool` global tool alongside self-contained archives, without single-file publishing, is
-> unchanged. The text below is kept as recorded.
+> unchanged. The text below is kept as recorded. The same applies to the Aspire version and the
+> `dcp/13.4.2/<rid>/tools/` path it names: they describe the build as decided (up to v1.2.1). The
+> bundled version is whichever Aspire release `Directory.Packages.props` pins, and the directory is
+> `dcp/<aspire-version>/<rid>/tools/`.
 
 ## Problem and evidence
 

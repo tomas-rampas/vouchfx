@@ -461,6 +461,11 @@ jobs:
 | `prewarm-images` | string | (empty) | Optional newline-separated list of container images (one per line) to `docker pull` before the run, warming the Docker cache and mitigating Aspire/DCP's ~20-second per-resource cold-start watchdog. Each pull is best-effort and non-fatal. |
 | `setup-script` | string | (empty) | Optional path (relative to the checkout) of a shell script run on the same runner before the suite, to produce fixture files the suite declares but does not ship — most often the certificates and key or trust stores a `security:` block names. It runs as `bash <path>`, so no executable bit is needed; a named-but-missing script fails the job. See [the mutual-TLS example](https://github.com/tomas-rampas/vouchfx/blob/main/examples/security-mtls.e2e.yaml). |
 | `runs-on` | string | `ubuntu-latest` | The runner label to use. Must provide Docker; `ubuntu-latest` does. |
+| `artifact-name` | string | `vouchfx-reports` | Name of the uploaded reports artefact. Override it when one workflow run calls the reusable workflow more than once, because artefact names are immutable within a run. |
+| `telemetry-endpoint` | string | (empty) | Optional telemetry ingest base URL. Telemetry from CI activates only when this, `telemetry-install-id` and the `telemetry-token` secret are all provided (see [Telemetry](telemetry.md)). |
+| `telemetry-install-id` | string | (empty) | Optional stable install id: any GUID chosen once per caller repository. An invalid value is ignored with a warning. |
+
+The workflow also takes one optional secret, `telemetry-token`, the bearer token for telemetry uploads. Telemetry stays off without it.
 
 ### Isolated SDK on GitHub Actions
 
@@ -517,6 +522,9 @@ vouchfx-run:
 | `VOUCHFX_FAIL_ON_INCONCLUSIVE` | string | `"false"` | When truthy, an inconclusive verdict fails the job with exit code 4. |
 | `VOUCHFX_PREWARM_IMAGES` | string | (empty) | Optional whitespace/newline-separated list of container images to pre-warm. Pin each entry to an immutable digest. |
 | `VOUCHFX_SETUP_SCRIPT` | string | (empty) | Optional path (relative to the project root) of a shell script run before the suite, to produce fixture files the suite declares but does not ship — the GitLab counterpart of the `setup-script` input above. A named-but-missing script fails the job. |
+| `VOUCHFX_TELEMETRY_ENDPOINT` | string | (unset) | Optional telemetry ingest base URL. Not sensitive. Telemetry from CI is environment-configured: it activates only when this, `VOUCHFX_TELEMETRY_INSTALL_ID` and `VOUCHFX_TELEMETRY_TOKEN` are all set (see [Telemetry](telemetry.md)). |
+| `VOUCHFX_TELEMETRY_INSTALL_ID` | string | (unset) | Optional stable install id: any GUID chosen once per project. An invalid value is ignored with a warning. |
+| `VOUCHFX_TELEMETRY_TOKEN` | string | (unset) | Optional bearer token for telemetry uploads. Set it as a masked variable. |
 
 ### Docker-in-Docker and the privileged-runner requirement
 
@@ -560,7 +568,7 @@ Live acceptance on 23 October 2026 also exercised the subsequent template change
 warnings, and genuine NuGet restore and C# compile failures kept build exit 1 without a run verdict.
 Smoke and host-override compatibility controls passed; product failure exited 1 and environment
 errors exited 0 by default or 3 under strict policy. All eight jobs returned to their observed daemon
-baselines. These changes remain under `Unreleased`; see the
+baselines. These changes shipped in Core 1.2.1; see the
 [dated receipt](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/README.md#live-verification-23-october-2026-utc)
 for pipeline/job links, report counts, exact revisions and observation limits.
 
@@ -571,7 +579,7 @@ needed. Self-managed Kubernetes and socket-bind runners remain unmeasured.
 
 See [`ci/gitlab/vouchfx-run.gitlab-ci.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/vouchfx-run.gitlab-ci.yml)
 and [`ci/gitlab/README.md`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/README.md)
-for implementation details.
+for implementation details. The live measurements above predate the .NET 10 default image, which has not been measured on GitLab SaaS.
 
 ---
 
@@ -583,7 +591,7 @@ For production use, pin everything to something immutable.
 
 1. **Pin the `uses:` reference to a full commit SHA**, not a moving branch or tag:
    ```yaml
-   uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.0.0-rc.5
+   uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.2.1
    ```
    A branch or tag ref — including the `v1-alpha`/`v1-rc`/`v1` convenience tags — lets the workflow definition
    change underneath you; a SHA is immutable. The trailing `# vX.Y.Z` comment is not decorative: it is
@@ -624,13 +632,13 @@ opening an MR to bump the pinned SHA and its trailing comment.
 **Resolving a SHA by hand** (the first pin, or without Dependabot/Renovate):
 
 ```bash
-git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-rc.5
+git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.2.1
 ```
 
 Depending on how the release tag was created (both kinds are documented in
 [RELEASING.md](https://github.com/tomas-rampas/vouchfx/blob/main/RELEASING.md)), this prints either
-*two* lines — `refs/tags/v1.0.0-rc.5` (an annotated tag object's own SHA) and
-`refs/tags/v1.0.0-rc.5^{}` (the commit it points at, "peeled") — or a *single* line for a lightweight
+*two* lines — `refs/tags/v1.2.1` (an annotated tag object's own SHA) and
+`refs/tags/v1.2.1^{}` (the commit it points at, "peeled") — or a *single* line for a lightweight
 tag, whose SHA already **is** the commit. **If a `^{}` line is present, take that one**; otherwise the
 single line's SHA is the commit SHA to pin.
 

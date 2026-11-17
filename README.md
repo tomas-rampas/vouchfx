@@ -107,7 +107,7 @@ For inline services, run `docker build` first and reference the resulting image 
 
 | Section | Purpose |
 |---|---|
-| `metadata` | Name, owner, tags, description — drives runner selection and reporting. No execution effect. |
+| `metadata` | Name, owner, tags, description. `owner` and `tags` select scenarios (`--owner`, `--tag`); `name` labels the scenario in reports. With `schemaVersion: v2`, `telemetry: false` suppresses telemetry export for the invocation. Nothing in `metadata` changes how a step runs. |
 | `environment` | Inline `services`, managed `dependencies`, optional `seed` and image defaults; or an exclusive `source` selecting a driver/configuration such as Compose. |
 | `variables` | Constants pre-loaded into the shared context. |
 | `steps` | Ordered; each has an `id`, `type`, and optional `capture`, `verifyMode`, `timeout`, `continueOnFailure`. |
@@ -120,7 +120,7 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
 
 - **Compile once, isolate, unload.** `CSharpScript.EvaluateAsync` leaks an uncollectable assembly per
   call. vouchfx compiles each suite exactly once into a collectible `AssemblyLoadContext` and unloads
-  it — verified at 5,000 load-unload cycles with ~1.3 KB net heap delta, and guarded permanently by a
+  it — verified at 5,000 load-unload cycles with a net heap delta far below the 2 MB gate, and guarded permanently by a
   [CI memory-leak job](https://vouchfx.io/memory-harness/).
 - **Four verdicts, never three.** **Pass**, **Fail**, **Environment error** (unhealthy container,
   image-pull or seed failure) and **Inconclusive** (timeout, unmet capture) stay distinct through the
@@ -154,7 +154,7 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
   the legacy helper stays frozen and existing providers need no rebuild to compose with V2.
 - **Topological parity.** The compiled delegate depends *only* on a typed `ScriptGlobalVariables`, and
   orchestration is its sole producer. That one contract is what lets a suite run unchanged on a laptop,
-  in CI, or against a remote fabric.
+  or in CI; remote execution fabrics are future design (see the [roadmap](https://vouchfx.io/roadmap/)).
 - **Secrets as references.** `${secret:env/…}` and `${secret:vault/…}` resolve at run time,
   never at compile time, and return a typed `SecretString` with no value-returning `ToString()`. The
   reproducibility envelope hashes the reference, never the value. The redaction path has passed a
@@ -207,12 +207,13 @@ vouchfx run ./tests --html ./report.html --junit ./results.xml
 Five Docker-free subcommands round out the loop: `vouchfx validate` runs the full compile-time pipeline
 (schema, parse, AST, provider binding, Roslyn) without starting anything; `vouchfx list` prints the
 startup-sealed step-type catalogue, including configured external providers (with shape-level fields on `--json`); `vouchfx schema` emits the
-composed v1 JSON Schema; `vouchfx scaffold` generates machine-drafted `.e2e.yaml` skeletons from a structured JSON intent; and `vouchfx plan` performs coverage-and-gap analysis over your declared suites,
+composed JSON Schema (v1 by default, `--schema-version v2` for v2, `--environment-driver compose` for the Compose configuration schema); `vouchfx scaffold` generates machine-drafted `.e2e.yaml` skeletons from a structured JSON intent; and `vouchfx plan` performs coverage-and-gap analysis over your declared suites,
 run history, and available providers, emitting findings for coverage gaps (suite never run, step never
 exercised, dependency not asserted, vocabulary missing, service missing HTTP step), history-health signals
 (stale, flaky, fragile, inconclusive-prone), and identity ambiguity. Most take `--json` for tooling;
-in-process hosts can use the public library APIs (`EngineExport`, `PlanExport`, `SuiteScaffolder`)
-in `Vouchfx.Engine.Compilation` and `Vouchfx.Engine.Planning` instead of shelling out.
+in-process hosts can use the public library APIs `EngineExport` and `SuiteScaffolder` in
+`Vouchfx.Engine.Compilation` instead of shelling out. `PlanExport` is available in-tree
+(`Vouchfx.Engine.Planning`) and is not yet a published package.
 
 **Exit codes follow the verdict taxonomy:**
 
@@ -252,7 +253,7 @@ fails.
 ```yaml
 jobs:
   vouchfx-e2e:
-    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@v1-rc
+    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@v1  # convenience tag; pin a full SHA for production (see CI integration)
     with:
       scenario-path: ./tests/e2e
 ```
@@ -265,7 +266,10 @@ template's privileged-runner caveat, the floating-tag contract and the supply-ch
 The [VSCode extension](https://github.com/tomas-rampas/vouchfx/tree/main/tools/vscode-vouchfx) binds
 the frozen v1 JSON Schema to `*.e2e.yaml` files, giving step-type-aware **autocomplete, hover and
 inline validation** as you author. A CI gate keeps the editor's schema byte-for-byte in step with what
-the compiler accepts, so the editor can never suggest a construct the engine would reject. It also
+the compiler accepts, so the editor can never suggest a construct the engine would reject. A schema v2
+suite needs an explicit `# yaml-language-server: $schema=` modeline pointing at a
+`vouchfx schema --schema-version v2` export (see the extension README); without it the editor flags the
+v2 `metadata` fields. The extension also
 provides **C# syntax highlighting** inside `script.csharp` blocks and **Test Explorer integration**
 with per-step verdicts and failing-line decoration. Full in-block C# IntelliSense is a
 [documented fast-follow](https://github.com/tomas-rampas/vouchfx/blob/main/tools/vscode-vouchfx/docs/csharp-intellisense.md).
@@ -388,13 +392,12 @@ To decline the sweep — when deliberately holding a CLI host under a debugger, 
 `VOUCHFX_DRILL_SWEEP=0`. Nothing is then inspected or killed at either end of the lane, and that is
 recorded in the same log.
 
-CI (`.github/workflows/build.yml`) defines a blocking Linux **build** job (build + format + unit
-tests), a blocking **windows-unit** job (restore + Release build + Docker-free unit tests), a
-blocking **memory-leak** job over 5,000 load-unload cycles, a Linux **integration** job for
-Docker/Aspire tests that runs daily on `main` and on manual dispatch from any branch (Actions tab, CI,
-Run workflow, choose the branch) rather than on each pull request or push, so a failure there surfaces on
-the next daily run, not before merge. A blocking **documentation** job builds the site and checks its
-publication boundary.
+CI (`.github/workflows/build.yml`) runs a set of blocking build, test, memory-leak, TLS, documentation
+and workflow-contract jobs on each pull request; the full list is in
+[CI integration](https://vouchfx.io/ci-integration/#this-repositorys-own-ci-layout). The Linux
+**integration** job for Docker/Aspire tests runs daily on `main` and on manual dispatch from any branch
+(Actions tab, CI, Run workflow, choose the branch) rather than on each pull request or push, so a
+failure there surfaces on the next daily run, not before merge.
 
 <details>
 <summary><strong>Repository layout</strong></summary>
