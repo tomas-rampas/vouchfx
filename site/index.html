@@ -94,7 +94,7 @@
     </h1>
     <p class="hero__lede">
       vouchfx compiles declarative <code>.e2e.yaml</code> specs into memory-safe C#, orchestrates the full
-      container topology with <strong>.NET Aspire&nbsp;+&nbsp;Testcontainers</strong>, and proves one business
+      container topology with <strong>.NET Aspire</strong>, and proves one business
       transaction works as it crosses a REST call, a Kafka event, a database mutation and an outbound webhook —
       <em>the seams where distributed systems actually break.</em>
     </p>
@@ -161,7 +161,7 @@
     <div class="flow">
       <div class="flow__node"><span class="flow__k">01</span><h3>Author &amp; validate</h3><p>Write <code>.e2e.yaml</code>; validate against a single JSON Schema before any container starts.</p></div>
       <div class="flow__node"><span class="flow__k">02</span><h3>Compile (once)</h3><p>YAML → AST → CSX → <code>CSharpScript.Create&lt;T&gt;()</code> → <code>.Emit()</code> into a collectible <code>AssemblyLoadContext</code>.</p></div>
-      <div class="flow__node"><span class="flow__k">03</span><h3>Orchestrate</h3><p>Headless .NET Aspire AppHost + Testcontainers bring up services and managed dependencies, health-gated.</p></div>
+      <div class="flow__node"><span class="flow__k">03</span><h3>Orchestrate</h3><p>A headless .NET Aspire AppHost brings up services and managed dependencies, health-gated.</p></div>
       <div class="flow__node"><span class="flow__k">04</span><h3>Execute</h3><p>Invoke the delegate against discovered endpoints; Polly v8 drives <code>RETRY</code> polling under the hood.</p></div>
       <div class="flow__node"><span class="flow__k">05</span><h3>Verdict &amp; unload</h3><p>Emit a verdict to a JSON Lines event stream, <code>.Unload()</code> the context, and reset to baseline.</p></div>
     </div>
@@ -190,7 +190,7 @@
       </div>
       <div class="layer">
         <span class="layer__n">3</span>
-        <div class="layer__body"><h3>Orchestration</h3><p>Aspire AppHost, Testcontainers, health-gated startup.</p></div>
+        <div class="layer__body"><h3>Orchestration</h3><p>Aspire AppHost, health-gated startup.</p></div>
       </div>
       <div class="layer">
         <span class="layer__n">4</span>
@@ -481,7 +481,7 @@ alc.<span class="t">Unload</span>();</code></pre>
   </div>
   <div class="footer__base">
     <span>© 2026 vouchfx · Apache-2.0</span>
-    <span>Source targets .NET 10 LTS · Roslyn · .NET Aspire · Testcontainers · Polly v8</span>
+    <span>Source targets .NET 10 LTS · Roslyn · .NET Aspire · Polly v8</span>
   </div>
 </footer>
 

@@ -1,8 +1,8 @@
 # Security Policy
 
 vouchfx compiles declarative `.e2e.yaml` integration tests into C#, runs them
-through Roslyn, and orchestrates container topologies (.NET Aspire +
-Testcontainers) to test distributed .NET systems end-to-end. Because it executes
+through Roslyn, and orchestrates container topologies (.NET Aspire)
+to test distributed .NET systems end-to-end. Because it executes
 generated code in privileged CI and handles references to secrets, we take
 security reports seriously and aim to respond quickly and transparently.
 
@@ -219,7 +219,7 @@ audit suppression for this advisory.
 Security issues in the parts of this repository the project maintains:
 
 - **The engine** (`Vouchfx.Engine.*`): compilation (parser → AST → CSX →
-  Roslyn), orchestration (Aspire AppHost / Testcontainers), execution (the
+  Roslyn), orchestration (Aspire AppHost), execution (the
   collectible `AssemblyLoadContext` host, Polly resilience), and reporting.
 - **The Core providers**: all twenty-five (`Vouchfx.Steps.*` under
   `src/Providers/Core`).

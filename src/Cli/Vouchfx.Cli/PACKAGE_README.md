@@ -2,7 +2,7 @@
 
 **End-to-end integration testing for distributed systems, authored in YAML.**
 
-vouchfx compiles declarative `.e2e.yaml` tests into memory-safe C# (via Roslyn), orchestrates the container topology your system needs with **.NET Aspire + Testcontainers**, and executes one business transaction as it crosses a REST call, a message-broker event, a database mutation and an outbound webhook — the seams where distributed systems actually break. It is not a unit-test framework and not a UI/browser tool.
+vouchfx compiles declarative `.e2e.yaml` tests into memory-safe C# (via Roslyn), orchestrates the container topology your system needs with **.NET Aspire**, and executes one business transaction as it crosses a REST call, a message-broker event, a database mutation and an outbound webhook — the seams where distributed systems actually break. It is not a unit-test framework and not a UI/browser tool.
 
 ## Install
 

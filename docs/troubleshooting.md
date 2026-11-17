@@ -48,7 +48,7 @@ Cannot connect to the Docker daemon at unix:///var/run/docker.sock
 ```
 
 **What it means:**
-vouchfx orchestrates containers via Docker (Aspire + Testcontainers). If the Docker daemon is not running or not reachable, the topology cannot start.
+vouchfx orchestrates containers via Docker (Aspire). If the Docker daemon is not running or not reachable, the topology cannot start.
 
 **Fix:**
 
@@ -1241,7 +1241,7 @@ ERR invalid password
 ```
 
 **What it means:**
-The managed Redis dependency (provided by Aspire/Testcontainers) has authentication enabled, and your SUT is either:
+The managed Redis dependency (provided by Aspire) has authentication enabled, and your SUT is either:
 1. Not providing the password at all.
 2. Using the wrong password or username.
 

@@ -65,7 +65,7 @@ default) contributes no flag.
 
 ## Docker is required (the topology) — and the privileged-runner caveat
 
-vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a Docker
+vouchfx stands up an Aspire container topology, so the job needs a Docker
 daemon. The template uses the standard GitLab **Docker-in-Docker (dind)** pattern: a
 `docker:dind` `services:` entry provides the daemon, and `DOCKER_HOST` + the TLS variables
 point the job's Docker client at it. The default SDK image lacks a Docker client, so

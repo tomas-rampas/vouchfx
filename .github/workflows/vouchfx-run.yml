@@ -185,8 +185,8 @@ on:
 
       runs-on:
         description: >-
-          The runner label the job executes on. Must provide Docker (the topology uses
-          Testcontainers via Aspire); the default ubuntu-latest does.
+          The runner label the job executes on. Must provide Docker (the topology is
+          orchestrated by Aspire); the default ubuntu-latest does.
         type: string
         required: false
         default: "ubuntu-latest"

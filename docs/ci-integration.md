@@ -528,7 +528,7 @@ vouchfx-run:
 
 ### Docker-in-Docker and the privileged-runner requirement
 
-vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a Docker daemon. The
+vouchfx stands up an Aspire container topology, so the job needs a Docker daemon. The
 template uses the standard GitLab **Docker-in-Docker (dind)** pattern with a `docker:dind` service.
 
 **Caveat:** dind requires a **privileged runner**. The `docker:dind` service only starts on a GitLab

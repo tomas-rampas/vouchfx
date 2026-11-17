@@ -154,7 +154,7 @@ PORTAL = """<!DOCTYPE html>
     <div class="doc-cards">
       <a class="doc-card" href="docs/01_Technical_Architecture_and_Engineering_Blueprint.html">
         <span class="doc-card__k">01</span><h3>Technical Architecture &amp; Engineering Blueprint</h3>
-        <p>The single source of truth: the five layers, Aspire/Testcontainers, the Roslyn compiler and memory model, security, the verdict taxonomy, provider architecture, reporting and secrets.</p>
+        <p>The single source of truth: the five layers, Aspire, the Roslyn compiler and memory model, security, the verdict taxonomy, provider architecture, reporting and secrets.</p>
       </a>
       <a class="doc-card" href="docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.html">
         <span class="doc-card__k">02</span><h3>YAML DSL Specification &amp; VSCode Extension</h3>

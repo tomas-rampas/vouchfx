@@ -35,7 +35,7 @@ The platform addresses a structural gap in the .NET ecosystem. Unit tests verify
 
 > **Design thesis**
 >
-> Declarative test intent (authored in YAML) is compiled into Turing-complete execution power (C# scripts run through Roslyn), and that execution is wrapped in fully automated infrastructure orchestration (.NET Aspire and Testcontainers). The three layers are independent enough to evolve separately, yet contractually bound through a single typed object model.
+> Declarative test intent (authored in YAML) is compiled into Turing-complete execution power (C# scripts run through Roslyn), and that execution is wrapped in fully automated infrastructure orchestration (.NET Aspire). The three layers are independent enough to evolve separately, yet contractually bound through a single typed object model.
 
 ### 1.1 How to read this document
 
@@ -93,7 +93,7 @@ The platform is best understood as five cooperating layers. A test definition en
 |---|---|---|
 | **1. Authoring** | Express test intent and surface errors before execution. | YAML DSL, JSON Schema, VSCode extension, Language Server Protocol. |
 | **2. Compilation** | Translate validated YAML into a cached, executable C# delegate. | YAML parser, AST, CSX code generation, Roslyn Scripting API. |
-| **3. Orchestration** | Provision the system under test and its dependencies; resolve endpoints. | .NET Aspire AppHost, Testcontainers, health-gated startup. |
+| **3. Orchestration** | Provision the system under test and its dependencies; resolve endpoints. | .NET Aspire AppHost, health-gated startup. |
 | **4. Execution** | Run the compiled delegate against the orchestrated topology and collect assertions. | Roslyn delegate host, collectible AssemblyLoadContext, Polly resilience. |
 | **5. Infrastructure fabric** | Decide where containers physically run — local socket, SaaS cloud, or on-premises cluster. | Docker socket proxy, SSH tunnelling, Ryuk reaper, Kubernetes. |
 
@@ -115,7 +115,7 @@ The clearest way to internalise the architecture is to follow a single test from
 
 ## 4. Orchestration Engine: Inline and Registered Environments
 
-The orchestration layer supplies a running, healthy, discoverable topology and owns its cleanup. Inline provisioning uses .NET Aspire and Testcontainers. Current source also accepts independently authored environments through a format-neutral registered-driver boundary: pure binding reads declarations and supplies normalised logical targets without subprocesses, credentials or container mutation; acquisition then returns a ready lease exposing endpoints and owning resource cleanup. Assertion providers consume the same logical targets and require no provisioning-specific changes.
+The orchestration layer supplies a running, healthy, discoverable topology and owns its cleanup. Inline provisioning uses .NET Aspire. Current source also accepts independently authored environments through a format-neutral registered-driver boundary: pure binding reads declarations and supplies normalised logical targets without subprocesses, credentials or container mutation; acquisition then returns a ready lease exposing endpoints and owning resource cleanup. Assertion providers consume the same logical targets and require no provisioning-specific changes.
 
 The Compose driver currently owns a fresh HTTP/TCP/PostgreSQL project per scenario or watch execution. Its adapter owns configuration grammar, native manifest handling, readiness and interrupted-project recovery. Borrowed resources, reuse, seed and external-driver TLS/mTLS declarations are unsupported. Published `1.0.0-rc.6` lacks this source form; see [Owned Docker Compose environments](compose-environments.md) for compatible CLI selection and limits. The Aspire implementation below describes inline environments; hosted execution remains future design as identified above.
 
@@ -328,16 +328,19 @@ The compiler and runtime layer depends on a small number of external libraries w
 
 **Aspire on the v1.x series. **For the v1.x engine series the Aspire packages stay on 13.4.x or earlier: `Aspire.Hosting` and `Aspire.Hosting.AppHost` are pinned at 13.4.6 and `Aspire.Hosting.Elasticsearch` at 13.3.0. Aspire 13.6.0 and 13.6.5 require YamlDotNet 18.1.0 or later. YamlDotNet is held at 16.x for the whole v1.x series because its types are part of the frozen v1 SDK surface (`IStepBinder<T>.Bind` takes a `YamlNode`), and a new YamlDotNet major makes the CLI refuse external providers built against 16.x, so Aspire cannot move to 13.6 or later within v1.x. 13.5.x is compatible with YamlDotNet 16 but is still vulnerable, so v1.x stays on the 13.4.x patch line (decided 11 November 2026). Under that decision, moving Aspire past 13.4.x is a v2 engine change. Advisory GHSA-f7vh-h5g3-7jrh (high severity: a macOS Aspire dashboard cookie leak via a YARP link, affecting `Aspire.Hosting` and `Aspire.Hosting.AppHost` below 13.6.5, fixed only in 13.6.5) cannot be fixed by upgrading within v1.x. It is suppressed in NuGet audit by a single `NuGetAuditSuppress` entry in the root `Directory.Build.props`, approved by the maintainer on 11 November 2026. The affected path is judged unreachable; this is an inference from the code, not a tested result. The only production construction site, `HeadlessTopology`, sets `DisableDashboard = true`; that flag can only be set in code, and the host passes empty arguments. The `vouchfx` tool ships no dashboard binaries (it does bundle the `Aspire.Hosting` and `Aspire.Hosting.AppHost` DLLs at the pinned 13.4.x release): the CLI project sets `SkipAddAspireDefaultReferences=true` and its `Vouchfx.Dcp.targets` sets a placeholder dashboard path. vouchfx adds no YARP resource of its own. A suite can declare a YARP image under `services:`, but vouchfx still starts no dashboard alongside it. Every v1.x tool bundles a 13.4.x release of `Aspire.Hosting` and `Aspire.Hosting.AppHost` (13.4.2 up to and including v1.2.1, and the 13.4.x release pinned at their tag after that), so scanners reading the tool's `deps.json` will report the advisory; `SECURITY.md` tells users what to do. The suppression is removed once Aspire is pinned at 13.6.5 or later. The guard test `AspireAuditSuppressionGuardTests` fails CI if any other audit suppression or audit-level override appears in an MSBuild or NuGet config file, if the entry is still present once the Aspire pin is 13.6.5 or later, if a production Aspire host is constructed outside `HeadlessTopology` or the dashboard is not disabled, if a YARP package is referenced, or if `AddYarp` is called in engine source. Dependabot holds Aspire minor and major updates; patch updates within 13.4.x still arrive. Dependabot will still attempt a security update to 13.6.5 (a pull request that cannot pass, or an update error on the alert); it cannot succeed while YamlDotNet is held, and the repository's Dependabot alert stays open. vouchfx passes no Aspire dependency to consumers of its library packages; a user's own Aspire AppHost or Aspire CLI version is independent of vouchfx.
 
-## 6. The Testcontainer Cloud Execution Fabric
+## 6. The Cloud Execution Fabric
 
 **Future design.** Remote provisioning and tunnelling in this section are not implemented
-execution modes of the local CLI.
+execution modes of the local CLI. The Docker client settings and the Ryuk reaper described
+here are Testcontainers mechanisms. The engine does not reference Testcontainers: Aspire's
+own orchestrator (DCP) provisions containers today, so the mechanisms below are a design
+that has not been validated against the current engine.
 
 Running a full microservice topology locally is excellent for tight iteration, but a suite containing SQL Server, Elasticsearch, several Kafka brokers, and dozens of application containers will exhaust the CPU, memory, and disk I/O of an ordinary workstation. The cloud fabric solves this by splitting the work: the lightweight parts — the YAML parser and the Roslyn delegate runner — stay local, while the heavy container provisioning is offloaded to a high-performance cloud backend. The challenge is to make that offload completely transparent to the orchestration layer above it.
 
 ## 6.1 Remote Docker socket proxying
 
-Transparency is achieved by convincing the local Aspire and Testcontainers processes that they are talking to a local Docker daemon when they are in fact talking to the internet. Two pieces of configuration accomplish this. On the local side, the runner injects settings into the developer's `~/.testcontainers.properties` file: it sets `docker.client.strategy` to the environment-and-system-property provider strategy, and redefines `docker.host` to point at a secure TCP proxy provisioned by the SaaS backend, for example `tcp://agent.saas.cloud:2375`. On the cloud node, the Docker daemon's systemd unit is configured to bind a TCP socket alongside the local Unix socket. Container-provisioning API calls then traverse the internet to the remote daemon while every layer above believes the daemon is local.
+Transparency is achieved by convincing the local Aspire and Docker client processes that they are talking to a local Docker daemon when they are in fact talking to the internet. Two pieces of configuration accomplish this. On the local side, the runner injects settings into the developer's `~/.testcontainers.properties` file: it sets `docker.client.strategy` to the environment-and-system-property provider strategy, and redefines `docker.host` to point at a secure TCP proxy provisioned by the SaaS backend, for example `tcp://agent.saas.cloud:2375`. On the cloud node, the Docker daemon's systemd unit is configured to bind a TCP socket alongside the local Unix socket. Container-provisioning API calls then traverse the internet to the remote daemon while every layer above believes the daemon is local.
 
 ```csharp
 # Cloud node — /etc/systemd/system/docker.service.d/override.conf
@@ -366,7 +369,7 @@ The hard direction is inbound. When a cloud-hosted microservice finishes work an
 
 ## 6.3 Resource reaping: the Ryuk sidecar
 
-Offloaded infrastructure introduces a cost risk: a crashed pipeline can leave containers, networks, and volumes running and billing in the cloud. The fabric guards against this with the Ryuk resource reaper, a privileged Go sidecar deployed alongside the test instances. During provisioning, Testcontainers tags every network, volume, and container with cryptographic labels. Ryuk holds a TCP connection to the test runner and watches it continuously. If that connection drops — a pipeline crash, a network partition, a `SIGKILL` to the local process — Ryuk purges every labelled resource, so an abnormal termination cannot produce a runaway cloud bill.
+Offloaded infrastructure introduces a cost risk: a crashed pipeline can leave containers, networks, and volumes running and billing in the cloud. The fabric guards against this with the Ryuk resource reaper, a privileged Go sidecar deployed alongside the test instances. Under this design, Testcontainers tags every network, volume, and container with cryptographic labels. Ryuk holds a TCP connection to the test runner and watches it continuously. If that connection drops — a pipeline crash, a network partition, a `SIGKILL` to the local process — Ryuk purges every labelled resource, so an abnormal termination cannot produce a runaway cloud bill.
 
 ### 6.3.1 Graceful degradation where privileged containers are banned
 
@@ -441,7 +444,7 @@ Because the orchestration layer already knows how to provision arbitrary contain
 
 ## 9.1 Containerised load injection
 
-Industry-standard load tools run natively as containers. The LAB leverages the Testcontainers k6 module: during a test cycle the Aspire AppHost starts a `grafana/k6` container on the same Aspire network as the services under test, mounts the load script translated from the YAML DSL as a bind mount, and injects the dynamically discovered backend endpoints as environment variables. The notorious manual wiring of service discovery for localised load testing simply disappears, because discovery is already solved one layer down.
+Industry-standard load tools run natively as containers. The LAB runs k6 as an ordinary container: during a test cycle the Aspire AppHost starts a `grafana/k6` container on the same Aspire network as the services under test, mounts the load script translated from the YAML DSL as a bind mount, and injects the dynamically discovered backend endpoints as environment variables. The notorious manual wiring of service discovery for localised load testing simply disappears, because discovery is already solved one layer down.
 
 ## 9.2 High-performance job orchestration
 
@@ -489,7 +492,7 @@ Stating the threat model in one place serves two purposes. It gives security rev
 | Platform-issued telemetry | Customer machine to platform backend | Sensitive data exfiltration via telemetry. | Opt-in by default; strict allowlist of metric fields (see 11.6); no test contents, captured values, error messages, or system-under-test addresses; bounded retention; access-controlled inside the platform team. |
 | The Healer agent's commit path | Agent suggestion to source control | Healer modifies code without meaningful human review and a hostile suggestion lands. | Future-tier, but the design choice is made here: Healer-authored commits are technically distinguishable from human commits (separate signing identity, mandatory CODEOWNERS review path), so the human-in-the-loop gate is enforced by tooling rather than by user discipline. |
 
-**Explicitly out of scope. **The platform does not defend against: a malicious developer with legitimate write access to test files and access to customer credentials (this is the same threat any test framework faces and is an authorisation concern at the customer organisation); supply-chain compromise of the upstream .NET runtime, Aspire, or Testcontainers (defence-in-depth via package signature verification, but not a primary defence); the customer's own network or cloud-provider compromise (out of the platform's control). The platform's protection of customer secrets in transit and at rest assumes the customer's machine itself is not already compromised; defending against rootkit-level attackers on the developer's laptop is not the platform's job.
+**Explicitly out of scope. **The platform does not defend against: a malicious developer with legitimate write access to test files and access to customer credentials (this is the same threat any test framework faces and is an authorisation concern at the customer organisation); supply-chain compromise of the upstream .NET runtime or Aspire (defence-in-depth via package signature verification, but not a primary defence); the customer's own network or cloud-provider compromise (out of the platform's control). The platform's protection of customer secrets in transit and at rest assumes the customer's machine itself is not already compromised; defending against rootkit-level attackers on the developer's laptop is not the platform's job.
 
 **Vulnerability reporting.** The published vulnerability-disclosure policy, supported versions, coordinated-disclosure SLA, and in/out-scope guidance live in [SECURITY.md](https://github.com/tomas-rampas/vouchfx/blob/main/SECURITY.md) at the repository root.
 
@@ -1198,7 +1201,7 @@ The deepest design commitment of this platform is to test against real dependenc
 
 > **The stance: doubles are containers, not a platform feature**
 >
-> The platform ships no built-in mocking framework. A test double is provisioned the same way any other dependency is — as a Testcontainer running WireMock, Mountebank, or an equivalent — declared in the environment section like a real dependency and addressed through the same service discovery. For in-process stubbing of a customer's own types, the script step is the escape hatch. This keeps the platform's core honest about what it is: an integration tester against real infrastructure, with doubles as a deliberate, visible exception the author opts into rather than a default the platform encourages.
+> The platform ships no built-in mocking framework. A test double is provisioned the same way any other dependency is — as a container running WireMock, Mountebank, or an equivalent — declared in the environment section like a real dependency and addressed through the same service discovery. For in-process stubbing of a customer's own types, the script step is the escape hatch. This keeps the platform's core honest about what it is: an integration tester against real infrastructure, with doubles as a deliberate, visible exception the author opts into rather than a default the platform encourages.
 
 This position has a useful consequence for the provider model. Because a double is just a container speaking a real protocol, an `http.rest` step does not know or care whether it is talking to a real service or a WireMock stub — the test is written identically, and swapping the double for the real service later requires no change to the step. The seam is in the environment declaration, not in the test logic, which is exactly where a seam belongs.
 
@@ -1375,7 +1378,7 @@ This appendix consolidates the concrete technologies named in the blueprint, so 
 | .NET 10, with roll-forward to newer majors | The runtime baseline. The engine, Core providers and CLI target `net10.0` and build with a .NET 10 SDK; executables roll forward to a newer major runtime when .NET 10 is absent, but never run on .NET 8 or 9. The published provider-contract libraries (`Vouchfx.Sdk`, `Vouchfx.Sdk.Testing`, `Vouchfx.Engine.Abstractions`, `.Authoring` and `.Compilation`) keep `net8.0` for the v1.x series, so providers built against the frozen contract load unchanged in the .NET 10 host. |
 | .NET Aspire | Orchestrates the application topology; provides service discovery, health-gated startup, and connection-string resolution. |
 | DistributedApplication.CreateBuilder() | The programmatic Aspire builder API the engine uses to construct an AppHost from the YAML environment section. The headless runner passes DistributedApplicationOptions { DisableDashboard = true } because the dashboard requires environment variables that only the 'aspire run' tooling injects. AddContainer adds an image; AddProject(name, csprojPath) adds a project; AddPostgres / AddKafka / AddMongoDB / AddRedis / AddRabbitMQ / AddElasticsearch add typed managed resources. Each Add* call returns an IResourceBuilder that the runner retains so endpoints can be resolved through it (builder.GetEndpoint("http").Url) after StartAsync returns. |
-| Testcontainers | Manages the lifecycle of dependency containers; supplies the k6 load-injection module and the Ryuk reaper. |
+| Testcontainers | Not referenced by the engine; Aspire's orchestrator manages the lifecycle of dependency containers. The future-design cloud fabric (section 6) takes its Docker client settings and Ryuk reaper as the model for remote provisioning and cleanup. |
 | Roslyn Scripting API | Compiles generated CSX into a reusable in-memory delegate (compile-once pattern). |
 | Collectible AssemblyLoadContext | Isolates dynamically generated assemblies so they can be unloaded and reclaimed. |
 | Respawn | Resets relational databases to a pristine state between tests, honouring foreign-key order. |
@@ -1403,6 +1406,6 @@ This appendix consolidates the concrete technologies named in the blueprint, so 
 | Test runner selection language | Composable selection over tag, ownership, path and change-set (prior verdict is planned), evaluated against metadata the author already writes. |
 | maxParallel / concurrency budget | Operator-set bound on how many scenarios run concurrently, each against its own topology; parallelism is across scenarios, never within one. |
 | ${secret:source/path} reference | Runtime-resolved secret reference; the literal value never enters source control, logs, or reports, and the source (env, file, vault, cloud) is chosen by configuration. |
-| Test doubles (WireMock / Mountebank) | Provisioned as ordinary Testcontainers when a real dependency cannot be used; the platform ships no built-in mocking, keeping doubles a visible, opt-in exception. |
+| Test doubles (WireMock / Mountebank) | Provisioned as ordinary containers when a real dependency cannot be used; the platform ships no built-in mocking, keeping doubles a visible, opt-in exception. |
 
 — End of the Technical Architecture & Engineering Blueprint. The companion document is the YAML DSL Specification & VSCode Extension Design.

@@ -11,7 +11,7 @@
 **End-to-end integration testing for distributed systems, authored in YAML.**
 
 vouchfx compiles declarative `.e2e.yaml` tests into Turing-complete C# (CSX), runs them memory-safely
-through Roslyn, and orchestrates inline environments with **.NET Aspire + Testcontainers** or independently
+through Roslyn, and orchestrates inline environments with **.NET Aspire** or independently
 authored environments with **Docker Compose**.
 It tests one business transaction as it crosses a REST call, a Kafka event, a database mutation and an
 outbound webhook — the seams where distributed systems actually break.

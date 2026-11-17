@@ -1162,9 +1162,9 @@ jobs:
           Homepage: https://github.com/tomas-rampas/vouchfx
           Description: vouchfx e2e integration test runner
            Compiles declarative .e2e.yaml integration tests into C# (Roslyn),
-           orchestrates the required container topology via .NET Aspire +
-           Testcontainers, and executes steps covering REST, PostgreSQL, Kafka,
-           webhooks, and custom scripting.
+           orchestrates the required container topology via .NET Aspire,
+           and executes steps covering REST, PostgreSQL, Kafka, webhooks,
+           and custom scripting.
            .
            Includes the matching Aspire DCP tools; Docker with Linux containers
            is required to start container topologies.

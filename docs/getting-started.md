@@ -8,7 +8,7 @@ This 60-minute guide walks you through your first end-to-end integration test: f
 
 vouchfx tests **distributed systems end-to-end** by letting you author tests in declarative YAML. A test describes a system under test (REST services, databases, message brokers in Docker containers), then orchestrates their topology, runs ordered steps (HTTP calls, database assertions, scripts) against discovered endpoints, and reports a clear verdict: **Pass**, **Fail**, **Environment error** (infrastructure breakage), or **Inconclusive** (timeout / unmet condition).
 
-The pipeline is: `.e2e.yaml` → validate vs JSON Schema → compile YAML→AST→C#→Roslyn (once) → orchestrate containers via Aspire/Testcontainers → execute steps → collect verdict → unload & reset.
+The pipeline is: `.e2e.yaml` → validate vs JSON Schema → compile YAML→AST→C#→Roslyn (once) → orchestrate containers via Aspire → execute steps → collect verdict → unload & reset.
 
 This guide focuses on the essentials. For architecture, the provider model, secrets, and advanced features, see the [Technical Architecture Blueprint](01_Technical_Architecture_and_Engineering_Blueprint.md).
 

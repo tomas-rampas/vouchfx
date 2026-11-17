@@ -54,7 +54,7 @@
 #   install step is intentionally the only thing that would change.
 #
 # ── Docker is REQUIRED (the topology) — and the privileged-runner caveat ────────────
-# vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a
+# vouchfx stands up an Aspire container topology, so the job needs a
 # Docker daemon. This template uses the standard GitLab Docker-in-Docker (dind) pattern:
 # a `docker:dind` `services:` entry provides the daemon, and DOCKER_HOST / the TLS vars
 # below point the job's Docker client at it. The engine builds and runs inside a second
@@ -159,7 +159,7 @@
   # digest in production (see the supply-chain note in the header).
   image: "$VOUCHFX_DOTNET_IMAGE"
 
-  # Docker-in-Docker: the `docker:dind` service provides the daemon the Aspire/Testcontainers
+  # Docker-in-Docker: the `docker:dind` service provides the daemon the Aspire
   # topology talks to. REQUIRES a privileged runner (see the dind caveat in the header).
   services:
     - name: "docker:27-dind"
@@ -179,7 +179,7 @@
     VOUCHFX_SETUP_SCRIPT: ""
 
     # ── Docker-in-Docker wiring. The dind service listens on TCP with TLS on :2376; the
-    #    build's Docker client + Testcontainers/Aspire/DCP reach it via DOCKER_HOST. ──────
+    #    build's Docker client + Aspire/DCP reach it via DOCKER_HOST. ──────
     DOCKER_HOST: "tcp://docker:2376"
     DOCKER_TLS_CERTDIR: "/certs"
     DOCKER_TLS_VERIFY: "1"

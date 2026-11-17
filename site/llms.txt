@@ -2,7 +2,7 @@
 
 > vouchfx is an end-to-end integration testing framework that compiles declarative
 > `.e2e.yaml` tests into Turing-complete C#, runs them through Roslyn, and orchestrates
-> the required container topology with .NET Aspire and Testcontainers. It is built on
+> the required container topology with .NET Aspire. It is built on
 > .NET but tests distributed systems written in any language — Java, Kotlin, Python,
 > Go, Node.js — running as containers, proving one business transaction end-to-end
 > across a REST call, a Kafka event, a database mutation and an outbound webhook.

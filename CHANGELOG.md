@@ -67,6 +67,7 @@ This will be released as 1.4.0, the first release that targets .NET 10. 1.3.0 wa
 - CI raises the Linux inotify limits before test hosts start, because `ubuntu-latest` (ubuntu-26.04) defaults to 128 instances ([#655](https://github.com/tomas-rampas/vouchfx/pull/655)).
 - Dependency upgrades via Dependabot: `github/codeql-action` 4.39.1 ([#653](https://github.com/tomas-rampas/vouchfx/pull/653)), `actions/setup-python` 7.1.0 ([#654](https://github.com/tomas-rampas/vouchfx/pull/654)), `actions/setup-dotnet` 6.1.0 ([#658](https://github.com/tomas-rampas/vouchfx/pull/658)) and the VS Code extension's `qs` development dependency 6.17.1 ([#656](https://github.com/tomas-rampas/vouchfx/pull/656)).
 - NuGet dependency upgrades: 20 of the 24 updates in Dependabot's `nuget-dependencies` group, including the StackExchange.Redis 3 and NATS.Net 3 majors. `AWSSDK.DynamoDBv2`/`AWSSDK.S3` 4, YamlDotNet 18 and Npgsql 10 are held back: AWSSDK 4 and Npgsql 10 change provider behaviour, and YamlDotNet types are part of the frozen v1 SDK surface, so a new major would stop published providers from loading ([#662](https://github.com/tomas-rampas/vouchfx/pull/662), [#659](https://github.com/tomas-rampas/vouchfx/pull/659)).
+- The `vouchfx` and `Vouchfx.Sdk` package descriptions and READMEs now say that vouchfx orchestrates the container topology with .NET Aspire. They previously added Testcontainers, which no project references.
 
 ### Fixed
 

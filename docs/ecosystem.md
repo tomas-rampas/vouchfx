@@ -18,7 +18,7 @@ vouchfx is a coordinated ecosystem of five repositories, each with an associated
 
 **The main repository** — where the platform lives.
 
-The engine comprises the YAML→AST→C#→Roslyn compiler, the Aspire/Testcontainers orchestration layer, the five-layer architecture, twenty-five Core providers across eleven families (HTTP, databases, message publishing and consumption, caches, storage, metrics, traces, mail, webhooks, scripts), the CLI, and the full set of design documentation.
+The engine comprises the YAML→AST→C#→Roslyn compiler, the Aspire orchestration layer, the five-layer architecture, twenty-five Core providers across eleven families (HTTP, databases, message publishing and consumption, caches, storage, metrics, traces, mail, webhooks, scripts), the CLI, and the full set of design documentation.
 
 **Start here:**
 - **[Getting started](getting-started.md)** — 60-minute path to your first PASS

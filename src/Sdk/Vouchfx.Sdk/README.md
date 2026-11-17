@@ -9,7 +9,7 @@ to *author and run* `.e2e.yaml` suites, install the [`vouchfx`](https://www.nuge
 CLI tool instead — `Vouchfx.Sdk` is for provider authors, not test authors.
 
 vouchfx compiles declarative `.e2e.yaml` integration tests into C#, runs them through
-Roslyn, and orchestrates the required container topology with .NET Aspire + Testcontainers
+Roslyn, and orchestrates the required container topology with .NET Aspire
 to test **distributed .NET systems end-to-end** — one business transaction crossing a REST
 call, a Kafka event, a DB mutation and an outbound webhook.
 

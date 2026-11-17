@@ -4,11 +4,11 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## What vouchfx is
 
-**vouchfx** compiles declarative `.e2e.yaml` integration tests into Turing-complete C# (CSX), runs them through Roslyn, and orchestrates the required container topology with .NET Aspire + Testcontainers. It tests **distributed .NET systems end-to-end** — one business transaction crossing a REST call, a Kafka event, a DB mutation and an outbound webhook. It is **not** a unit-test framework and **not** a UI/browser tool.
+**vouchfx** compiles declarative `.e2e.yaml` integration tests into Turing-complete C# (CSX), runs them through Roslyn, and orchestrates the required container topology with .NET Aspire. It tests **distributed .NET systems end-to-end** — one business transaction crossing a REST call, a Kafka event, a DB mutation and an outbound webhook. It is **not** a unit-test framework and **not** a UI/browser tool.
 
 Pipeline: author `.e2e.yaml` → validate vs JSON Schema → compile YAML→AST→CSX→Roslyn delegate (**once**) → orchestrate topology via Aspire → execute delegate against discovered endpoints → collect verdict, unload context, reset.
 
-Five layers (§3), each exposing a narrow typed contract upward: **1 Authoring** (YAML/Schema/VSCode/LSP) · **2 Compilation** (parser→AST→CSX→Roslyn) · **3 Orchestration** (Aspire AppHost, Testcontainers, health-gated startup) · **4 Execution** (delegate host, collectible `AssemblyLoadContext`, Polly) · **5 Infrastructure fabric** (local Docker today; remote fabrics are future design, blueprint §6–7). The one contract enabling topological parity (a suite runs unchanged local/CI): the compiled delegate depends **only** on a typed `ScriptGlobalVariables`, and orchestration is its sole producer.
+Five layers (§3), each exposing a narrow typed contract upward: **1 Authoring** (YAML/Schema/VSCode/LSP) · **2 Compilation** (parser→AST→CSX→Roslyn) · **3 Orchestration** (Aspire AppHost, health-gated startup) · **4 Execution** (delegate host, collectible `AssemblyLoadContext`, Polly) · **5 Infrastructure fabric** (local Docker today; remote fabrics are future design, blueprint §6–7). The one contract enabling topological parity (a suite runs unchanged local/CI): the compiled delegate depends **only** on a typed `ScriptGlobalVariables`, and orchestration is its sole producer.
 
 ## How to work here — read first
 
@@ -30,7 +30,7 @@ content. Never bulk-register a directory. The build and deployment gate refuse
 unregistered files; this does not classify confidential prose pasted into an
 already approved file. Keep the established private paths excluded.
 
-- `docs/01_Technical_Architecture_and_Engineering_Blueprint.md` — single source of truth for how the system is built. §3 five layers; §4 Aspire/Testcontainers; §5 Roslyn compiler + memory model; §6 cloud fabric; §11 security; §12 verdict taxonomy; §13 provider architecture; §14 reporting/event stream; §16 test runner; §17 secrets; §18 risks; §19 technology table.
+- `docs/01_Technical_Architecture_and_Engineering_Blueprint.md` — single source of truth for how the system is built. §3 five layers; §4 Aspire; §5 Roslyn compiler + memory model; §6 cloud fabric; §11 security; §12 verdict taxonomy; §13 provider architecture; §14 reporting/event stream; §16 test runner; §17 secrets; §18 risks; §19 technology table.
 - `docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md` — the `.e2e.yaml` grammar + VSCode/LSP. §3 document structure; §4 common step fields; §5 step families; §6 capture/placeholder syntax; §7 verifyMode; §8 JSON Schema; §10 extension.
 - `docs/03_MVP_Project_Plan.md` (**maintainer-local, untracked**) — scope, the seven workstreams, phasing, MVP vs. later.
 - `plan/README.md` (**maintainer-local, untracked**) — the execution plan that turns `docs/03` into milestones (M1–M5), 12 sprints, and tasks; the conventions, capacity, milestone gates, and the hard-invariant review checklist. Per-sprint task lists live in `plan/sprint-01.md … sprint-12.md`; `plan/roadmap.md` is the Mermaid overview.

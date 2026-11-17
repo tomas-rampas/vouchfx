@@ -16,7 +16,7 @@ implementation, not a claim that every release requirement or open defect is res
 
 - **The compile-once memory model** — `.e2e.yaml` compiles through Roslyn exactly once into a collectible
   `AssemblyLoadContext`; a memory-leak regression test over the full provider closure is a permanent CI gate.
-- **Health-gated orchestration** — headless .NET Aspire + Testcontainers topologies, started deterministically
+- **Health-gated orchestration** — headless .NET Aspire topologies, started deterministically
   and torn down cleanly.
 - **Twenty-five Core providers across eleven step families** — `http.rest`, `http.soap`; `db-assert` for PostgreSQL, MySQL,
   SQL Server, MongoDB and DynamoDB; `mq-publish`/`mq-expect` for Kafka, RabbitMQ, NATS, Azure Service Bus and
