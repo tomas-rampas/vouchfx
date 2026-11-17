@@ -574,8 +574,8 @@ for pipeline/job links, report counts, exact revisions and observation limits.
 
 Core 1.2.0 runs the engine in an owned SDK container that shares the Docker-in-Docker daemon's
 network namespace and Unix socket, because Aspire/DCP publishes loopback proxy endpoints that a
-sibling job container cannot reach. `TESTCONTAINERS_HOST_OVERRIDE` does not solve this and is not
-needed. Self-managed Kubernetes and socket-bind runners remain unmeasured.
+sibling job container cannot reach. A `TESTCONTAINERS_HOST_OVERRIDE` setting, familiar from
+Testcontainers-based setups, is not needed and has no effect on vouchfx. Self-managed Kubernetes and socket-bind runners remain unmeasured.
 
 See [`ci/gitlab/vouchfx-run.gitlab-ci.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/vouchfx-run.gitlab-ci.yml)
 and [`ci/gitlab/README.md`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/README.md)

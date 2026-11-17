@@ -184,12 +184,8 @@
     DOCKER_TLS_CERTDIR: "/certs"
     DOCKER_TLS_VERIFY: "1"
     DOCKER_CERT_PATH: "/certs/client"
-    # No TESTCONTAINERS_HOST_OVERRIDE: it did not make Aspire/DCP's loopback proxy endpoints
-    # reachable from this sibling job, and the engine now runs on the daemon's own network,
-    # where mapped ports are on localhost. The runner script clears any value a consumer sets.
-    # Skip Ryuk's reaper: in dind it cannot reliably reach back, and we tear topology down
-    # ourselves (HeadlessTopology.DisposeAsync). Harmless on a fresh, ephemeral dind.
-    TESTCONTAINERS_RYUK_DISABLED: "true"
+    # No host override is needed: the engine runs on the daemon's own network, where mapped
+    # ports are on localhost, so Aspire/DCP's loopback proxy endpoints are reachable.
 
     # ── .NET CLI quality-of-life (mirrors the GH workflow env). ─────────────────────────
     DOTNET_NOLOGO: "true"
@@ -402,7 +398,7 @@
         set -eu
         source /tmp/vouchfx-environment.sh
         rm /tmp/vouchfx-environment.sh
-        unset DOCKER_TLS_CERTDIR DOCKER_TLS_VERIFY DOCKER_CERT_PATH TESTCONTAINERS_HOST_OVERRIDE
+        unset DOCKER_TLS_CERTDIR DOCKER_TLS_VERIFY DOCKER_CERT_PATH
         export DOCKER_HOST=unix:///var/run/docker.sock
         cd "$CI_PROJECT_DIR"
         dotnet build "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" -c Release
@@ -417,7 +413,7 @@
         set -eu
         source /tmp/vouchfx-environment.sh
         rm /tmp/vouchfx-environment.sh
-        unset DOCKER_TLS_CERTDIR DOCKER_TLS_VERIFY DOCKER_CERT_PATH TESTCONTAINERS_HOST_OVERRIDE
+        unset DOCKER_TLS_CERTDIR DOCKER_TLS_VERIFY DOCKER_CERT_PATH
         export DOCKER_HOST=unix:///var/run/docker.sock
         cd "$CI_PROJECT_DIR"
         dotnet run --project "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" \

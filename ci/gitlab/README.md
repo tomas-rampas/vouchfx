@@ -81,8 +81,8 @@ The template copies the prepared checkout into a second SDK container and builds
 runs vouchfx there with host networking and the daemon's Unix socket. Setup scripts run
 before that copy, so generated fixture paths remain available at the same absolute paths
 inside the runner. Aspire/DCP's loopback proxy endpoints then share the daemon's network
-namespace; merely setting `TESTCONTAINERS_HOST_OVERRIDE` in the sibling job does not
-provide this. The outer connection keeps TLS verification enabled. The inner runner
+namespace. A Testcontainers-style `TESTCONTAINERS_HOST_OVERRIDE` is not needed and has no
+effect on vouchfx. The outer connection keeps TLS verification enabled. The inner runner
 receives the job's exported environment through a private temporary file, resets Docker
 access to the local socket, and is removed when the script exits. The build runs before
 the suite in its own `docker exec`; if it fails, the job exits with the build's code,
