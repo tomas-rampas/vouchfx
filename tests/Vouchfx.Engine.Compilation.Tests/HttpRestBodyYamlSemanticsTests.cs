@@ -291,6 +291,51 @@ public sealed class HttpRestBodyYamlSemanticsTests
         Assert.Contains("expands to more than 50000 JSON nodes", refusal, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Every merge source is charged to the node budget, including one with no members. A
+    /// sequence of 300 aliases of an empty mapping, merged into 200 distinct mappings, is 60,000
+    /// sources and no merged members, so only the per-source charge can refuse it.
+    /// </summary>
+    [Fact]
+    public void Merge_EmptySourcesRepeated_RunTheNodeBudgetOut()
+    {
+        var sb = new StringBuilder();
+        sb.Append("anchors:\n  e: &e {}\n  sq: &s [");
+        for (var i = 0; i < 300; i++)
+            sb.Append(i == 0 ? "*e" : ", *e");
+        sb.Append("]\nsteps:\n  - id: empty-sources\n    type: http.rest\n    target: svc\n");
+        sb.Append("    method: POST\n    path: /x\n    body:\n");
+        for (var i = 0; i < 200; i++)
+            sb.Append("      m").Append(i).Append(": { <<: *s }\n");
+
+        var refusal = RefuseBody(sb.ToString());
+
+        Assert.Contains("step 'empty-sources'", refusal, StringComparison.Ordinal);
+        Assert.Contains("expands to more than 50000 JSON nodes", refusal, StringComparison.Ordinal);
+        AssertAscii(refusal);
+    }
+
+    /// <summary>An ordinary merge of an empty mapping still works and adds no members.</summary>
+    [Fact]
+    public void Merge_EmptySource_OrdinaryMerge_StillBinds()
+    {
+        var body = BindBody("""
+            anchors:
+              e: &e {}
+            steps:
+              - id: pay
+                type: http.rest
+                target: svc
+                method: POST
+                path: /payments
+                body:
+                  <<: [*e, *e]
+                  amount: 20
+            """);
+
+        Assert.Equal("{\"amount\":20}", body);
+    }
+
     /// <summary>A chain of merged mappings deeper than 64 is refused, bounding the recursion.</summary>
     [Fact]
     public void Merge_ChainDeeperThanTheBound_IsABindError()

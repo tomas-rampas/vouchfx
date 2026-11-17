@@ -449,6 +449,12 @@ internal static class HttpRestBodyConversion
 
                 foreach (var source in sources)
                 {
+                    // One unit per merge source, before anything else: a source with no
+                    // members yields no member charge below, so an empty mapping aliased
+                    // many times in a sequence would otherwise cost nothing.
+                    if (--budget < 0)
+                        throw new RefusalException(DescribeBodyTooLarge(merges.Step));
+
                     if (source is not YamlMappingNode merged)
                     {
                         throw new RefusalException(
