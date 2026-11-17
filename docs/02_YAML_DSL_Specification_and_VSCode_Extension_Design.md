@@ -599,7 +599,7 @@ An `http` step issues an HTTP request to one of the services declared in the env
 | method | The HTTP verb: GET, POST, PUT, PATCH, or DELETE. |
 | path | The request path, which may contain `{placeholder}` and `${secret:…}` tokens resolved at execution time. |
 | headers | An optional map of request headers. Each header value may contain `{placeholder}` and `${secret:…}` tokens. |
-| body | An optional request body. A YAML scalar is treated as a template string; a YAML mapping or sequence is serialised to JSON and then used as a template, including mapping keys. The exact bound text is checked for secret-reference syntax before acquisition; secret values are read only at step execution. Structured bodies are bounded to depth 64 and 50000 nodes. All `{placeholder}` and `${secret:…}` tokens are resolved at step-execution time. |
+| body | An optional request body. A YAML scalar is treated as a template string; a YAML mapping or sequence is serialised to JSON and then used as a template, including mapping keys, following the conversion rules in *How a structured body becomes JSON* below. The exact bound text is checked for secret-reference syntax before acquisition; secret values are read only at step execution. Structured bodies are bounded to depth 64 and 50000 nodes. All `{placeholder}` and `${secret:…}` tokens are resolved at step-execution time. |
 | expect | An optional assertion block. `status` is the expected status code (any 2xx when omitted); `json` maps a JSONPath to an expected value or to `{ exists: true }` / `{ exists: false }`; `bodyContains` is a substring the decoded body must contain. See *Response-body assertions* below. Response headers are not asserted on. |
 
 For `http.rest`, `http.soap`, and `metrics-assert.prometheus`, author `path` as a rooted relative path beginning with one `/`. Absolute URLs, a leading `//`, backslashes, and raw C0/DEL/C1 control characters (U+0000–001F and U+007F–009F) are rejected by provider validation and the composed schema. Percent-encoded text such as `%0D`, `%0A`, and `%7F` remains valid; this authoring check does not decode it. Query strings, fragments, and placeholders remain supported.
@@ -622,6 +622,46 @@ For `http.rest`, `http.soap`, and `metrics-assert.prometheus`, author `path` as 
   capture:
     newUserId: "$.id"        # JSONPath into the response body
 ```
+
+#### `http.rest` — how a structured body becomes JSON
+
+A `body` written as a single scalar (plain, quoted or a block scalar) is sent as its text, exactly as written. A `body` written as a YAML mapping or sequence is converted to JSON when the suite is compiled, and follows YAML's own meaning:
+
+- **Plain values** are typed from their text. `true`/`True`/`TRUE` and `false`/`False`/`FALSE` are booleans; `null`, `Null`, `NULL` and `~` are null; text that reads as a decimal integer or a decimal number is a number (`007` is sent as 7, `1.50` as 1.5, `1e3` as 1000). Everything else is a string, including `0x1F`, `.inf`, `yes` and any `{placeholder}` or `${secret:…}` token.
+- **Quoted values** (`'…'` or `"…"`) are always strings, so `"123"` is the string `"123"`. A quoted value reached through an alias stays a string.
+- **Block scalars** (literal `|` and folded `>`, in every chomping form) are always strings, carrying exactly the text YAML defines: `|` keeps the line breaks and one final line break, `|-` drops the final line break, `|+` keeps every trailing line break, and `>` folds lines into spaces. A block scalar holding `123` is the string `"123\n"`, not a number. A block scalar on the last line of a file without a final line break has no trailing line break to keep.
+- **Empty values.** A key with no value (`note:`) is null, the same as `null` and `~`. Write `""` or `''` to send an empty string.
+- **Tags.** An explicit YAML core-schema tag decides the type, whether or not the value is quoted: `!!str` makes a string of anything (`!!str 123` is `"123"`); `!!int`, `!!float`, `!!bool` and `!!null` force their type (`!!int "5"` is 5) and refuse a value that does not fit it. `!!int` takes decimal digits with an optional sign (sent exactly, at any length), or `0o`/`0x` followed by octal/hexadecimal digits that fit in 64 bits; `!!float` takes a decimal number with an optional fraction and exponent, but not `.inf` or `.nan`, which JSON cannot represent; `!!bool` takes the six spellings above, not `yes`/`no`/`on`/`off`; `!!null` takes an empty value, `~` or one of the three null spellings. `!!map` and `!!seq` are accepted on a mapping and a sequence, and `!!timestamp` is sent as the text written. Any other tag, such as an application tag like `!money` or `!!binary`, is refused. Schema validation refuses `!!null` anywhere in a suite before the body is converted, so write `null` instead.
+- **Merge keys.** `<<: *base` merges the members of the mapping `base` into the mapping that contains the merge key, and `<<: [*first, *second]` merges several. A key the mapping writes itself wins over a merged one, and within a sequence an earlier mapping wins over a later one. A merged mapping's own merge keys are applied first. The `<<` member itself is not sent; write `"<<"` (quoted) to send a member with that name. Merge keys work at any depth of the body, including inside a sequence.
+- **Member order.** Members are sent in the order of the mapping as written. The members a merge key contributes appear where the `<<` key is written, in the merged mapping's own order (for a sequence of mappings, the first mapping's members, then the members of each later mapping not already supplied). A merged member that the mapping overrides is sent once, at the position of the key that overrides it.
+
+```yaml
+- id: seed
+  type: http.rest
+  target: payments-api
+  method: POST
+  path: /defaults
+  body: &payment
+    currency: EUR
+    amount: 10
+    channel: web
+- id: pay
+  type: http.rest
+  target: payments-api
+  method: POST
+  path: /payments
+  body:
+    <<: *payment         # sends currency and channel here; amount is overridden below
+    amount: !!int "20"   # the number 20
+    reference: "00123"   # the string "00123"
+    memo: |
+      Paid by {payer}
+    note:                # null
+```
+
+The second step sends `{"currency":"EUR","channel":"web","amount":20,"reference":"00123","memo":"Paid by {payer}\n","note":null}`, with `{payer}` substituted when the step runs.
+
+A merge key whose value is not a mapping or a sequence of mappings, a tag a body does not accept, or a value that does not fit its tag stops the suite before anything runs, with a diagnostic that names the step, the merge key or tag, and the line and column to correct. Merge keys apply only inside `body`: elsewhere in a suite, including at step level (`- <<: *shared`), `<<` is an ordinary key, so a step cannot inherit its fields from another through a merge key.
 
 #### `http.rest` — response-body assertions
 

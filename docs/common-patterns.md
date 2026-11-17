@@ -603,7 +603,7 @@ If cleanup-1 fails, cleanup-2 and verify-cleaned still run. The scenario verdict
 - **`method`** — HTTP verb (GET, POST, PUT, PATCH, DELETE).
 - **`path`** — URL path (may contain `{placeholder}` and `${secret:…}`).
 - **`headers`** (optional) — Request headers.
-- **`body`** (optional) — Request body (YAML scalar or mapping, serialised to JSON).
+- **`body`** (optional) — Request body (YAML scalar or mapping, serialised to JSON). A mapping or sequence follows YAML's meaning: merge keys (`<<: *base`) are applied, block scalars (`|`, `>`) and quoted values are strings, an empty value is null, and core-schema tags such as `!!str` and `!!int` decide the type (DSL §5.1, *How a structured body becomes JSON*).
 - **`expect`** (optional) — Assertions on the response: `status` (any 2xx when omitted); `json`, a map of JSONPath to an expected value or to `{ exists: true|false }`; and `bodyContains`, a substring of the body. Body assertions run only once the status has held, and a failing one makes the step Fail.
 - **`capture`** (optional) — JSONPath expressions extracting response fields for inspection in later steps. Captures run only after every assertion has held.
 
