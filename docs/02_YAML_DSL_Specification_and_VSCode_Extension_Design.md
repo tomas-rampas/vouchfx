@@ -25,7 +25,7 @@ syntax; [Getting Started](getting-started.md) gives supported installation and r
 The extension's [README](https://github.com/tomas-rampas/vouchfx/blob/main/tools/vscode-vouchfx/README.md)
 documents its implemented authoring features. Proposed providers, C# IntelliSense (§11.3),
 cross-service contract validation (§12) and localisation are future work where identified.
-Design version 1.0 is not a claim that the software has reached its 1.0.0 release.
+Design version 1.0 is the document baseline; the software is released independently (see the [changelog](changelog.md)).
 
 ## 1. Overview and Objectives
 
@@ -132,7 +132,7 @@ metadata:
     BillingAccountCreated event and a materialised MongoDB document.
 ```
 
-The `owner` and `tags` fields are not decoration: the test runner's selection language filters on them directly, so a CI job can request “tagged regression, owned by payments” in a single invocation. Tagging discipline at authoring time is therefore what makes large suites navigable later. The runner's full selection model — by tag, ownership, path, change-set, and prior verdict — is described in Section 16 of the companion Technical Architecture & Engineering Blueprint.
+The `owner` and `tags` fields are not decoration: the test runner's selection language filters on them directly, so a CI job can request “tagged regression, owned by payments” in a single invocation. Tagging discipline at authoring time is therefore what makes large suites navigable later. The runner's full selection model — by tag, ownership, path and change-set, with prior-verdict selection planned — is described in Section 16 of the companion Technical Architecture & Engineering Blueprint.
 
 ### 3.2 The environment section
 
@@ -661,7 +661,7 @@ A `body` written as a single scalar (plain, quoted or a block scalar) is sent as
 
 The second step sends `{"currency":"EUR","channel":"web","amount":20,"reference":"00123","memo":"Paid by {payer}\n","note":null}`, with `{payer}` substituted when the step runs.
 
-A merge key whose value is not a mapping or a sequence of mappings, a tag a body does not accept, a value that does not fit its tag, or a body that nests deeper than 64 levels or expands to more than 50000 nodes stops the suite before anything runs. It is reported once, as an error in the suite rather than a fault in vouchfx or in the service under test, with a diagnostic that names the step and, for a merge key or tag, the line and column to correct. Merge keys apply only inside `body`: elsewhere in a suite, including at step level (`- <<: *shared`), `<<` is an ordinary key, so a step cannot inherit its fields from another through a merge key.
+A merge key whose value is not a mapping or a sequence of mappings, a tag a body does not accept, a value that does not fit its tag, or a body that nests deeper than 64 levels or expands to more than 50000 nodes stops the suite before anything runs. It is reported once, as an error in the suite rather than a fault in vouchfx or in the service under test, with a diagnostic that names the step and, for a merge key or tag, the line and column to correct. Some tag mismatches are refused earlier, by schema validation, with its general YAML parse message ("Failed to parse YAML" or "unresolved tag"), which names neither the step nor the line: a value such as `!!int abc`, `!!float abc` or `!!binary aGk=` is refused that way, while `!!int 1.5` or `!!bool yes` reaches the step-and-line diagnostic. Merge keys apply only inside `body`: elsewhere in a suite, including at step level (`- <<: *shared`), `<<` is an ordinary key, so a step cannot inherit its fields from another through a merge key.
 
 #### `http.rest` — response-body assertions
 
@@ -1111,7 +1111,7 @@ As the body grows, an author can move it out of the YAML and into a sibling `.cs
 
 > **Security caution: Secret handling in script.csharp**
 >
-> Because `script.csharp` runs author-trusted code in the shared variable context, it can read any staged value — including connection strings and secret values accessed via `Vars.Secrets.Resolve(...).Reveal()`. The engine's redaction cannot guarantee that a value an author explicitly writes into a captured variable, a returned observation, or an exception message stays out of the report. Authors must not surface secrets from script bodies; prefer keeping credentials in `${secret:…}` references consumed by typed provider fields. This applies identically whether the body is inline (`code`) or referenced (`file`).
+> Because `script.csharp` runs author-trusted code in the shared variable context, it can read any staged value — including connection strings and secret values accessed via `Secrets.Resolve(...).Reveal()`. The engine's redaction cannot guarantee that a value an author explicitly writes into a captured variable, a returned observation, or an exception message stays out of the report. Authors must not surface secrets from script bodies; prefer keeping credentials in `${secret:…}` references consumed by typed provider fields. This applies identically whether the body is inline (`code`) or referenced (`file`).
 
 ### 5.7 Step families and the provider extension model
 
