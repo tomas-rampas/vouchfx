@@ -80,7 +80,7 @@ The scenario stands up:
 
 ## Interpreting the verdict
 
-The scenario has four steps, each with a distinct intent:
+The scenario has seven steps, each with a distinct intent:
 
 1. **rest-get-whoami** — Succeeds if the REST call returns 200 and the hostname is successfully captured.
 2. **db-insert-row** — Succeeds if the C# script executes without exception.

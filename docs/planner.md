@@ -201,7 +201,7 @@ Findings: 3 total (2 gap(s)).
   step-flaky                       1
 ```
 
-Requesting JSON output:
+Requesting JSON output (an example document: every value, including `engineVersion`, is illustrative):
 
 ```bash
 vouchfx plan ./tests/e2e --events ./run-history --json

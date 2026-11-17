@@ -29,9 +29,8 @@ exclude_docs: |
 # (config_options.Hooks.post_validation appends each hook module, in list
 # order, into the same PluginCollection regular plugins use) and empirically
 # with throwaway hooks in both list orders.
-#   1. landing.py   copies site/index.html (and companions — including the
-#                    site/robots.txt and site/llms.txt REQ-003/REQ-011
-#                    companions) into the build.
+#   1. landing.py   copies site/index.html (and companions, including
+#                    site/robots.txt and site/llms.txt) into the build.
 #   2. facts.py     substitutes {{fact:KEY}} tokens across every built
 #                    text-like file, including the one landing.py just
 #                    copied in — it MUST run after landing.py, or
@@ -73,7 +72,7 @@ theme:
     # docs/blog page. sticky keeps the tabs pinned after the plain header
     # row auto-hides on scroll — the same always-reachable-navigation idiom
     # as the landing page's own position:sticky nav, and the long design
-    # docs (~1200 lines) genuinely need a persistent section switcher.
+    # docs (well over a thousand lines each) genuinely need a persistent section switcher.
     # The bar's brand styling lives in docs/stylesheets/extra.css §4B.
     - navigation.tabs
     - navigation.tabs.sticky

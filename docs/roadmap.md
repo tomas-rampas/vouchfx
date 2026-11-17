@@ -65,7 +65,8 @@ implementation, not a claim that every release requirement or open defect is res
   ambiguity. Every gap finding carries structured hints the `scaffold` tool consumes. Docker-free; human-readable summary and JSON output;
   configurable health thresholds; taxonomy-aware exit codes including exit 5 for gaps (with `--fail-on-gap`).
 - **A headless CLI** with tag/owner/path/change-set selection, taxonomy-aware exit codes (only `Fail` breaks
-  CI by default), parallel topology-per-scenario runs, and watch mode.
+  CI by default), parallel topology-per-scenario runs, watch mode, and an opt-in `--isolate-compile`
+  mode that compiles script steps in an isolated worker.
 - **Editor tooling** — a VSCode extension with schema-driven validation and autocomplete, C# highlighting in
   `script.csharp` blocks, and Test Explorer integration.
 - **CI integration** — a reusable GitHub Actions workflow and an `include`-able GitLab CI template.
