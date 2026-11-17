@@ -152,7 +152,7 @@
           "type": "string"
         },
         "schemaVersion": {
-          "description": "The language schema version the file targets. Optional - an author who omits it is not opted out of anything; the field exists purely as a future rejection hook so a document that declares a version this engine does not understand fails fast at authoring time rather than being silently mis-validated against the wrong contract. Only 'v1' is recognised today (the only language schema version that exists); this is NOT a live version-selection mechanism - the engine does not branch on it, and there is exactly one schema fragment to select.",
+          "description": "The language schema version the file targets. Optional in a v1 file; omitting it means v1. When present in a v1 file it must be 'v1'. A file that sets 'v2' is validated against the v2 language schema instead, where the field is required. Any other value is refused.",
           "const": "v1"
         }
       }
