@@ -147,9 +147,9 @@ internal static class HttpRestBodyConversion
     /// and three orders of magnitude of room. The count is of nodes PRODUCED, so an aliased
     /// subtree is charged its full expansion at every site, which is what makes this the
     /// amplification defence rather than a size limit. A YAML merge key (<c>&lt;&lt;</c>,
-    /// ZEB-67) is charged the same way: every member a merged mapping offers at a merge site
-    /// costs one unit, whether or not an explicit key overrides it, on top of the nodes the
-    /// members that are kept then produce.
+    /// ZEB-67) is charged the same way: every merge source costs one unit, and every member
+    /// a merged mapping offers at a merge site costs one unit, whether or not an explicit key
+    /// overrides it, on top of the nodes the members that are kept then produce.
     /// </para>
     /// <para>
     /// <strong>IT COUNTS NODES, NOT BYTES, and the difference is reachable rather than
@@ -390,9 +390,9 @@ internal static class HttpRestBodyConversion
     /// <para>
     /// <strong>Bounded.</strong> Each mapping is resolved once per body and the result reused
     /// at every site that merges it (the memo is keyed by reference, so this is the
-    /// representation model's DAG, not its expansion). Every merged member examined at a
-    /// site is charged to the body's node budget, so a merge chain that amplifies runs the
-    /// same budget out as an amplifying alias does. Merge chains are limited to
+    /// representation model's DAG, not its expansion). Every merge source, and every
+    /// merged member examined at a site, is charged to the body's node budget, so a merge
+    /// chain that amplifies runs the same budget out as an amplifying alias does. Merge chains are limited to
     /// <see cref="MaxBodyDepth"/> levels, which also bounds this recursion's stack.
     /// </para>
     /// </remarks>
