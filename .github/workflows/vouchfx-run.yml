@@ -7,8 +7,9 @@
 # reference caller in .github/workflows/vouchfx-run-reference.yml).
 #
 # ── How vouchfx is installed (parameterised; build-from-source by default) ──────────
-# vouchfx IS published as a NuGet global tool — `dotnet tool install --global vouchfx
-# --prerelease` (docs/getting-started.md) is the recommended way to run suites locally.
+# vouchfx IS published as a NuGet global tool — `dotnet tool install --global vouchfx`
+# (docs/getting-started.md; omit `--prerelease`, stable releases exist) is the recommended
+# way to run suites locally.
 # It is not published as a container image.
 #   This workflow nevertheless DELIBERATELY installs by building from source at a
 #   pinned ref, rather than installing the packaged tool: the default `vouchfx-ref` is
@@ -18,7 +19,7 @@
 #   source build is an immutable supply-chain reference, consistent with this header's
 #   pinning rules (see below).
 #   A consumer tracking a released engine pins `vouchfx-ref` to the release tag (e.g.
-#   `v1.0.0-alpha.9`) — still a source build. Installing the packaged tool instead
+#   `v1.2.1`) — still a source build. Installing the packaged tool instead
 #   could become an optional install mode later; the install step is intentionally the
 #   only thing that would change.
 #

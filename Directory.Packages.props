@@ -85,9 +85,9 @@
     <PackageVersion Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
   <ItemGroup Label="Azure Service Bus emulator (mq-publish/expect.azureservicebus)">
-    <!-- Azure.Messaging.ServiceBus 7.18.x: ServiceBusClient, ServiceBusSender,
+    <!-- Azure.Messaging.ServiceBus: ServiceBusClient, ServiceBusSender,
          ServiceBusReceiver (PeekMessagesAsync), ServiceBusAdministrationClient.
-         Pin to a stable 7.18 build; advance at engine cadence, not Azure SDK cadence.
+         Pin to a stable build; advance at engine cadence, not Azure SDK cadence.
          Both mq-publish.azureservicebus and mq-expect.azureservicebus reference this. -->
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.21.0" />
   </ItemGroup>
@@ -120,17 +120,17 @@
     <PackageVersion Include="AWSSDK.DynamoDBv2" Version="3.7.513.4" />
     <PackageVersion Include="AWSSDK.S3" Version="3.7.511.8" />
   </ItemGroup>
-  <ItemGroup Label="Avro / schema-registry (S06) — ship in lockstep with Confluent.Kafka 2.14.2">
-    <!-- Confluent.SchemaRegistry + Serdes.Avro version-match Confluent.Kafka (2.14.2).
-         Apache.Avro is pinned to exactly the version Serdes.Avro 2.14.2 transitively
+  <ItemGroup Label="Avro / schema-registry (S06) — ship in lockstep with Confluent.Kafka">
+    <!-- Confluent.SchemaRegistry + Serdes.Avro version-match Confluent.Kafka.
+         Apache.Avro is pinned to exactly the version Serdes.Avro transitively
          requires, to avoid an NU1605 downgrade warning under TreatWarningsAsErrors. -->
     <PackageVersion Include="Confluent.SchemaRegistry" Version="2.16.0" />
     <PackageVersion Include="Confluent.SchemaRegistry.Serdes.Avro" Version="2.16.0" />
     <PackageVersion Include="Apache.Avro" Version="1.12.2" />
   </ItemGroup>
   <ItemGroup Label="Per-scenario isolation (S04-A-01)">
-    <!-- Respawn 6.x: Respawner.CreateAsync(DbConnection, RespawnerOptions { DbAdapter = DbAdapter.Postgres })
-         then respawner.ResetAsync(connection).  Npgsql adapter is included in Respawn 6.2.1. -->
+    <!-- Respawn: Respawner.CreateAsync(DbConnection, RespawnerOptions { DbAdapter = DbAdapter.Postgres })
+         then respawner.ResetAsync(connection).  the Npgsql adapter is included in Respawn. -->
     <PackageVersion Include="Respawn" Version="7.0.0" />
   </ItemGroup>
   <ItemGroup Label="Test stack">

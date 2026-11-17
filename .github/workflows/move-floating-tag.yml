@@ -21,9 +21,9 @@
 #              candidates; consumers should move to `v1-rc` at that point.
 #   v1-rc      moved to every v1.0.0-rc.N release candidate. Retired the moment
 #              v1.0.0 GA ships; consumers should move to `v1` at that point.
-#   v1         moved to every v1.y.z GA release once GA exists. Does not
-#              exist yet (no v1.0.0 has shipped) — this workflow only starts
-#              writing it once a clean (non-pre-release) v1.y.z tag appears.
+#   v1         moved to every v1.y.z GA release once GA exists. Created
+#              by the first GA release (v1.0.0) and moved by this workflow
+#              whenever a clean (non-pre-release) v1.y.z tag appears.
 #
 # WHY EACH PRE-GA LINE GETS ITS OWN TAG, rather than one tag absorbing every
 # pre-release: a consumer who pinned `v1-alpha` chose the alpha line. Silently

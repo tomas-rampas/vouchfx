@@ -70,7 +70,7 @@
       AvroDeserializer + GenericRecord those providers rely on, so the assemblies must
       be in this harness's output dir for typeof(...).Assembly.Location to resolve at
       compile time and for the runtime types to load into the Default ALC.  Versions are
-      pinned centrally in Directory.Packages.props (lockstep with Confluent.Kafka 2.14.2).
+      pinned centrally in Directory.Packages.props (lockstep with Confluent.Kafka).
       Polly.Core is NOT listed here: it arrives transitively via Vouchfx.Engine.Abstractions
       (the probe drives RetryRunner, not Polly types directly) and is already in the output.
     -->

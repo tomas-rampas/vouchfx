@@ -41,7 +41,7 @@
 #
 # ── How vouchfx is installed (build-from-source here; a packaged tool also exists) ──
 # vouchfx IS published as a NuGet global tool since the 1.0.0-alpha series
-# (`dotnet tool install --global vouchfx --prerelease`) — the recommended way to run
+# (`dotnet tool install --global vouchfx`; omit `--prerelease`, stable releases exist) — the recommended way to run
 # suites locally; it is not published as a container image. This template nevertheless
 # DELIBERATELY installs by building from source: it clones the vouchfx repository at a
 # pinned ref (VOUCHFX_REPO_URL / VOUCHFX_REF) into a sub-path, runs
@@ -49,7 +49,7 @@
 #   Pinning the `include:` ref and VOUCHFX_REF together keeps the engine and this
 #   template definition in lock-step, and a SHA/tag-pinned source build is an immutable
 #   supply-chain reference — exactly as in the GitHub template. A consumer tracking a
-#   released engine pins VOUCHFX_REF to the release tag (e.g. `v1.0.0-alpha.9`) — still
+#   released engine pins VOUCHFX_REF to the release tag (e.g. `v1.2.1`) — still
 #   a source build. A packaged-tool install could become an optional mode later; the
 #   install step is intentionally the only thing that would change.
 #

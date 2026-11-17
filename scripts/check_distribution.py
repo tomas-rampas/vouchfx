@@ -61,8 +61,9 @@ def validate_bundle(names, read, open_file, prefix, version, expected_rids, nuge
             for checksum in entry["checksums"]:
                 if checksum["algorithm"] == "SHA256":
                     hashes[filename] = checksum["checksumValue"].lower()
-        # Upstream macOS/Windows manifests omit dcptun_c. The osx-arm64 13.4.2
-        # manifest also has a wrong NOTICE hash, even in the original NuGet package.
+        # Upstream macOS/Windows manifests omit dcptun_c. The osx-arm64
+        # manifest (checked in 13.4.2 and 13.4.6) also has a wrong NOTICE hash, even in the
+        # original NuGet package.
         # Native hashes remain strict; --nuget-cache verifies EVERY original file,
         # including licences, notices and upstream manifests, byte for byte.
         if executable not in hashes:

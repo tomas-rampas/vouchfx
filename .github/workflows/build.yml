@@ -16,8 +16,9 @@
 #               client closure (Npgsql, Confluent.Kafka, MongoDB.Driver,
 #               StackExchange.Redis, HttpClient).  Docker-independent — the
 #               closure script touches client types in-memory only, never
-#               connects.  Also scheduled daily for 06:17 UTC to catch
-#               regressions introduced by dependency upgrades between pushes.
+#               connects.  Runs on every pull request and push, and also on the daily
+#               06:17 UTC schedule to catch regressions introduced by dependency
+#               upgrades between pushes.
 #               Exit non-zero iff NetDelta > threshold-bytes (2 MB) or context
 #               not reclaimed; a failure here blocks merge.
 #
@@ -33,8 +34,18 @@
 #  docs-build   Blocking documentation build and publication gate on every PR.
 #               Uses the Pages build inputs without publishing or dispatching.
 #
+#  tls-transport / tls-transport-gate
+#               Blocking: the reusable TLS transport acceptance workflow on
+#               Windows and Linux; the gate job requires both hosted platforms.
+#
 #  workflow-contract Blocking workflow lint and actual Docker pre-pull regressions.
 #               Uses fixture commands only; it never pulls or starts containers.
+#
+#  vscode-extension Non-blocking (continue-on-error): builds, lints, tests and
+#               packages the VS Code extension.
+#
+#  site-tools-tests Blocking Python regression tests for scripts/site-tools,
+#               the shared static-site package the satellite repositories use.
 #
 #  analyser-forward Advisory, non-blocking rebuild with the next major SDK's
 #               (.NET 11) recommended analysers.  Runs outside the checkout so
@@ -414,8 +425,8 @@ jobs:
       # --mode closure  exercises the full Core-provider client type closure
       #                 (Npgsql, Confluent.Kafka, MongoDB.Driver,
       #                  StackExchange.Redis, HttpClient) — no live connections.
-      # --iterations 5000  is the calibrated run length (verified locally:
-      #                    NetDelta ≈ 1.7 KB against a 2 MB threshold, ≈1000× headroom).
+      # --iterations 5000  is the calibrated run length (NetDelta stays far below the
+      #                    2 MB threshold; see docs/memory-harness.md for a dated run).
       # --threshold-bytes 2000000  (2 MB) is the M1 permanent threshold.
       # Exit 0 iff Passed && ContextReclaimed; any non-zero exit fails the pipeline.
       - name: Run memory-leak harness (closure, 5 000 iterations, 2 MB threshold)
