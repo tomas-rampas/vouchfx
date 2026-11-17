@@ -1,8 +1,6 @@
-using System.Globalization;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Vouchfx.Engine.Authoring.Ast;
-using YamlDotNet.Core;
+using Vouchfx.Steps.HttpRest;
 using YamlDotNet.RepresentationModel;
 
 namespace Vouchfx.Engine.Runtime;
@@ -12,11 +10,14 @@ namespace Vouchfx.Engine.Runtime;
 /// This is not a raw-node secret scan. Map names and unlisted literals/placeholder-only
 /// fields remain opaque. PostgreSQL's historical collection is retained deliberately.
 /// The independent emission census tests gate additions without changing the frozen SDK.
+/// An http.rest structured body is read through the binder's own conversion, so its text
+/// is exactly the body that is sent; a body the binder refuses contributes nothing, and the
+/// refusal is reported once, by the provider's Validate.
 /// </remarks>
 internal static class StepTemplateCensus
 {
     internal sealed record Field(string Location, string Text);
-    internal sealed record Collection(IReadOnlyList<Field> Fields, string? Failure = null);
+    internal sealed record Collection(IReadOnlyList<Field> Fields);
 
     internal static Collection Collect(StepNode node)
     {
@@ -46,21 +47,15 @@ internal static class StepTemplateCensus
                 Scalar("path"); Values("headers");
                 if (At(raw, "body") is { } body)
                 {
-                    try
-                    {
-                        // Exactly the binder's representation, not a second Bind. The gate
-                        // compares against its actual once-bound Body, including mapping keys.
-                        var budget = 50_000;
-                        var text = body is YamlScalarNode scalar ? scalar.Value ?? string.Empty
-                            : JsonSerializer.Serialize(BodyNode(body, 1, ref budget));
-                        if (text.Length > 0) fields.Add(new Field("body", text));
-                    }
-                    catch (Exception exception) when (exception is BodyLimitException or ArgumentException or JsonException or InvalidOperationException or NotSupportedException)
-                    {
-                        // Only this pure bounded conversion is guarded. No provider/process
-                        // exception is classified here and no raw body enters the diagnostic.
-                        return new Collection(fields, "http.rest body cannot be represented as bounded JSON (maximum depth 64 and 50000 nodes).");
-                    }
+                    // The binder's own conversion, compiled from the provider's source file
+                    // (HttpRestBodyConversion.cs, linked into this assembly), so the text
+                    // checked here is the text HttpRestProvider.Bind sends: merge keys
+                    // applied, block scalars and tags honoured. A body it refuses contributes
+                    // nothing and is not reported here: Bind carries the same refusal to
+                    // Validate, which reports it once on the authoring channel, and the step
+                    // is never compiled, so no reference in it is ever fetched or sent.
+                    var converted = ConvertBody(body, raw);
+                    if (converted is { Length: > 0 }) fields.Add(new Field("body", converted));
                 }
                 Values("expect.json"); Scalar("expect.bodyContains");
                 break;
@@ -140,33 +135,24 @@ internal static class StepTemplateCensus
         return current;
     }
 
-    private sealed class BodyLimitException : Exception { }
-
-    private static JsonNode? BodyNode(YamlNode node, int depth, ref int budget)
+    /// <summary>
+    /// The text <c>HttpRestProvider.Bind</c> sends for <paramref name="body"/>, or
+    /// <see langword="null"/> when Bind sends none because the conversion refuses it.
+    /// </summary>
+    private static string? ConvertBody(YamlNode body, YamlMappingNode step)
     {
-        if (depth > 64 || --budget < 0) throw new BodyLimitException();
-        switch (node)
+        try
         {
-            case YamlMappingNode map:
-                var obj = new JsonObject();
-                foreach (var (key, value) in map.Children)
-                    obj[key is YamlScalarNode scalar ? scalar.Value ?? string.Empty : key.ToString()] = BodyNode(value, depth + 1, ref budget);
-                return obj;
-            case YamlSequenceNode sequence:
-                var array = new JsonArray();
-                foreach (var item in sequence.Children) array.Add(BodyNode(item, depth + 1, ref budget));
-                return array;
-            case YamlScalarNode scalar:
-                var text = scalar.Value ?? string.Empty;
-                if (scalar.Style is ScalarStyle.SingleQuoted or ScalarStyle.DoubleQuoted || text.Length == 0) return JsonValue.Create(text);
-                if (text is "null" or "Null" or "NULL" or "~") return null;
-                if (text is "true" or "True" or "TRUE") return JsonValue.Create(true);
-                if (text is "false" or "False" or "FALSE") return JsonValue.Create(false);
-                if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer)) return JsonValue.Create(integer);
-                if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) return JsonValue.Create(number);
-                return JsonValue.Create(text);
-            default:
-                return JsonValue.Create(node.ToString());
+            return HttpRestBodyConversion.ToTemplate(body, step).Text;
+        }
+        catch (Exception exception) when (exception is ArgumentException or JsonException or InvalidOperationException or NotSupportedException)
+        {
+            // The conversion RETURNS its authoring refusals, so an exception here is a defect
+            // in it. Bind meets the identical exception, and the pipeline reports that as a
+            // provider fault before anything is compiled; contributing nothing here keeps it
+            // one report and keeps this walk from aborting the pre-topology door. No body
+            // text enters any diagnostic from here.
+            return null;
         }
     }
 }

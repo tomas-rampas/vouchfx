@@ -6118,8 +6118,6 @@ public static class ScenarioRunner
                     faults.Add(new SecretReferenceFault(message, $"steps.{node.Id}.{field.Location}", false));
                 }
             }
-            if (collection.Failure is { } collectionFailure)
-                faults.Add(new SecretReferenceFault($"step '{node.Id}': {collectionFailure}", $"steps.{node.Id}", false));
         }
 
         // Always scan every declaration. The secret-bearing validator owns both grammar and
@@ -6606,10 +6604,13 @@ public static class ScenarioRunner
     /// </summary>
     /// <remarks>
     /// The independent Core emission census gates this explicit field selection. Other
-    /// placeholder-only and literal fields, including script code, remain opaque. Structured
-    /// REST body uses the binder's bounded JSON representation, including its mapping keys.
-    /// Validation consumes collection failures before acquisition; provenance and the receipt
-    /// only read its available reference text and never invoke a secret resolver.
+    /// placeholder-only and literal fields, including script code, remain opaque. A structured
+    /// REST body is read through the binder's own conversion (HttpRestBodyConversion, the
+    /// provider's source file compiled into this assembly), so the text is exactly the body
+    /// that is sent, mapping keys included, with merge keys applied. A body the binder refuses
+    /// contributes no text: the provider's Validate reports that refusal before acquisition,
+    /// and the step never runs. Validation, provenance and the receipt only read reference
+    /// text and never invoke a secret resolver.
     /// </remarks>
     private static List<string> CollectSubstitutableTexts(StepNode node)
         => StepTemplateCensus.Collect(node).Fields.Select(field => field.Text).ToList();

@@ -82,10 +82,20 @@ public sealed record HttpExpect(
 /// <param name="Expect">
 /// An optional assertion block applied to the HTTP response.
 /// </param>
+/// <param name="BodyRefusal">
+/// Why a structured <c>body</c> could not be converted — it nests or expands past the
+/// bounds, carries a merge key that cannot be applied, or carries a tag that is unsupported
+/// or does not fit its value — or <see langword="null"/> when it converted or no body is
+/// declared. When set, <see cref="Body"/> is <see langword="null"/>; <c>Validate</c>
+/// reports this ASCII message as an authoring refusal naming the step, so
+/// <see cref="HttpRestProvider.Bind"/> never throws for a body the author got wrong. The
+/// message never quotes a body value.
+/// </param>
 public sealed record HttpRestModel(
     string Target,
     string Method,
     string Path,
     IReadOnlyDictionary<string, string>? Headers,
     string? Body,
-    HttpExpect? Expect) : IStepModel;
+    HttpExpect? Expect,
+    string? BodyRefusal = null) : IStepModel;

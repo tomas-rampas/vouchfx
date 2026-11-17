@@ -11,9 +11,11 @@
 //   4. Explicit tags: `!!str 123` was the number 123 and `!!int "5"` the string "5".
 //
 // These rows pin the new rule for each, every error case (a typed authoring refusal: Bind
-// throws InvalidOperationException, the channel the body-depth error already uses), and a
-// regression row for every behaviour that deliberately did NOT change. A final group checks
-// that the schema-validation layer and the binder agree on what they accept.
+// never throws, it binds no Body and carries the message in HttpRestModel.BodyRefusal, which
+// Validate reports), and a regression row for every behaviour that deliberately did NOT
+// change. A final group checks that the schema-validation layer and the binder agree on what
+// they accept. The engine-path classification of these refusals (an authoring refusal, never
+// a provider fault) is pinned in Vouchfx.Engine.Runtime.Tests, SecretTemplateReferenceTests.
 using System.Text;
 using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Compilation.Schema;
@@ -233,13 +235,13 @@ public sealed class HttpRestBodyYamlSemanticsTests
                   MERGE
             """.Replace("MERGE", mergeLine, StringComparison.Ordinal);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => BindBody(yaml));
+        var refusal = RefuseBody(yaml);
 
-        Assert.Contains("step 'bad-merge'", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("merge key '<<' at line 11, column 7", ex.Message, StringComparison.Ordinal);
-        Assert.Contains(expected, ex.Message, StringComparison.Ordinal);
-        Assert.Contains("authoring fault", ex.Message, StringComparison.Ordinal);
-        AssertAscii(ex.Message);
+        Assert.Contains("step 'bad-merge'", refusal, StringComparison.Ordinal);
+        Assert.Contains("merge key '<<' at line 11, column 7", refusal, StringComparison.Ordinal);
+        Assert.Contains(expected, refusal, StringComparison.Ordinal);
+        Assert.Contains("authoring fault", refusal, StringComparison.Ordinal);
+        AssertAscii(refusal);
     }
 
     /// <summary>A mapping that merges itself is refused rather than recursing.</summary>
@@ -258,11 +260,11 @@ public sealed class HttpRestBodyYamlSemanticsTests
                   <<: *self
             """;
 
-        var ex = Assert.Throws<InvalidOperationException>(() => BindBody(yaml));
+        var refusal = RefuseBody(yaml);
 
-        Assert.Contains("step 'cyclic'", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("into itself", ex.Message, StringComparison.Ordinal);
-        AssertAscii(ex.Message);
+        Assert.Contains("step 'cyclic'", refusal, StringComparison.Ordinal);
+        Assert.Contains("into itself", refusal, StringComparison.Ordinal);
+        AssertAscii(refusal);
     }
 
     /// <summary>
@@ -283,10 +285,10 @@ public sealed class HttpRestBodyYamlSemanticsTests
         for (var i = 0; i < 30; i++)
             sb.Append("      s").Append(i).Append(": { <<: *big }\n");
 
-        var ex = Assert.Throws<InvalidOperationException>(() => BindBody(sb.ToString()));
+        var refusal = RefuseBody(sb.ToString());
 
-        Assert.Contains("step 'merge-laughs'", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("expands to more than 50000 JSON nodes", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("step 'merge-laughs'", refusal, StringComparison.Ordinal);
+        Assert.Contains("expands to more than 50000 JSON nodes", refusal, StringComparison.Ordinal);
     }
 
     /// <summary>A chain of merged mappings deeper than 64 is refused, bounding the recursion.</summary>
@@ -301,10 +303,10 @@ public sealed class HttpRestBodyYamlSemanticsTests
         sb.Append("steps:\n  - id: deep-merge\n    type: http.rest\n    target: svc\n");
         sb.Append("    method: POST\n    path: /x\n    body:\n      <<: *m70\n");
 
-        var ex = Assert.Throws<InvalidOperationException>(() => BindBody(sb.ToString()));
+        var refusal = RefuseBody(sb.ToString());
 
-        Assert.Contains("step 'deep-merge'", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("more than 64 mappings deep", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("step 'deep-merge'", refusal, StringComparison.Ordinal);
+        Assert.Contains("more than 64 mappings deep", refusal, StringComparison.Ordinal);
     }
 
     // ── 2. Block scalars ───────────────────────────────────────────────────────
@@ -502,13 +504,13 @@ public sealed class HttpRestBodyYamlSemanticsTests
     [InlineData("!!null y", "!!null", "not one of the null forms")]
     public void Tags_ContentNotValidForTag_IsABindError(string value, string tag, string reason)
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => BindBody(StepWithValue("bad-tag", value)));
+        var refusal = RefuseBody(StepWithValue("bad-tag", value));
 
-        Assert.Contains("step 'bad-tag'", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("tags the value at line 8, column 10 as " + tag, ex.Message, StringComparison.Ordinal);
-        Assert.Contains(reason, ex.Message, StringComparison.Ordinal);
-        Assert.Contains("authoring fault", ex.Message, StringComparison.Ordinal);
-        AssertAscii(ex.Message);
+        Assert.Contains("step 'bad-tag'", refusal, StringComparison.Ordinal);
+        Assert.Contains("tags the value at line 8, column 10 as " + tag, refusal, StringComparison.Ordinal);
+        Assert.Contains(reason, refusal, StringComparison.Ordinal);
+        Assert.Contains("authoring fault", refusal, StringComparison.Ordinal);
+        AssertAscii(refusal);
     }
 
     /// <summary>
@@ -525,23 +527,22 @@ public sealed class HttpRestBodyYamlSemanticsTests
     [InlineData("!!set { a: }", "!!set", "a mapping")]
     public void Tags_Unsupported_IsABindErrorNamingTheTag(string value, string tag, string kind)
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => BindBody(StepWithValue("odd-tag", value)));
+        var refusal = RefuseBody(StepWithValue("odd-tag", value));
 
-        Assert.Contains("step 'odd-tag'", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("uses the YAML tag '" + tag + "' on " + kind + " at line 8, column 10", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("authoring fault", ex.Message, StringComparison.Ordinal);
-        AssertAscii(ex.Message);
+        Assert.Contains("step 'odd-tag'", refusal, StringComparison.Ordinal);
+        Assert.Contains("uses the YAML tag '" + tag + "' on " + kind + " at line 8, column 10", refusal, StringComparison.Ordinal);
+        Assert.Contains("authoring fault", refusal, StringComparison.Ordinal);
+        AssertAscii(refusal);
     }
 
     /// <summary>A tag outside printable ASCII is escaped in the diagnostic, which stays ASCII.</summary>
     [Fact]
     public void Tags_NonAsciiTag_DiagnosticStaysAscii()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => BindBody(StepWithValue("unicode-tag", "!caf%C3%A9 1")));
+        var refusal = RefuseBody(StepWithValue("unicode-tag", "!caf%C3%A9 1"));
 
-        Assert.Contains("step 'unicode-tag'", ex.Message, StringComparison.Ordinal);
-        AssertAscii(ex.Message);
+        Assert.Contains("step 'unicode-tag'", refusal, StringComparison.Ordinal);
+        AssertAscii(refusal);
     }
 
     // ── 5. Unchanged behaviour (regression) ────────────────────────────────────
@@ -573,6 +574,58 @@ public sealed class HttpRestBodyYamlSemanticsTests
         var body = BindBody(StepWithValue("keep", value));
 
         Assert.Equal("{\"v\":" + expectedJson + "}", body);
+    }
+
+    /// <summary>
+    /// Plain text that .NET parses as a NON-FINITE double is a string, as DSL §5.1's
+    /// "everything else is a string" says: JSON has no NaN or infinity. Before this rule .NET
+    /// parsed each of these (in any letter case) to NaN or an infinity and serialising the body
+    /// then threw ArgumentException out of Bind, which the engine reported as a provider defect.
+    /// No body that used to be sent changes. A finite exponent form is still a number.
+    /// </summary>
+    [Theory]
+    [InlineData("NaN")]
+    [InlineData("nan")]
+    [InlineData("Infinity")]
+    [InlineData("infinity")]
+    [InlineData("+Infinity")]
+    [InlineData("-Infinity")]
+    [InlineData("1e400")]
+    [InlineData("-1e400")]
+    public void PlainNonFiniteNumbers_AreStrings(string value)
+    {
+        var body = BindBody(StepWithValue("non-finite", value));
+
+        // Compared as parsed JSON: the serialiser's default encoder writes '+' as +.
+        var sent = System.Text.Json.Nodes.JsonNode.Parse(body)!["v"]!.AsValue();
+        Assert.Equal(System.Text.Json.JsonValueKind.String, sent.GetValueKind());
+        Assert.Equal(value, sent.GetValue<string>());
+    }
+
+    /// <summary>The largest finite exponent forms stay numbers: only non-finite text changed.</summary>
+    [Theory]
+    [InlineData("1e308", "1E+308")]
+    [InlineData("-1.5e300", "-1.5E+300")]
+    public void PlainLargeFiniteNumbers_StayNumbers(string value, string expectedJson)
+    {
+        var body = BindBody(StepWithValue("finite", value));
+
+        Assert.Equal("{\"v\":" + expectedJson + "}", body);
+    }
+
+    /// <summary>
+    /// A caller that skips Validate cannot emit a refused body as a request with no body:
+    /// Emit refuses the model with the same message.
+    /// </summary>
+    [Fact]
+    public void Emit_RefusedBodyModel_Throws_NeverEmitsWithoutTheBody()
+    {
+        var model = BindModel(StepWithValue("emit-refused", "!!bool yes"));
+        Assert.NotNull(model.BodyRefusal);
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => new HttpRestProvider().Emit(model, new StubCtx("emit-refused")));
+        Assert.Equal(model.BodyRefusal, ex.Message);
     }
 
     /// <summary>
@@ -775,7 +828,7 @@ public sealed class HttpRestBodyYamlSemanticsTests
         Assert.False(validation.IsValid);
         Assert.Contains(validation.Errors, e => e.Message.Contains("unresolved tag '!money'", StringComparison.Ordinal));
 
-        Assert.Throws<InvalidOperationException>(() => BindBody(yaml));
+        RefuseBody(yaml);
     }
 
     /// <summary>
@@ -790,8 +843,8 @@ public sealed class HttpRestBodyYamlSemanticsTests
         var yaml = ValidSuiteWithValue("!money 5");
 
         Assert.True(DocumentValidator.Validate(yaml, s_registry).IsValid);
-        var ex = Assert.Throws<InvalidOperationException>(() => BindBody(yaml));
-        Assert.Contains("uses the YAML tag '!money'", ex.Message, StringComparison.Ordinal);
+        var refusal = RefuseBody(yaml);
+        Assert.Contains("uses the YAML tag '!money'", refusal, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -823,7 +876,7 @@ public sealed class HttpRestBodyYamlSemanticsTests
         var yaml = ValidSuiteWithValue("!!bool yes");
 
         Assert.True(DocumentValidator.Validate(yaml, s_registry).IsValid);
-        Assert.Throws<InvalidOperationException>(() => BindBody(yaml));
+        RefuseBody(yaml);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
@@ -852,7 +905,44 @@ public sealed class HttpRestBodyYamlSemanticsTests
         "environment:\n  services:\n    svc:\n      image: example/app:1.0\n" + StepWithValue("agree", value);
 
     /// <summary>Binds the LAST step of a document and returns its body.</summary>
-    private static string BindBody(string yaml) => BindModel(yaml).Body!;
+    private static string BindBody(string yaml)
+    {
+        var model = BindModel(yaml);
+        Assert.Null(model.BodyRefusal);
+        return model.Body!;
+    }
+
+    /// <summary>
+    /// Binds the LAST step of a document, which must be refused, and returns the refusal.
+    /// Bind itself does not throw (it returned a model to get here), sends no body, and
+    /// Validate reports exactly that refusal, so Emit is never reached on the engine path.
+    /// </summary>
+    private static string RefuseBody(string yaml)
+    {
+        var model = BindModel(yaml);
+        Assert.Null(model.Body);
+        var refusal = Assert.IsType<string>(model.BodyRefusal);
+
+        var validation = new HttpRestProvider().Validate(model, new SvcProjectContext());
+        Assert.False(validation.IsValid);
+        Assert.Equal(new[] { refusal }, validation.Errors);
+        return refusal;
+    }
+
+    /// <summary>A project context declaring the one service every row here targets.</summary>
+    private sealed class SvcProjectContext : IProjectContext
+    {
+        public string SuiteDirectory => System.IO.Directory.GetCurrentDirectory();
+
+        public IReadOnlyDictionary<string, string> DeclaredDependencies { get; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+
+        public IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices { get; } =
+            new Dictionary<string, DeclaredServiceInfo>(StringComparer.Ordinal)
+            {
+                ["svc"] = new DeclaredServiceInfo(Array.Empty<string>()),
+            };
+    }
 
     /// <summary>
     /// Loads a whole document, so anchors may be defined outside the step, and binds its last
