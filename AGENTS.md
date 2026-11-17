@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for Codex (Codex.ai/code) when working in this repository.
+Guidance for coding agents (such as OpenAI Codex, which reads this file) when working in this repository. `CLAUDE.md` carries the same guidance for Claude Code.
 
 ## What vouchfx is
 
@@ -35,7 +35,7 @@ already approved file. Keep the established private paths excluded.
 - `docs/03_MVP_Project_Plan.md` (**maintainer-local, untracked**) — scope, the seven workstreams, phasing, MVP vs. later.
 - `plan/README.md` (**maintainer-local, untracked**) — the execution plan that turns `docs/03` into milestones (M1–M5), 12 sprints, and tasks; the conventions, capacity, milestone gates, and the hard-invariant review checklist. Per-sprint task lists live in `plan/sprint-01.md … sprint-12.md`; `plan/roadmap.md` is the Mermaid overview.
 - `docs/roadmap.md`, `CHANGELOG.md`, `GOVERNANCE.md` — the public, tracked counterparts: capability-level roadmap (including the permanent OSS/commercial feature boundary), the delivered-capability changelog, and the community governance model. Keep them in step with the maintainer-local plan when milestones move.
-- Codex config (the Codex-agentic-framework sub-agents such as `security-specialist`, plus its commands/skills) is **not** vendored in this repository — it lives at the user/machine level under `~/.Codex/`. It does not change the engine design — only how Codex assists in this repo.
+- Claude Code config (the claude-agentic-framework sub-agents such as `security-specialist`, plus its commands/skills) is **not** vendored in this repository — it lives at the user/machine level under `~/.claude/`. It does not change the engine design — only how Claude Code assists in this repo. The one tracked exception is `.claude/settings.json`, which holds a narrow permission allowlist for the Linear connector: the read tools plus `save_issue` and `save_comment` are allowed without a prompt, `merge_diff`, `share_issue` and `delete_*` are explicitly set to ask, and every other Linear tool keeps its default prompt. A full `mcp__Linear__*` wildcard was refused because it would pre-approve `merge_diff` (which can merge a GitHub pull request given its URL), sharing and deletes in a public repository. The rule names match cloud-session tool names (`mcp__Linear__...`), and only a session with a single repository reads the file. The SDK for Claude Code on the web is installed by the cloud environment's setup script, not by this repository. Because permission rules take effect from the checked-out branch before anyone has read the diff (a branch could widen them), `/.claude/` is code-owned like `.github/workflows/`, and web sessions should be opened only on branches you trust. Everything else under `.claude/`, including the harness's agent worktrees, stays gitignored. Other coding agents, such as OpenAI Codex (which reads this file), keep their own configuration outside this repository; none is tracked here.
 
 ## Hard invariants (non-negotiable)
 
