@@ -142,7 +142,7 @@
       </article>
       <article class="card">
         <h3>Topological parity</h3>
-        <p>The same suite runs unchanged on a laptop, in SaaS, or in CI — because the compiled delegate depends only on a typed contract that orchestration produces.</p>
+        <p>The same suite runs unchanged on a laptop or in CI — because the compiled delegate depends only on a typed contract that orchestration produces.</p>
       </article>
     </div>
   </div>
@@ -198,7 +198,7 @@
       </div>
       <div class="layer">
         <span class="layer__n">5</span>
-        <div class="layer__body"><h3>Infrastructure fabric</h3><p>Local Docker, SaaS, or on-prem Kubernetes.</p></div>
+        <div class="layer__body"><h3>Infrastructure fabric</h3><p>Local Docker today; remote fabrics are planned.</p></div>
       </div>
       <div class="layers__contract">
         <span class="layers__chip">contract</span>
@@ -262,7 +262,7 @@
 </code></pre>
     </div>
     <p class="note">
-      Secrets are references, never literals — <code>${secret:vault/orders-db/conn}</code>, resolved at execution time
+      Secrets are references, never literals — <code>${secret:vault/orders-db#conn}</code>, resolved at run time, never at compile time,
       and redacted in every report. Test doubles (WireMock/Mountebank) are ordinary containers in <code>environment</code>,
       not a bolted-on mocking feature.
     </p>
@@ -275,7 +275,7 @@
     <p class="eyebrow">Real-world samples</p>
     <h2 class="section__title">Clone, run one command, see a complete end-to-end suite.</h2>
     <p class="section__lede">
-      The <a href="https://samples.vouchfx.io/" target="_blank" rel="noopener noreferrer">vouchfx-samples</a> site documents four production-grade sample applications (in four stacks) with complete test suites demonstrating patterns across multiple providers and technologies.
+      The <a href="https://samples.vouchfx.io/" target="_blank" rel="noopener noreferrer">vouchfx-samples</a> site documents four production-grade sample applications (in four stacks), a Compose variant and a Kafka mutual-TLS suite, with complete test suites demonstrating patterns across multiple providers and technologies.
     </p>
     <div class="grid grid--4">
       <article class="card">
@@ -335,8 +335,8 @@ alc.<span class="t">Unload</span>();</code></pre>
     </div>
     <div class="stat-row">
       <div class="stat"><span class="stat__num">5,000</span><span class="stat__label">load–unload cycles</span></div>
-      <div class="stat"><span class="stat__num">~1.3&nbsp;KB</span><span class="stat__label">net heap delta (2&nbsp;MB threshold)</span></div>
-      <div class="stat"><span class="stat__num">20 / 20</span><span class="stat__label">health-gated topology starts</span></div>
+      <div class="stat"><span class="stat__num">&lt;&nbsp;2&nbsp;MB</span><span class="stat__label">net heap delta gate, held in CI</span></div>
+      <div class="stat"><span class="stat__num">25</span><span class="stat__label">Core providers in the gated closure</span></div>
     </div>
     <p class="note note--center">The two defining risks empirically retired, guarded permanently in CI.</p>
   </div>
@@ -357,8 +357,8 @@ alc.<span class="t">Unload</span>();</code></pre>
     <div class="providers">
       <span class="prov" title="REST, SOAP"><strong>http</strong>: rest, soap</span>
       <span class="prov" title="PostgreSQL, MySQL, SQL Server, MongoDB, DynamoDB"><strong>db-assert</strong>: postgres, mysql, sqlserver, mongodb, dynamodb</span>
-      <span class="prov" title="Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams"><strong>mq-publish</strong>: kafka, rabbitmq, nats, asb, redis</span>
-      <span class="prov" title="Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams"><strong>mq-expect</strong>: kafka, rabbitmq, nats, asb, redis</span>
+      <span class="prov" title="Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams"><strong>mq-publish</strong>: kafka, rabbitmq, nats, azureservicebus, redis</span>
+      <span class="prov" title="Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams"><strong>mq-expect</strong>: kafka, rabbitmq, nats, azureservicebus, redis</span>
       <span class="prov" title="Redis, Elasticsearch"><strong>cache-assert</strong>: redis, elasticsearch</span>
       <span class="prov">metrics-assert.prometheus</span>
       <span class="prov">storage-assert.s3</span>
@@ -400,8 +400,8 @@ alc.<span class="t">Unload</span>();</code></pre>
       <article class="verdict verdict--inc"><h3>Inconclusive</h3><p>Timeout, partition outlasted grace, or an upstream capture unmet.</p></article>
     </div>
     <p class="note note--center">
-      One schema-versioned JSON Lines event stream feeds every renderer — terminal, HTML, JUnit XML, dashboard —
-      and the Healer agent. Each step-attempt is recorded individually, so the RETRY timeline renders without re-running.
+      One schema-versioned JSON Lines event stream feeds every renderer — terminal, HTML, JUnit XML —
+      and downstream tools such as the MCP companion. Each step-attempt is recorded individually, so the RETRY timeline renders without re-running.
     </p>
   </div>
 </section>
@@ -420,7 +420,7 @@ alc.<span class="t">Unload</span>();</code></pre>
       <li class="timeline__item timeline__item--done">
         <span class="timeline__badge">Delivered</span>
         <h3>Foundations proven</h3>
-        <p>Memory-safe dynamic compilation and health-gated Aspire orchestration empirically validated. Buildable .NET 8 solution; frozen provider contract; JSON Lines event envelope.</p>
+        <p>Memory-safe dynamic compilation and health-gated Aspire orchestration empirically validated. Buildable solution; frozen provider contract; JSON Lines event envelope.</p>
       </li>
       <li class="timeline__item timeline__item--done">
         <span class="timeline__badge">Delivered</span>
@@ -481,7 +481,7 @@ alc.<span class="t">Unload</span>();</code></pre>
   </div>
   <div class="footer__base">
     <span>© 2026 vouchfx · Apache-2.0</span>
-    <span>Built on .NET 10 LTS · Roslyn · .NET Aspire · Testcontainers · Polly v8</span>
+    <span>Source targets .NET 10 LTS · Roslyn · .NET Aspire · Testcontainers · Polly v8</span>
   </div>
 </footer>
 
