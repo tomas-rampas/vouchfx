@@ -589,7 +589,7 @@ public sealed class ProviderAcquisitionTests
     private static string Compile(string directory, string name, string source, params string[] extra)
     {
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
-            .Append(typeof(IStepProvider).Assembly.Location).Concat(extra).Distinct().Select(path => MetadataReference.CreateFromFile(path));
+            .Append(typeof(IStepProvider).Assembly.Location).Concat(extra).Distinct().Select(PlatformMetadataReferences.Get);
         var compilation = CSharpCompilation.Create(name, new[] { CSharpSyntaxTree.ParseText(source) }, references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         var path = Path.Combine(directory, name + ".dll"); var emitted = compilation.Emit(path);

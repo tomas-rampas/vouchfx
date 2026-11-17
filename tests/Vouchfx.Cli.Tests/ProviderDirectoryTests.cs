@@ -328,7 +328,7 @@ public sealed class ProviderDirectoryTests
     private static IEnumerable<MetadataReference> CoreReferences() =>
         ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
             .Where(path => Path.GetFileNameWithoutExtension(path) is "System.Runtime" or "System.Private.CoreLib")
-            .Select(path => MetadataReference.CreateFromFile(path));
+            .Select(PlatformMetadataReferences.Get);
 
     // Emits a provider-local image whose assembly name is the host assembly's, at the given version and key.
     private static string CompileLookAlike(string directory, System.Reflection.Assembly host, Version version, ForgedKey key)
@@ -368,7 +368,7 @@ public sealed class ProviderDirectoryTests
         Assert.True(emitted.Success, string.Join(Environment.NewLine, emitted.Diagnostics));
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
             .Where(path => Path.GetFileNameWithoutExtension(path) != identity.Name)
-            .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
+            .Select(PlatformMetadataReferences.Get)
             .Append(MetadataReference.CreateFromImage(stubImage.ToArray()));
         var compilation = CSharpCompilation.Create(name,
             new[] { CSharpSyntaxTree.ParseText("public sealed class UsesHost { public ForgedHost.IMarker? Marker; }") }, references,
@@ -384,7 +384,7 @@ public sealed class ProviderDirectoryTests
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
             .Where(path => includeSdk || Path.GetFileNameWithoutExtension(path) != "Vouchfx.Sdk")
             .Concat(includeSdk ? new[] { typeof(IStepProvider).Assembly.Location } : Array.Empty<string>())
-            .Concat(extraReferences ?? Array.Empty<string>()).Distinct().Select(path => MetadataReference.CreateFromFile(path));
+            .Concat(extraReferences ?? Array.Empty<string>()).Distinct().Select(PlatformMetadataReferences.Get);
         var compilation = CSharpCompilation.Create(name, new[] { CSharpSyntaxTree.ParseText(source) }, references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         var path = Path.Combine(directory, name + ".dll");

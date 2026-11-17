@@ -194,7 +194,7 @@ public sealed class DiagnosticCompositionCensusTests
         var platformAssemblies = (string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!;
         var references = platformAssemblies.Split(Path.PathSeparator)
             .Append(typeof(DisplaySanitiser).Assembly.Location).Distinct(StringComparer.Ordinal)
-            .Select(path => MetadataReference.CreateFromFile(path));
+            .Select(PlatformMetadataReferences.Get);
         var compilation = CSharpCompilation.Create("DiagnosticCensusMutation",
             new[] { CSharpSyntaxTree.ParseText(source) }, references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
