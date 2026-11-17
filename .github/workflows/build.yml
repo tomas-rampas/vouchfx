@@ -454,7 +454,7 @@ jobs:
 
   # ── Docker / Aspire integration — topology and provider tests ───────────────────
   # ubuntu-22.04 runners include Docker Engine, which is required for the
-  # Aspire topology (Testcontainers, §4).  Tests decorated with
+  # Aspire topology (§4).  Tests decorated with
   # [Trait("requires","docker")] run here after the `build` job. This job no
   # longer runs on pull requests or pushes: it runs daily on main via the schedule
   # and on demand via workflow_dispatch on any branch (Actions tab -> CI -> Run
@@ -1529,7 +1529,7 @@ jobs:
 
       # Scan the whole solution's transitive graph for packages with a known
       # advisory.  --include-transitive surfaces the indirect footprint (the
-      # bulk of the CVE surface flows through Aspire/Testcontainers deps).
+      # bulk of the CVE surface flows through the Aspire deps).
       # The command prints flagged packages, severities and advisory URLs to
       # the Actions log; it exits 0 regardless of findings, so combined with
       # continue-on-error this step is purely informational.
