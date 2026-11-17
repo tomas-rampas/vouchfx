@@ -9,11 +9,13 @@
 //
 // Correct path: CSharpScript.Create<T> → GetCompilation() → Emit(MemoryStream) ONCE
 //               → per-run: new CollectibleScriptLoadContext → LoadFromStream → <Factory> → Unload().
+using System.Collections.Concurrent;
 using System.IO;
 using System.Reflection;
 using System.Runtime.Loader;
 using Microsoft.CodeAnalysis.CSharp.Scripting;
 using Microsoft.CodeAnalysis.Scripting;
+using Microsoft.CodeAnalysis.Scripting.Hosting;
 using Vouchfx.Engine.Abstractions;
 
 namespace Vouchfx.Engine.Compilation;
@@ -59,6 +61,26 @@ namespace Vouchfx.Engine.Compilation;
 /// </remarks>
 public static class RoslynScriptCompiler
 {
+    // One loader for every compile. Without it, CSharpScript.Create allocates a new
+    // InteractiveAssemblyLoader, whose non-collectible AssemblyLoadContext is never
+    // released: one leaked context per compile. Nothing is ever loaded through it,
+    // because scripts here are emitted and loaded into our own collectible contexts.
+    private static readonly InteractiveAssemblyLoader SharedScriptLoader = new();
+
+    // MetadataReference.CreateFromFile copies the whole PE image into unmanaged memory
+    // that the GC cannot see and that is freed only by a finalizer. Callers pass the
+    // full trusted-platform-assemblies list (about 490 files, about 150 MB in a CLI or
+    // test host), so creating fresh references per compile allocated that much native
+    // memory per compile and let it pile up between gen2 collections. One reference per
+    // file version is shared instead; it also lets Roslyn reuse its assembly symbols.
+    private static readonly ConcurrentDictionary<string, CachedReference> ReferenceCache =
+        new(StringComparer.Ordinal);
+
+    private sealed record CachedReference(
+        long Length,
+        DateTime LastWriteTimeUtc,
+        Microsoft.CodeAnalysis.MetadataReference Reference);
+
     /// <summary>
     /// Compiles <paramref name="csxSource"/> into a portable-executable image exactly once.
     /// </summary>
@@ -154,7 +176,8 @@ public static class RoslynScriptCompiler
         var script = CSharpScript.Create<object>(
             csxSource,
             options,
-            globalsType: typeof(ScriptGlobalVariables));
+            globalsType: typeof(ScriptGlobalVariables),
+            assemblyLoader: SharedScriptLoader);
 
         var compilation = script.GetCompilation();
 
@@ -414,7 +437,7 @@ public static class RoslynScriptCompiler
 
         var refs = new List<Microsoft.CodeAnalysis.MetadataReference>(tpaRefs)
         {
-            Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(abstractionsLocation),
+            GetReference(abstractionsLocation),
         };
 
         // Add caller-supplied per-script reference paths (e.g. provider or satellite
@@ -426,7 +449,7 @@ public static class RoslynScriptCompiler
             foreach (var path in additionalReferencePaths)
             {
                 if (!string.IsNullOrEmpty(path))
-                    refs.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path));
+                    refs.Add(GetReference(path));
             }
         }
 
@@ -508,9 +531,50 @@ public static class RoslynScriptCompiler
 
         var refs = new List<Microsoft.CodeAnalysis.MetadataReference>(found.Count);
         foreach (var path in found.Values)
-            refs.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path));
+            refs.Add(GetReference(path));
 
         return refs;
+    }
+
+    /// <summary>
+    /// Returns the shared metadata reference for <paramref name="path"/>, creating it
+    /// when the file is new to this process or its length or last-write time changed.
+    /// </summary>
+    /// <remarks>
+    /// The reference still prefetches the whole image (no file stays open or locked).
+    /// A path that cannot be inspected bypasses the cache, so
+    /// <see cref="Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(string, Microsoft.CodeAnalysis.MetadataReferenceProperties, Microsoft.CodeAnalysis.DocumentationProvider?)"/>
+    /// reports the failure exactly as it did before the cache existed.
+    /// </remarks>
+    private static Microsoft.CodeAnalysis.MetadataReference GetReference(string path)
+    {
+        FileInfo file;
+        try
+        {
+            file = new FileInfo(path);
+            if (!file.Exists)
+                return Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or ArgumentException or NotSupportedException or System.Security.SecurityException)
+        {
+            return Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path);
+        }
+
+        // Read the version stamp before the image, so a file replaced mid-read is
+        // re-read on the next compile rather than cached under its new stamp.
+        var length = file.Length;
+        var lastWrite = file.LastWriteTimeUtc;
+        if (ReferenceCache.TryGetValue(path, out var cached)
+            && cached.Length == length
+            && cached.LastWriteTimeUtc == lastWrite)
+        {
+            return cached.Reference;
+        }
+
+        var reference = Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path);
+        ReferenceCache[path] = new CachedReference(length, lastWrite, reference);
+        return reference;
     }
 
     private static Assembly LoadImage(AssemblyLoadContext alc, byte[] image)
