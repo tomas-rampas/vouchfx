@@ -10,8 +10,8 @@ recorded").
 
 | Capability | v1 | How |
 | --- | --- | --- |
-| YAML schema autocomplete / hover / validation | ✅ Shipped | Frozen v1 JSON Schema bound via `contributes.yamlValidation`, served by the Red Hat YAML language server (delivered in T6). |
-| **C# syntax highlighting** inside `code:` blocks | ✅ Shipped (this task) | A TextMate **injection** grammar (`syntaxes/csharp-in-e2eyaml.injection.json`) embeds VSCode's built-in C# grammar (`source.cs`) into the YAML block scalar that follows a `code:` key. Colours keywords, strings, member access, etc. |
+| YAML schema autocomplete / hover / validation | ✅ Shipped | Frozen v1 JSON Schema bound via `contributes.yamlValidation`, served by the Red Hat YAML language server. |
+| **C# syntax highlighting** inside `code:` blocks | ✅ Shipped | A TextMate **injection** grammar (`syntaxes/csharp-in-e2eyaml.injection.json`) embeds VSCode's built-in C# grammar (`source.cs`) into the YAML block scalar that follows a `code:` key. Colours keywords, strings, member access, etc. |
 | **In-block C# IntelliSense** (completion, hover, diagnostics, go-to-def) | ❌ Deferred fast-follow | See below. Planned for a later release. |
 
 Syntax highlighting is colour only — it runs entirely inside the TextMate
