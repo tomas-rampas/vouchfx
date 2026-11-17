@@ -95,7 +95,7 @@ The platform is best understood as five cooperating layers. A test definition en
 | **2. Compilation** | Translate validated YAML into a cached, executable C# delegate. | YAML parser, AST, CSX code generation, Roslyn Scripting API. |
 | **3. Orchestration** | Provision the system under test and its dependencies; resolve endpoints. | .NET Aspire AppHost, health-gated startup. |
 | **4. Execution** | Run the compiled delegate against the orchestrated topology and collect assertions. | Roslyn delegate host, collectible AssemblyLoadContext, Polly resilience. |
-| **5. Infrastructure fabric** | Decide where containers physically run — local socket, SaaS cloud, or on-premises cluster. | Docker socket proxy, SSH tunnelling, Ryuk reaper, Kubernetes. |
+| **5. Infrastructure fabric** | Decide where containers physically run — local socket, SaaS cloud, or on-premises cluster. | Docker through Aspire's DCP; future design: per-session remote runners, SSH session channel, lease-based reaping, Kubernetes. |
 
 *Table 3.1 — The five architectural layers and their contracts.*
 
@@ -330,50 +330,67 @@ The compiler and runtime layer depends on a small number of external libraries w
 
 ## 6. The Cloud Execution Fabric
 
-**Future design.** Remote provisioning and tunnelling in this section are not implemented
-execution modes of the local CLI. The Docker client settings and the Ryuk reaper described
-here are Testcontainers mechanisms. The engine does not reference Testcontainers: Aspire's
-own orchestrator (DCP) provisions containers today, so the mechanisms below are a design
-that has not been validated against the current engine.
+**Future design.** Nothing in this section is implemented. The installed CLI orchestrates
+containers through Aspire's DCP on the Docker engine it is pointed at and has no remote execution mode.
+The design below separates what is known about the pinned Aspire release from what a spike
+must still prove; Table 6.2 lists the spikes.
 
-Running a full microservice topology locally is excellent for tight iteration, but a suite containing SQL Server, Elasticsearch, several Kafka brokers, and dozens of application containers will exhaust the CPU, memory, and disk I/O of an ordinary workstation. The cloud fabric solves this by splitting the work: the lightweight parts — the YAML parser and the Roslyn delegate runner — stay local, while the heavy container provisioning is offloaded to a high-performance cloud backend. The challenge is to make that offload completely transparent to the orchestration layer above it.
+A suite containing SQL Server, Elasticsearch, several Kafka brokers, and dozens of application containers will exhaust the CPU, memory, and disk I/O of an ordinary workstation, so the cloud fabric moves that work into a per-session sandbox. Its constraint is the layer contract of §3.2: the compiled delegate depends only on `ScriptGlobalVariables`, and orchestration is the sole producer of that object. The fabric therefore changes where the engine runs, not how a test reaches its targets.
 
-## 6.1 Remote Docker socket proxying
+## 6.1 Placing the engine beside the container runtime
 
-Transparency is achieved by convincing the local Aspire and Docker client processes that they are talking to a local Docker daemon when they are in fact talking to the internet. Two pieces of configuration accomplish this. On the local side, the runner injects settings into the developer's `~/.testcontainers.properties` file: it sets `docker.client.strategy` to the environment-and-system-property provider strategy, and redefines `docker.host` to point at a secure TCP proxy provisioned by the SaaS backend, for example `tcp://agent.saas.cloud:2375`. On the cloud node, the Docker daemon's systemd unit is configured to bind a TCP socket alongside the local Unix socket. Container-provisioning API calls then traverse the internet to the remote daemon while every layer above believes the daemon is local.
+Three facts about the pinned Aspire release (13.4.6) decide the design. Aspire chooses Docker or Podman from `ASPIRE_CONTAINER_RUNTIME` (or `DcpPublisher:ContainerRuntime`), and DCP drives that runtime's command-line client, so the client's own settings (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH`, or Podman's `CONTAINER_HOST`) choose the daemon. DCP proxies each endpoint on the loopback interface of the engine's network namespace, and orchestration places those loopback addresses in `ScriptGlobalVariables`. The consequence has been measured: when the GitLab CI template pointed the engine at a Docker-in-Docker daemon through `DOCKER_HOST` over TLS, the engine could not reach the topology's endpoints, and the arrangement that works runs the engine in a container that shares the daemon's network namespace ([CI integration](ci-integration.md); [issue #639](https://github.com/tomas-rampas/vouchfx/issues/639)). Redirecting the daemon alone is not enough.
 
-```csharp
-# Cloud node — /etc/systemd/system/docker.service.d/override.conf
-ExecStart=/usr/bin/dockerd --config-file /etc/docker/daemon.json \
-          -H unix:///var/run/docker.sock -H fd:// -H tcp://0.0.0.0:2375
+| Option | What crosses the wide-area link | Where the compiled delegate runs | Assessment |
+|---|---|---|---|
+| A. Redirect the daemon only | Container-runtime commands | Developer's machine | Rejected: measured not to work. |
+| B. Remote engine: a per-session runner beside the daemon, driven by the CLI | The suite bundle, control messages, the event stream | Session runner | **Recommended.** |
+| C. Local engine with tunnelled endpoints | Container-runtime commands and every step's traffic | Developer's machine | Not recommended. |
 
-# Local node — ~/.testcontainers.properties
-docker.client.strategy=org.testcontainers.dockerclient.\
-    EnvironmentAndSystemPropertyClientProviderStrategy
-docker.host=tcp://<cloud-agent-ip>:2375
-```
+*Table 6.1 — Options for remote execution under Aspire and DCP.*
 
-On the local agent the connection is marshalled by a `SocketsHttpHandler` with a custom `ConnectCallback`, which can route over a `UnixDomainSocketEndPoint` for local execution or a TCP endpoint for remote execution — the same code path, a different endpoint, which is precisely how parity is preserved.
+Under option B the CLI becomes a thin client: it validates the suite, uploads a bundle (the YAML, seed fixtures and referenced customer assemblies) and renders its reports from the event stream of §14.4. The runner executes the ordinary `vouchfx run` pipeline, teardown chokepoint included. DCP's proxies and the delegate share the runner's namespace, so `ScriptGlobalVariables` holds loopback endpoints produced by the same orchestration code as on a laptop, and steps run beside their targets, so retry windows behave as on a workstation. Customer code now executes in the fabric, so each runner serves one session with least privilege, under the trust statement of §11.4. A `${secret:…}` reference to an environment variable on the developer's machine must be answered over the session channel when the runner resolves it, and held only in runner memory (§17.1.1). A `project:` service needs its source and an SDK on the runner, and no debugger attaches to the delegate.
+
+Option C keeps all of that local, but every step crosses the wide-area link and latency turns into Inconclusive results; each forward must reproduce the address DCP resolved, which breaks where a broker advertises its own address, as Kafka does; and `host.docker.internal` would reach the daemon's host, not the developer.
 
 ## 6.2 Encrypted tunnelling and reverse port forwarding
 
-Offloading infrastructure creates a two-way networking problem. The local test script must reach cloud-hosted databases, and — harder — a cloud-hosted service must sometimes reach back to the local machine.
+Test traffic now stays in the sandbox. Two narrower problems remain: the CLI must reach its runner, and a cloud-hosted service must sometimes reach back to the developer's network.
 
 ### 6.2.1 Outbound: reaching cloud infrastructure
 
-Each cloud session runs inside an ephemeral, isolated Virtual Private Cloud sandbox, which guarantees multi-tenant data isolation. A persistent, multiplexed, encrypted SSH tunnel connects the local runner to that sandbox, so local C# assertions can query a cloud-hosted database as though it were on localhost.
+Each cloud session runs inside an ephemeral, isolated network sandbox (a Virtual Private Cloud or equivalent), which guarantees multi-tenant data isolation. The CLI holds one multiplexed, encrypted SSH channel to it, authenticated by the short-lived credentials of §11.5. It carries the bundle, control messages and the event stream. No test step uses it, so a dropped channel interrupts reporting, not evaluation (§10.3). The container runtime's API is never exposed outside the sandbox.
 
 ### 6.2.2 Inbound: the webhook problem
 
-The hard direction is inbound. When a cloud-hosted microservice finishes work and fires an asynchronous webhook, that HTTP POST must reach the test runner on a laptop sitting behind a corporate firewall. The fabric solves this with reverse SSH port forwarding — conceptually the `ssh -R remote_port:localhost:local_port` pattern. The SaaS agent opens a port on the cloud network that tunnels straight back to an ephemeral HTTP listener inside the local test process. The cloud container issues its POST to what it sees as a local port; the request is routed through the SSH tunnel and delivered to the CSX script that is waiting for the callback. No inbound firewall rule on the developer's network is required.
+A `webhook-listen` listener is part of the engine, so it runs in the runner, and a cloud-hosted service is designed to reach it as it would locally: through the `{<listener>_container}` host-gateway address, backed by the `--add-host=host.docker.internal:host-gateway` argument the engine already gives image-form services. The hard inbound case is now narrower: a cloud-hosted service that calls something on the developer's machine or corporate network. The CLI opens a reverse forward over the session channel — conceptually the `ssh -R remote_port:localhost:local_port` pattern — and the fabric publishes it in the session's network under a declared alias; no YAML syntax for that alias exists yet. The connection is opened outbound from the developer's side, so no inbound firewall rule is required. A forward that collapses during a step is an Environment error (§12.1), never a Fail.
 
-## 6.3 Resource reaping: the Ryuk sidecar
+## 6.3 Resource reaping: session leases and a fabric-side sweeper
 
-Offloaded infrastructure introduces a cost risk: a crashed pipeline can leave containers, networks, and volumes running and billing in the cloud. The fabric guards against this with the Ryuk resource reaper, a privileged Go sidecar deployed alongside the test instances. Under this design, Testcontainers tags every network, volume, and container with cryptographic labels. Ryuk holds a TCP connection to the test runner and watches it continuously. If that connection drops — a pipeline crash, a network partition, a `SIGKILL` to the local process — Ryuk purges every labelled resource, so an abnormal termination cannot produce a runaway cloud bill.
+A crashed runner can leave containers, networks and volumes billing in the cloud. No reaper runs inside the tenant's session; each layer below backs up the one before it.
 
-### 6.3.1 Graceful degradation where privileged containers are banned
+1. **Engine teardown is the normal path:** `HeadlessTopology.DisposeAsync`, the single chokepoint of §4.5, unchanged.
+2. **The sandbox is the unit of ownership.** By default each session has its own container runtime, in a disposable virtual machine or session pod (§6.3.1); destroying it removes everything inside, labelled or not.
+3. **Session labels.** The proposed [detached-runs decision record](decisions/detached-runs-and-artefacts.md) labels containers at one site in `HeadlessTopology.StartAsync` through `WithContainerRuntimeArgs`, the Aspire API that adds arguments to the runtime's run command and that `EnvironmentMapper` already uses. The fabric adds `io.vouchfx.session=<id>` there, minted by the control plane. DCP's own `com.microsoft.developer.usvc-dev.creatorProcessId` label (measured by `TopologyTeardownLeakTests`) carries a reusable process id, not a session, and DCP's network takes no run arguments, so networks are attributed through their labelled containers, as that record's reaper does.
+4. **A lease.** The control plane keeps a durable lease with a time-to-live that the runner renews by heartbeat. A runner that cannot renew starts no further scenario and tears down its topology.
+5. **A fabric-side sweeper.** A control-plane service outside every tenant session, needing no privileged container there, destroys the sandbox of any session whose lease and grace period (§10.3) have expired. Where a deployment shares one daemon between sessions, it uses that daemon's Docker API: it checks the daemon `ID` recorded at session start, removes containers carrying the session label with their anonymous volumes, re-reading the label before each removal as the Compose driver's cleanup does, then removes networks left empty. Removals are idempotent and recorded.
 
-Some enterprise Kubernetes environments forbid privileged sidecars outright. For these, the fabric offers a degradation path: setting `TESTCONTAINERS_RYUK_DISABLED=true` bypasses the sidecar, and cleanup falls back to native .NET process shutdown hooks — `AppDomain.ProcessExit` — which issue container-termination calls through the Docker API before the process dies. This is less robust than Ryuk against a hard kill, and section 13 records that trade-off as an accepted risk in the enterprise topology.
+DCP may finish deletion after the engine exits (§4.5), but a killed runner takes DCP with it, so nothing relies on it. A scenario cut short when its session ends is Inconclusive (§12.1, sub-case b); a step whose resource or forward vanished is an Environment error; neither is a Fail.
+
+### 6.3.1 Where privileged containers are banned
+
+The sweeper needs no privilege in the tenant's session, but the session's container runtime does: Docker-in-Docker needs a privileged runner, as the GitLab template records. Where a Kubernetes cluster bans privileged pods, the alternatives are a rootless runtime in an unprivileged pod (Aspire and DCP accept Podman), a session virtual machine outside the cluster, or, for a single-tenant Enterprise installation only, binding to a node's daemon socket. Reaping is then Kubernetes-native: a namespace per session carries the lease, and the sweeper deletes it with everything inside, while the runner pod's `activeDeadlineSeconds` caps a session even when the sweeper is down. A sweeper outage delays reaping; §18 records the residual risk.
+
+| Assumption | Evidence today | What the spike must show |
+|---|---|---|
+| A runner sharing the daemon's network namespace reaches every endpoint. | Measured on GitLab SaaS with Docker-in-Docker. | The same in the fabric sandbox, for every Core dependency type. |
+| Host-gateway reaches a listener in that runner. | Measured only with engine and daemon on one host. | A cloud-hosted container delivers a webhook to the runner. |
+| Every container carries the session label. | The runtime-arguments API exists and is used for image-form services. | A Docker-gated test over a full topology, typed dependencies included. |
+| Named data volumes can be attributed to a session. | None. | A labelling or naming rule, or reliance on the sandbox boundary. |
+| A rootless runtime runs a topology in an unprivileged pod. | Aspire and DCP accept Podman; nothing measured. | A full topology, DCP's proxies included. |
+| Developer-side secrets and `project:` services reach the runner. | None. | A run-time secret exchange; `project:` support or a refusal. |
+
+*Table 6.2 — Assumptions the fabric design must prove by spike before implementation.*
 
 ## 7. Target Environments and Topological Adaptability
 
@@ -471,7 +488,7 @@ Real end-to-end scenarios are stateful. A test might create a user through a RES
 **Future remote-fabric design.** The tunnel reconnection and remote reaping policy below
 does not describe the local engine's implemented topology lifecycle.
 
-In the SaaS model, a network partition between the local environment and the cloud containers is inevitable rather than exceptional. The architecture treats a momentary drop as recoverable. If the connection to the remote Docker socket drops, the local client agent halts the CSX execution pipeline instead of failing the suite outright, and attempts auto-reconnect of the TCP socket forwarding. In parallel, the remote Ryuk sidecar is configured with a generous time-to-live heartbeat: when it loses contact with the client it does not reap immediately but waits out a grace period, giving the SSH tunnel time to re-establish. Only when that grace period definitively expires does Ryuk conclude the client has failed and sanitise the VPC. The result is that a brief internet blip produces a pause, not a false-positive failure — which is decisive for developer trust in the SaaS tier.
+In the SaaS model, a network partition between the developer and the cloud fabric is inevitable rather than exceptional. The architecture treats a momentary drop as recoverable. Because the engine runs beside its targets (§6.1), test steps never cross the partitioned link. If the session channel between the CLI and the runner drops, the runner finishes the scenario in progress, buffers the event stream, and halts before the next scenario instead of failing the suite outright; when the CLI reconnects, the buffered events are replayed and the run resumes. If the runner loses contact with the control plane, the session lease (§6.3) is not reaped at once: it carries a time-to-live and a grace period, giving the link time to re-establish. Only when that grace period expires, or the CLI has not reconnected within its own grace period, does the session end. The runner, if alive, tears down through its chokepoint, the sweeper removes whatever remains, and scenarios that did not finish are reported Inconclusive (§12.1). The result is that a brief internet blip produces a pause, not a false-positive failure — which is decisive for developer trust in the SaaS tier.
 
 ## 11. Security Architecture
 
@@ -487,7 +504,7 @@ Stating the threat model in one place serves two purposes. It gives security rev
 | Customer's application secrets | YAML to runtime | Secret value leaks via report, log, captured-variable thread. | ${secret:…} references resolved at run time and never at compile time (a step's field at step execution; `security.clientKeyPassword` at first use of the certificate material — §17.1.1), so no value is ever baked into the emitted IL or the reproducibility envelope; typed SecretString return that the renderer is contractually forbidden to log; redaction at source, not at sink (see 11.5). |
 | Customer's application code | Engine to script's load context | A malicious customer DLL exfiltrates data from the test process. | Documented in 11.3 as inherent to the trust model: running tests from authors you do not trust is equivalent to running their arbitrary code. The architecture mitigates blast-radius, not the underlying authorisation. |
 | Provider implementation | Community provider to engine | A malicious community provider runs hostile code in every install that uses it. | Two-tier governance (Core, Community) with the maintainer-awarded Vouched badge and published rubric (see VOUCHED_CHECKLIST.md in the hub); SHA-256 recording at install time (the installer does not verify package signatures; the Vouched review checks them manually); security review at badge award; explicit warning for unbadged community providers. |
-| Cloud fabric multi-tenancy | One customer session to another | Container, network, or data escape from one tenant's VPC to another's. | Ephemeral per-session VPC isolation; Ryuk-enforced teardown on session end; absence of long-lived shared state by design. |
+| Cloud fabric multi-tenancy | One customer session to another | Container, network, or data escape from one tenant's VPC to another's. | Ephemeral per-session VPC isolation and a single-session runner; engine teardown on session end, backed by a lease and a fabric-side sweeper (§6.3); absence of long-lived shared state by design. |
 | Cloud tunnel credentials | Local runner to cloud fabric | Static credential theft permits a long-lived attacker session. | Short-lived OIDC-federated credentials are the v1.0 default; the SSH tunnel is authenticated by those credentials, refreshed per session. Static long-lived keys are not the default mechanism. |
 | Platform-issued telemetry | Customer machine to platform backend | Sensitive data exfiltration via telemetry. | Opt-in by default; strict allowlist of metric fields (see 11.6); no test contents, captured values, error messages, or system-under-test addresses; bounded retention; access-controlled inside the platform team. |
 | The Healer agent's commit path | Agent suggestion to source control | Healer modifies code without meaningful human review and a hostile suggestion lands. | Future-tier, but the design choice is made here: Healer-authored commits are technically distinguishable from human commits (separate signing identity, mandatory CODEOWNERS review path), so the human-in-the-loop gate is enforced by tooling rather than by user discipline. |
@@ -504,7 +521,7 @@ In the enterprise topology, identity flows from the customer's SAML 2.0 or OIDC 
 
 ## 11.3 Multi-tenant isolation
 
-Each cloud session runs in its own ephemeral, isolated VPC sandbox, which is the primary boundary preventing one tenant from observing another's containers, networks, or data. Sessions are short-lived by design, and Ryuk guarantees that their resources are destroyed on termination, so isolation is reinforced by the absence of long-lived shared state.
+Each cloud session runs in its own ephemeral, isolated VPC sandbox, which is the primary boundary preventing one tenant from observing another's containers, networks, or data. Sessions are short-lived by design, and the engine's teardown, backed by the session lease and the fabric-side sweeper (§6.3), destroys their resources when they end, so isolation is reinforced by the absence of long-lived shared state.
 
 ## 11.4 The dynamic-code boundary and the customer-DLL trust statement
 
@@ -520,7 +537,7 @@ This subsection is about the credentials the platform itself generates and trans
 
 Tunnel authentication is OIDC-federated short-lived credentials at v1.0 of the cloud tier. A runner authenticates to the platform's identity service (federated to the customer's identity provider where the Enterprise tier is in use) and receives a short-lived token (typical lifetime: one hour, refreshable) that authorises the SSH tunnel for that session. Static long-lived SSH keys are explicitly not the default mechanism, because they are a credential-theft target whose compromise persists indefinitely; the short-lived token model is the same one cloud providers have standardised on (AWS STS, Azure managed identities, Google Cloud Workload Identity Federation) and is the modern minimum bar. Customers needing a fallback for environments where federation is not yet available may use a static credential, with the documented warning that the trade-off is theirs.
 
-Connection strings and tokens of the first kind are never persisted in test artefacts. All traffic between the local runner and the cloud fabric travels inside the encrypted SSH tunnel; the Docker TCP socket is never exposed without that tunnel in front of it. In the enterprise topology, both kinds of secret remain entirely within the customer's network because the backend itself runs there.
+Connection strings and tokens of the first kind are never persisted in test artefacts. All traffic between the local runner and the cloud fabric travels inside the encrypted SSH tunnel; the container runtime's API is never exposed outside the session sandbox (§6.2.1). In the enterprise topology, both kinds of secret remain entirely within the customer's network because the backend itself runs there.
 
 ## 11.6 Secret redaction at the source, not at the sink
 
@@ -1355,8 +1372,8 @@ A blueprint that lists only its strengths is not trustworthy. The risks below ar
 |---|---|---|
 | Dynamic-assembly memory growth in long suites. | Compile-once plus collectible AssemblyLoadContext with explicit unload; memory is asserted before and after each scenario. | A stray static reference can still pin a context; needs a leak-detection test in CI. |
 | Untrusted customer DLLs run in the test process. | Bounded load context, least-privilege process, minimal global context. | Full sandboxing design deferred to a dedicated security review. |
-| Ryuk disabled in locked-down enterprise clusters. | Fallback to .NET process-exit hooks for cleanup. | A hard SIGKILL can still orphan resources; needs a periodic sweep job. |
-| Network partition produces false-positive failures. | Halt-and-reconnect on the client; TTL grace period on Ryuk; “inconclusive” verdict. | A long outage still ends the run; tunnel stability must be monitored. |
+| Remote sessions leak resources after a crashed runner, or in clusters that ban privileged pods. | Engine teardown through the single chokepoint; a per-session sandbox; a session lease with TTL; a fabric-side sweeper that needs no privileged container in the tenant's session; namespace-per-session deletion and a pod deadline in Kubernetes. | A sweeper outage delays reaping until it recovers; named volumes rely on the sandbox boundary until a spike proves attribution (§6.3); the design is unproven until the spikes in Table 6.2 complete. |
+| Network partition produces false-positive failures. | Steps run beside their targets (§6.1); halt-and-reconnect between scenarios; lease TTL and grace period before reaping; “inconclusive” verdict. | A long outage still ends the run; session-channel stability and lease expiries must be monitored. |
 | LAB consumption mis-metered, eroding margin. | Per-session consumption telemetry treated as a functional requirement. | Metering accuracy needs independent reconciliation against cloud-provider billing. |
 | Topological parity silently breaks as features are added. | Single typed contract between layers; same code path for local and remote endpoints. | Requires a parity test matrix that runs every suite on all three topologies. |
 | .NET 10 LTS / Aspire / MAF are recent and still evolving. | Architecture isolates each behind a narrow internal interface. | Upstream breaking changes may force refactors; track preview releases closely. |
@@ -1378,7 +1395,6 @@ This appendix consolidates the concrete technologies named in the blueprint, so 
 | .NET 10, with roll-forward to newer majors | The runtime baseline. The engine, Core providers and CLI target `net10.0` and build with a .NET 10 SDK; executables roll forward to a newer major runtime when .NET 10 is absent, but never run on .NET 8 or 9. The published provider-contract libraries (`Vouchfx.Sdk`, `Vouchfx.Sdk.Testing`, `Vouchfx.Engine.Abstractions`, `.Authoring` and `.Compilation`) keep `net8.0` for the v1.x series, so providers built against the frozen contract load unchanged in the .NET 10 host. |
 | .NET Aspire | Orchestrates the application topology; provides service discovery, health-gated startup, and connection-string resolution. |
 | DistributedApplication.CreateBuilder() | The programmatic Aspire builder API the engine uses to construct an AppHost from the YAML environment section. The headless runner passes DistributedApplicationOptions { DisableDashboard = true } because the dashboard requires environment variables that only the 'aspire run' tooling injects. AddContainer adds an image; AddProject(name, csprojPath) adds a project; AddPostgres / AddKafka / AddMongoDB / AddRedis / AddRabbitMQ / AddElasticsearch add typed managed resources. Each Add* call returns an IResourceBuilder that the runner retains so endpoints can be resolved through it (builder.GetEndpoint("http").Url) after StartAsync returns. |
-| Testcontainers | Not referenced by the engine; Aspire's orchestrator manages the lifecycle of dependency containers. The future-design cloud fabric (section 6) takes its Docker client settings and Ryuk reaper as the model for remote provisioning and cleanup. |
 | Roslyn Scripting API | Compiles generated CSX into a reusable in-memory delegate (compile-once pattern). |
 | Collectible AssemblyLoadContext | Isolates dynamically generated assemblies so they can be unloaded and reclaimed. |
 | Respawn | Resets relational databases to a pristine state between tests, honouring foreign-key order. |
@@ -1391,7 +1407,7 @@ This appendix consolidates the concrete technologies named in the blueprint, so 
 | Apache.Avro | The Apache Avro codec; pinned to the exact version transitively required by Confluent.SchemaRegistry.Serdes.Avro to prevent version downgrades under strict compilation flags. |
 | Microsoft Agent Framework | Hosts the Planner, Generator, and Healer agents and their graph-based workflows. |
 | grafana/k6 | Containerised load generator orchestrated by the Performance LAB. |
-| SSH tunnelling / reverse port forwarding | Carries traffic between the local runner and the cloud fabric, including inbound webhooks. |
+| SSH tunnelling / reverse port forwarding | Future design: carries the session channel between the CLI and a cloud runner, and reverse forwards to the developer's network (section 6.2). |
 | SAML 2.0 / OpenID Connect | Enterprise identity integration feeding RBAC into the CLI and IDE. |
 | StepKindRegistry | Source-level registry of step providers, frozen at engine startup and indexed by family-and-provider name; powers the resolve stage of compilation. |
 | [StepProvider] attribute / IProviderModule | Markers the registry uses to discover provider types at startup via reflection over referenced assemblies. Trusted external assemblies may also be admitted before registry construction. |

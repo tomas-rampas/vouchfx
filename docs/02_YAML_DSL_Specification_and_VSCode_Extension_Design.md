@@ -1030,7 +1030,7 @@ Use `verifyMode: RETRY` when the item may lag the transaction that writes it (th
 
 ### 5.5 The webhook-listen family
 
-A `webhook-listen` step opens an ephemeral local HTTP listener and asserts that the system under test calls it. This is how the platform validates outbound, asynchronous notifications. In the cloud topology, the architecture's reverse SSH port forwarding ensures that a webhook fired by a cloud-hosted service still reaches this listener on the developer's machine. The step is inherently asynchronous and is therefore always combined with `verifyMode: RETRY`.
+A `webhook-listen` step opens an ephemeral local HTTP listener and asserts that the system under test calls it. This is how the platform validates outbound, asynchronous notifications. In the planned cloud topology (future design, blueprint §6.2.2), the engine and this listener run beside the cloud-hosted services, which are designed to reach the listener through the same host-gateway address they use locally. The step is inherently asynchronous and is therefore always combined with `verifyMode: RETRY`.
 
 The Core provider is `webhook-listen.http`. The engine stands up an ephemeral host-owned HTTP listener for each declared `listener` name and stages its bound URL in two forms: `{<listener>}` (loopback, for host-local steps) and `{<listener>_container}` (host-gateway form, for containerised SUTs to use as a callback URL). Both are available in `Vars` so authors can interpolate them into callback registration calls in earlier steps. At execution time the step asserts that at least one captured inbound HTTP request satisfies all declared match criteria.
 
