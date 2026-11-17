@@ -8,8 +8,14 @@
 # scalars. It also pins nested
 # and flow-style collections, a top-level sequence body, a string body, an anchor
 # reused through aliases (inside a body and across steps), `<<` merge keys, a quoted
-# and a plain scalar reached through an alias, and explicit tags (`!!str 123` and
-# `!!int "5"`; the binder looks at quoting, not tags, today).
+# and a plain scalar reached through an alias, and explicit core tags (`!!str 123`,
+# `!!int "5"`, `!!float`, `!!bool`, `!!timestamp`, which win over quoting).
+# The last step, zeb-67-body-rules, pins one value per ZEB-67 rule: merge keys applied,
+# block scalars always strings, a plain empty value null, core tags honoured, and 1e400
+# sent as a string. Not pinned here because schema validation refuses the whole document
+# before the binder runs: the plain words NaN, Infinity, -Infinity and INFINITY, a tag of
+# `!!null` (unresolved tag) and an `!!int 0o17` octal; the binder rules for those are
+# reachable only by binding without validating, as the HttpRest unit rows do.
 #
 # The golden records whatever the engine does today; nothing here is a statement of
 # what it should do. Used only by EmittedCodeBaselineTests; no topology is started.
@@ -145,3 +151,46 @@ steps:
     method: POST
     path: /string
     body: '{"amount": 007, "quoted": "007"}'
+
+  # ZEB-67 rules, one value per rule, so a change to any of them moves this step's golden.
+  - id: zeb-67-body-rules
+    type: http.rest
+    target: app
+    method: POST
+    path: /zeb-67
+    body:
+      # An overflowing number stays a string.
+      overflow: 1e400
+      negativeOverflow: -1e400
+      # Block scalars are always strings; chomping decides the trailing newlines.
+      keepLiteral: |+
+        kept
+
+      stripFolded: >-
+        true
+      literalNull: |
+        null
+      # A plain empty value is null; a quoted one is the empty string.
+      emptyPlain:
+      emptyQuoted: ''
+      # Core tags: the tag wins over the style and the content is typed by it.
+      tagStr: !!str true
+      tagStrEmpty: !!str
+      tagInt: !!int 010
+      tagIntHex: !!int 0x1F
+      tagIntQuoted: !!int "-7"
+      tagFloat: !!float 1.50
+      tagFloatInt: !!float "2"
+      tagBool: !!bool True
+      tagBoolQuoted: !!bool "false"
+      tagTimestamp: !!timestamp 2026-11-17
+      # Merge keys: explicit keys win, earlier sources win over later ones.
+      defaults: &zebDefaults
+        retries: 3
+        region: eu
+      override:
+        <<: *zebDefaults
+        retries: 5
+      layered:
+        <<: [{ region: us, tier: gold }, *zebDefaults]
+        tier: silver

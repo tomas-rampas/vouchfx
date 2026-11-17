@@ -20,7 +20,8 @@ timeout-ms: none
     "X-Retry-Count": "3"
   },
   "Body": null,
-  "Expect": null
+  "Expect": null,
+  "BodyRefusal": null
 }
 @@@@ step 1 host-resources
 []

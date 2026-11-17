@@ -22,7 +22,8 @@ timeout-ms: 30000
     "Status": 200,
     "Json": null,
     "BodyContains": null
-  }
+  },
+  "BodyRefusal": null
 }
 @@@@ step 1 host-resources
 []

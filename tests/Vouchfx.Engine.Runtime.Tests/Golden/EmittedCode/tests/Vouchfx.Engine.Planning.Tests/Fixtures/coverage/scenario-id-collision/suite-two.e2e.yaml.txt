@@ -20,7 +20,8 @@ timeout-ms: none
   "Path": "/health",
   "Headers": null,
   "Body": null,
-  "Expect": null
+  "Expect": null,
+  "BodyRefusal": null
 }
 @@@@ step 1 host-resources
 []

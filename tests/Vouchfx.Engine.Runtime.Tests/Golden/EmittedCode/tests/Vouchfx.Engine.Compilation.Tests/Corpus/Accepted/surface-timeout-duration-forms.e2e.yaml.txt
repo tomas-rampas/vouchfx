@@ -18,7 +18,8 @@ timeout-ms: 500
   "Path": "/api",
   "Headers": null,
   "Body": null,
-  "Expect": null
+  "Expect": null,
+  "BodyRefusal": null
 }
 @@@@ step 1 host-resources
 []
@@ -76,7 +77,8 @@ timeout-ms: 30000
   "Path": "/api",
   "Headers": null,
   "Body": null,
-  "Expect": null
+  "Expect": null,
+  "BodyRefusal": null
 }
 @@@@ step 2 host-resources
 []
@@ -134,7 +136,8 @@ timeout-ms: 120000
   "Path": "/api",
   "Headers": null,
   "Body": null,
-  "Expect": null
+  "Expect": null,
+  "BodyRefusal": null
 }
 @@@@ step 3 host-resources
 []
@@ -192,7 +195,8 @@ timeout-ms: 45000
   "Path": "/api",
   "Headers": null,
   "Body": null,
-  "Expect": null
+  "Expect": null,
+  "BodyRefusal": null
 }
 @@@@ step 4 host-resources
 []

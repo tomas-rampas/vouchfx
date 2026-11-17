@@ -78,7 +78,8 @@ timeout-ms: none
       }
     ],
     "BodyContains": "Hostname"
-  }
+  },
+  "BodyRefusal": null
 }
 @@@@ step 1 host-resources
 []
@@ -140,7 +141,8 @@ timeout-ms: none
     "Status": null,
     "Json": null,
     "BodyContains": "42"
-  }
+  },
+  "BodyRefusal": null
 }
 @@@@ step 2 host-resources
 []

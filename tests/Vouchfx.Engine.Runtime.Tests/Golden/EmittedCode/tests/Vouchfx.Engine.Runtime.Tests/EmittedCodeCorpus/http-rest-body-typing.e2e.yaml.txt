@@ -2,9 +2,9 @@ vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Runtime.Tests/EmittedCodeCorpus/http-rest-body-typing.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
-steps: 5
+steps: 6
 
-@@@@ step 1 of 5
+@@@@ step 1 of 6
 id: typed-scalars
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
@@ -17,12 +17,13 @@ timeout-ms: none
   "Method": "POST",
   "Path": "/typing",
   "Headers": null,
-  "Body": "{\"plainInt\":123,\"doubleQuotedInt\":\"123\",\"singleQuotedInt\":\"123\",\"plainDecimal\":1.5,\"quotedDecimal\":\"1.5\",\"leadingZero\":7,\"leadingZeroTen\":10,\"quotedLeadingZero\":\"007\",\"trailingZeroDecimal\":1.5,\"yamlInfinity\":\".inf\",\"negative\":-42,\"plusSign\":5,\"exponent\":1000,\"hex\":\"0x1F\",\"plainTrue\":true,\"titleCaseTrue\":true,\"upperCaseFalse\":false,\"doubleQuotedTrue\":\"true\",\"singleQuotedFalse\":\"false\",\"yamlOneOneYes\":\"yes\",\"plainNull\":null,\"tilde\":null,\"quotedNull\":\"null\",\"quotedTilde\":\"~\",\"emptyValue\":\"\",\"quotedEmpty\":\"\",\"placeholder\":\"{orderId}\",\"literal\":\"line one\\nline two\\n\",\"literalNumber\":123,\"literalStrip\":true,\"folded\":\"folded text\\n\",\"foldedNumber\":1.5}",
+  "Body": "{\"plainInt\":123,\"doubleQuotedInt\":\"123\",\"singleQuotedInt\":\"123\",\"plainDecimal\":1.5,\"quotedDecimal\":\"1.5\",\"leadingZero\":7,\"leadingZeroTen\":10,\"quotedLeadingZero\":\"007\",\"trailingZeroDecimal\":1.5,\"yamlInfinity\":\".inf\",\"negative\":-42,\"plusSign\":5,\"exponent\":1000,\"hex\":\"0x1F\",\"plainTrue\":true,\"titleCaseTrue\":true,\"upperCaseFalse\":false,\"doubleQuotedTrue\":\"true\",\"singleQuotedFalse\":\"false\",\"yamlOneOneYes\":\"yes\",\"plainNull\":null,\"tilde\":null,\"quotedNull\":\"null\",\"quotedTilde\":\"~\",\"emptyValue\":null,\"quotedEmpty\":\"\",\"placeholder\":\"{orderId}\",\"literal\":\"line one\\nline two\\n\",\"literalNumber\":\"123\\n\",\"literalStrip\":\"true\",\"folded\":\"folded text\\n\",\"foldedNumber\":\"1.5\"}",
   "Expect": {
     "Status": 200,
     "Json": null,
     "BodyContains": null
-  }
+  },
+  "BodyRefusal": null
 }
 @@@@ step 1 host-resources
 []
@@ -51,7 +52,7 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         "app",
         "POST",
         "/typing",
-        "{\u0022plainInt\u0022:123,\u0022doubleQuotedInt\u0022:\u0022123\u0022,\u0022singleQuotedInt\u0022:\u0022123\u0022,\u0022plainDecimal\u0022:1.5,\u0022quotedDecimal\u0022:\u00221.5\u0022,\u0022leadingZero\u0022:7,\u0022leadingZeroTen\u0022:10,\u0022quotedLeadingZero\u0022:\u0022007\u0022,\u0022trailingZeroDecimal\u0022:1.5,\u0022yamlInfinity\u0022:\u0022.inf\u0022,\u0022negative\u0022:-42,\u0022plusSign\u0022:5,\u0022exponent\u0022:1000,\u0022hex\u0022:\u00220x1F\u0022,\u0022plainTrue\u0022:true,\u0022titleCaseTrue\u0022:true,\u0022upperCaseFalse\u0022:false,\u0022doubleQuotedTrue\u0022:\u0022true\u0022,\u0022singleQuotedFalse\u0022:\u0022false\u0022,\u0022yamlOneOneYes\u0022:\u0022yes\u0022,\u0022plainNull\u0022:null,\u0022tilde\u0022:null,\u0022quotedNull\u0022:\u0022null\u0022,\u0022quotedTilde\u0022:\u0022~\u0022,\u0022emptyValue\u0022:\u0022\u0022,\u0022quotedEmpty\u0022:\u0022\u0022,\u0022placeholder\u0022:\u0022{orderId}\u0022,\u0022literal\u0022:\u0022line one\\nline two\\n\u0022,\u0022literalNumber\u0022:123,\u0022literalStrip\u0022:true,\u0022folded\u0022:\u0022folded text\\n\u0022,\u0022foldedNumber\u0022:1.5}",
+        "{\u0022plainInt\u0022:123,\u0022doubleQuotedInt\u0022:\u0022123\u0022,\u0022singleQuotedInt\u0022:\u0022123\u0022,\u0022plainDecimal\u0022:1.5,\u0022quotedDecimal\u0022:\u00221.5\u0022,\u0022leadingZero\u0022:7,\u0022leadingZeroTen\u0022:10,\u0022quotedLeadingZero\u0022:\u0022007\u0022,\u0022trailingZeroDecimal\u0022:1.5,\u0022yamlInfinity\u0022:\u0022.inf\u0022,\u0022negative\u0022:-42,\u0022plusSign\u0022:5,\u0022exponent\u0022:1000,\u0022hex\u0022:\u00220x1F\u0022,\u0022plainTrue\u0022:true,\u0022titleCaseTrue\u0022:true,\u0022upperCaseFalse\u0022:false,\u0022doubleQuotedTrue\u0022:\u0022true\u0022,\u0022singleQuotedFalse\u0022:\u0022false\u0022,\u0022yamlOneOneYes\u0022:\u0022yes\u0022,\u0022plainNull\u0022:null,\u0022tilde\u0022:null,\u0022quotedNull\u0022:\u0022null\u0022,\u0022quotedTilde\u0022:\u0022~\u0022,\u0022emptyValue\u0022:null,\u0022quotedEmpty\u0022:\u0022\u0022,\u0022placeholder\u0022:\u0022{orderId}\u0022,\u0022literal\u0022:\u0022line one\\nline two\\n\u0022,\u0022literalNumber\u0022:\u0022123\\n\u0022,\u0022literalStrip\u0022:\u0022true\u0022,\u0022folded\u0022:\u0022folded text\\n\u0022,\u0022foldedNumber\u0022:\u00221.5\u0022}",
         new string[] { },
         new string[] { },
         200,
@@ -66,7 +67,7 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         __stepBudgetGoverned_typed_scalars);
 }
 
-@@@@ step 2 of 5
+@@@@ step 2 of 6
 id: collections-anchors-merge
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
@@ -83,12 +84,13 @@ timeout-ms: none
     "X-Count": "007",
     "X-Flag": "true"
   },
-  "Body": "{\"nested\":{\"level1\":{\"level2\":{\"level3\":\"deep\"}}},\"list\":[\"a\",2,\"2\",{\"nested\":{\"k\":\"v\",\"n\":3}},[\"x\",\"y\",1]],\"flowMap\":{\"a\":1,\"b\":\"1\",\"c\":\"\",\"d\":null},\"flowSeq\":[1.5,\"1.5\",null,\"\",true],\"emptyFlowMap\":{},\"emptyFlowSeq\":[],\"base\":{\"currency\":\"EUR\",\"amount\":10},\"aliasCopy\":{\"currency\":\"EUR\",\"amount\":10},\"quotedAnchor\":\"123\",\"fromAlias\":\"123\",\"plainAnchor\":123,\"plainFromAlias\":123,\"taggedString\":123,\"taggedInt\":\"5\",\"merged\":{\"\\u003C\\u003C\":{\"currency\":\"EUR\",\"amount\":10},\"amount\":20},\"mergedList\":{\"\\u003C\\u003C\":[{\"currency\":\"EUR\",\"amount\":10},{\"extra\":true}]}}",
+  "Body": "{\"nested\":{\"level1\":{\"level2\":{\"level3\":\"deep\"}}},\"list\":[\"a\",2,\"2\",{\"nested\":{\"k\":\"v\",\"n\":3}},[\"x\",\"y\",1]],\"flowMap\":{\"a\":1,\"b\":\"1\",\"c\":null,\"d\":null},\"flowSeq\":[1.5,\"1.5\",null,\"\",true],\"emptyFlowMap\":{},\"emptyFlowSeq\":[],\"base\":{\"currency\":\"EUR\",\"amount\":10},\"aliasCopy\":{\"currency\":\"EUR\",\"amount\":10},\"quotedAnchor\":\"123\",\"fromAlias\":\"123\",\"plainAnchor\":123,\"plainFromAlias\":123,\"taggedString\":\"123\",\"taggedInt\":5,\"merged\":{\"currency\":\"EUR\",\"amount\":20},\"mergedList\":{\"currency\":\"EUR\",\"amount\":10,\"extra\":true}}",
   "Expect": {
     "Status": 200,
     "Json": null,
     "BodyContains": null
-  }
+  },
+  "BodyRefusal": null
 }
 @@@@ step 2 host-resources
 []
@@ -117,7 +119,7 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         "app",
         "PUT",
         "/collections",
-        "{\u0022nested\u0022:{\u0022level1\u0022:{\u0022level2\u0022:{\u0022level3\u0022:\u0022deep\u0022}}},\u0022list\u0022:[\u0022a\u0022,2,\u00222\u0022,{\u0022nested\u0022:{\u0022k\u0022:\u0022v\u0022,\u0022n\u0022:3}},[\u0022x\u0022,\u0022y\u0022,1]],\u0022flowMap\u0022:{\u0022a\u0022:1,\u0022b\u0022:\u00221\u0022,\u0022c\u0022:\u0022\u0022,\u0022d\u0022:null},\u0022flowSeq\u0022:[1.5,\u00221.5\u0022,null,\u0022\u0022,true],\u0022emptyFlowMap\u0022:{},\u0022emptyFlowSeq\u0022:[],\u0022base\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10},\u0022aliasCopy\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10},\u0022quotedAnchor\u0022:\u0022123\u0022,\u0022fromAlias\u0022:\u0022123\u0022,\u0022plainAnchor\u0022:123,\u0022plainFromAlias\u0022:123,\u0022taggedString\u0022:123,\u0022taggedInt\u0022:\u00225\u0022,\u0022merged\u0022:{\u0022\\u003C\\u003C\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10},\u0022amount\u0022:20},\u0022mergedList\u0022:{\u0022\\u003C\\u003C\u0022:[{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10},{\u0022extra\u0022:true}]}}",
+        "{\u0022nested\u0022:{\u0022level1\u0022:{\u0022level2\u0022:{\u0022level3\u0022:\u0022deep\u0022}}},\u0022list\u0022:[\u0022a\u0022,2,\u00222\u0022,{\u0022nested\u0022:{\u0022k\u0022:\u0022v\u0022,\u0022n\u0022:3}},[\u0022x\u0022,\u0022y\u0022,1]],\u0022flowMap\u0022:{\u0022a\u0022:1,\u0022b\u0022:\u00221\u0022,\u0022c\u0022:null,\u0022d\u0022:null},\u0022flowSeq\u0022:[1.5,\u00221.5\u0022,null,\u0022\u0022,true],\u0022emptyFlowMap\u0022:{},\u0022emptyFlowSeq\u0022:[],\u0022base\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10},\u0022aliasCopy\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10},\u0022quotedAnchor\u0022:\u0022123\u0022,\u0022fromAlias\u0022:\u0022123\u0022,\u0022plainAnchor\u0022:123,\u0022plainFromAlias\u0022:123,\u0022taggedString\u0022:\u0022123\u0022,\u0022taggedInt\u0022:5,\u0022merged\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:20},\u0022mergedList\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10,\u0022extra\u0022:true}}",
         new string[] { "X-Tenant", "X-Count", "X-Flag" },
         new string[] { "acme", "007", "true" },
         200,
@@ -132,7 +134,7 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         __stepBudgetGoverned_collections_anchors_merge);
 }
 
-@@@@ step 3 of 5
+@@@@ step 3 of 6
 id: aliased-headers-and-json-assertions
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
@@ -190,7 +192,8 @@ timeout-ms: none
       }
     ],
     "BodyContains": "007"
-  }
+  },
+  "BodyRefusal": null
 }
 @@@@ step 3 host-resources
 []
@@ -234,7 +237,7 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         __stepBudgetGoverned_aliased_headers_and_json_assertions);
 }
 
-@@@@ step 4 of 5
+@@@@ step 4 of 6
 id: sequence-body
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
@@ -248,7 +251,8 @@ timeout-ms: none
   "Path": "/sequence",
   "Headers": null,
   "Body": "[1,\"1\",null,{\"id\":\"compose-order-1\"}]",
-  "Expect": null
+  "Expect": null,
+  "BodyRefusal": null
 }
 @@@@ step 4 host-resources
 []
@@ -292,7 +296,7 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         __stepBudgetGoverned_sequence_body);
 }
 
-@@@@ step 5 of 5
+@@@@ step 5 of 6
 id: string-body
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
@@ -306,7 +310,8 @@ timeout-ms: none
   "Path": "/string",
   "Headers": null,
   "Body": "{\"amount\": 007, \"quoted\": \"007\"}",
-  "Expect": null
+  "Expect": null,
+  "BodyRefusal": null
 }
 @@@@ step 5 host-resources
 []
@@ -349,6 +354,65 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         __stepCt_string_body,
         __stepBudgetGoverned_string_body);
 }
+
+@@@@ step 6 of 6
+id: zeb-67-body-rules
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 6 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/zeb-67",
+  "Headers": null,
+  "Body": "{\"overflow\":\"1e400\",\"negativeOverflow\":\"-1e400\",\"keepLiteral\":\"kept\\n\\n\",\"stripFolded\":\"true\",\"literalNull\":\"null\\n\",\"emptyPlain\":null,\"emptyQuoted\":\"\",\"tagStr\":\"true\",\"tagStrEmpty\":\"\",\"tagInt\":10,\"tagIntHex\":31,\"tagIntQuoted\":-7,\"tagFloat\":1.5,\"tagFloatInt\":2,\"tagBool\":true,\"tagBoolQuoted\":false,\"tagTimestamp\":\"2026-11-17\",\"defaults\":{\"retries\":3,\"region\":\"eu\"},\"override\":{\"region\":\"eu\",\"retries\":5},\"layered\":{\"region\":\"us\",\"retries\":3,\"tier\":\"silver\"}}",
+  "Expect": null,
+  "BodyRefusal": null
+}
+@@@@ step 6 host-resources
+[]
+@@@@ step 6 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 6 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 6 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::zeb_67_body_rules",
+        "__capture_status::zeb_67_body_rules",
+        "svc::app",
+        "app",
+        "POST",
+        "/zeb-67",
+        "{\u0022overflow\u0022:\u00221e400\u0022,\u0022negativeOverflow\u0022:\u0022-1e400\u0022,\u0022keepLiteral\u0022:\u0022kept\\n\\n\u0022,\u0022stripFolded\u0022:\u0022true\u0022,\u0022literalNull\u0022:\u0022null\\n\u0022,\u0022emptyPlain\u0022:null,\u0022emptyQuoted\u0022:\u0022\u0022,\u0022tagStr\u0022:\u0022true\u0022,\u0022tagStrEmpty\u0022:\u0022\u0022,\u0022tagInt\u0022:10,\u0022tagIntHex\u0022:31,\u0022tagIntQuoted\u0022:-7,\u0022tagFloat\u0022:1.5,\u0022tagFloatInt\u0022:2,\u0022tagBool\u0022:true,\u0022tagBoolQuoted\u0022:false,\u0022tagTimestamp\u0022:\u00222026-11-17\u0022,\u0022defaults\u0022:{\u0022retries\u0022:3,\u0022region\u0022:\u0022eu\u0022},\u0022override\u0022:{\u0022region\u0022:\u0022eu\u0022,\u0022retries\u0022:5},\u0022layered\u0022:{\u0022region\u0022:\u0022us\u0022,\u0022retries\u0022:3,\u0022tier\u0022:\u0022silver\u0022}}",
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_zeb_67_body_rules,
+        __stepBudgetGoverned_zeb_67_body_rules);
+}
 @@@@ assembled-script
 using System;
 using System.Collections.Generic;
@@ -383,7 +447,7 @@ var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var 
         "app",
         "POST",
         "/typing",
-        "{\u0022plainInt\u0022:123,\u0022doubleQuotedInt\u0022:\u0022123\u0022,\u0022singleQuotedInt\u0022:\u0022123\u0022,\u0022plainDecimal\u0022:1.5,\u0022quotedDecimal\u0022:\u00221.5\u0022,\u0022leadingZero\u0022:7,\u0022leadingZeroTen\u0022:10,\u0022quotedLeadingZero\u0022:\u0022007\u0022,\u0022trailingZeroDecimal\u0022:1.5,\u0022yamlInfinity\u0022:\u0022.inf\u0022,\u0022negative\u0022:-42,\u0022plusSign\u0022:5,\u0022exponent\u0022:1000,\u0022hex\u0022:\u00220x1F\u0022,\u0022plainTrue\u0022:true,\u0022titleCaseTrue\u0022:true,\u0022upperCaseFalse\u0022:false,\u0022doubleQuotedTrue\u0022:\u0022true\u0022,\u0022singleQuotedFalse\u0022:\u0022false\u0022,\u0022yamlOneOneYes\u0022:\u0022yes\u0022,\u0022plainNull\u0022:null,\u0022tilde\u0022:null,\u0022quotedNull\u0022:\u0022null\u0022,\u0022quotedTilde\u0022:\u0022~\u0022,\u0022emptyValue\u0022:\u0022\u0022,\u0022quotedEmpty\u0022:\u0022\u0022,\u0022placeholder\u0022:\u0022{orderId}\u0022,\u0022literal\u0022:\u0022line one\\nline two\\n\u0022,\u0022literalNumber\u0022:123,\u0022literalStrip\u0022:true,\u0022folded\u0022:\u0022folded text\\n\u0022,\u0022foldedNumber\u0022:1.5}",
+        "{\u0022plainInt\u0022:123,\u0022doubleQuotedInt\u0022:\u0022123\u0022,\u0022singleQuotedInt\u0022:\u0022123\u0022,\u0022plainDecimal\u0022:1.5,\u0022quotedDecimal\u0022:\u00221.5\u0022,\u0022leadingZero\u0022:7,\u0022leadingZeroTen\u0022:10,\u0022quotedLeadingZero\u0022:\u0022007\u0022,\u0022trailingZeroDecimal\u0022:1.5,\u0022yamlInfinity\u0022:\u0022.inf\u0022,\u0022negative\u0022:-42,\u0022plusSign\u0022:5,\u0022exponent\u0022:1000,\u0022hex\u0022:\u00220x1F\u0022,\u0022plainTrue\u0022:true,\u0022titleCaseTrue\u0022:true,\u0022upperCaseFalse\u0022:false,\u0022doubleQuotedTrue\u0022:\u0022true\u0022,\u0022singleQuotedFalse\u0022:\u0022false\u0022,\u0022yamlOneOneYes\u0022:\u0022yes\u0022,\u0022plainNull\u0022:null,\u0022tilde\u0022:null,\u0022quotedNull\u0022:\u0022null\u0022,\u0022quotedTilde\u0022:\u0022~\u0022,\u0022emptyValue\u0022:null,\u0022quotedEmpty\u0022:\u0022\u0022,\u0022placeholder\u0022:\u0022{orderId}\u0022,\u0022literal\u0022:\u0022line one\\nline two\\n\u0022,\u0022literalNumber\u0022:\u0022123\\n\u0022,\u0022literalStrip\u0022:\u0022true\u0022,\u0022folded\u0022:\u0022folded text\\n\u0022,\u0022foldedNumber\u0022:\u00221.5\u0022}",
         new string[] { },
         new string[] { },
         200,
@@ -425,7 +489,7 @@ var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var 
         "app",
         "PUT",
         "/collections",
-        "{\u0022nested\u0022:{\u0022level1\u0022:{\u0022level2\u0022:{\u0022level3\u0022:\u0022deep\u0022}}},\u0022list\u0022:[\u0022a\u0022,2,\u00222\u0022,{\u0022nested\u0022:{\u0022k\u0022:\u0022v\u0022,\u0022n\u0022:3}},[\u0022x\u0022,\u0022y\u0022,1]],\u0022flowMap\u0022:{\u0022a\u0022:1,\u0022b\u0022:\u00221\u0022,\u0022c\u0022:\u0022\u0022,\u0022d\u0022:null},\u0022flowSeq\u0022:[1.5,\u00221.5\u0022,null,\u0022\u0022,true],\u0022emptyFlowMap\u0022:{},\u0022emptyFlowSeq\u0022:[],\u0022base\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10},\u0022aliasCopy\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10},\u0022quotedAnchor\u0022:\u0022123\u0022,\u0022fromAlias\u0022:\u0022123\u0022,\u0022plainAnchor\u0022:123,\u0022plainFromAlias\u0022:123,\u0022taggedString\u0022:123,\u0022taggedInt\u0022:\u00225\u0022,\u0022merged\u0022:{\u0022\\u003C\\u003C\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10},\u0022amount\u0022:20},\u0022mergedList\u0022:{\u0022\\u003C\\u003C\u0022:[{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10},{\u0022extra\u0022:true}]}}",
+        "{\u0022nested\u0022:{\u0022level1\u0022:{\u0022level2\u0022:{\u0022level3\u0022:\u0022deep\u0022}}},\u0022list\u0022:[\u0022a\u0022,2,\u00222\u0022,{\u0022nested\u0022:{\u0022k\u0022:\u0022v\u0022,\u0022n\u0022:3}},[\u0022x\u0022,\u0022y\u0022,1]],\u0022flowMap\u0022:{\u0022a\u0022:1,\u0022b\u0022:\u00221\u0022,\u0022c\u0022:null,\u0022d\u0022:null},\u0022flowSeq\u0022:[1.5,\u00221.5\u0022,null,\u0022\u0022,true],\u0022emptyFlowMap\u0022:{},\u0022emptyFlowSeq\u0022:[],\u0022base\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10},\u0022aliasCopy\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10},\u0022quotedAnchor\u0022:\u0022123\u0022,\u0022fromAlias\u0022:\u0022123\u0022,\u0022plainAnchor\u0022:123,\u0022plainFromAlias\u0022:123,\u0022taggedString\u0022:\u0022123\u0022,\u0022taggedInt\u0022:5,\u0022merged\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:20},\u0022mergedList\u0022:{\u0022currency\u0022:\u0022EUR\u0022,\u0022amount\u0022:10,\u0022extra\u0022:true}}",
         new string[] { "X-Tenant", "X-Count", "X-Flag" },
         new string[] { "acme", "007", "true" },
         200,
@@ -574,5 +638,47 @@ var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var 
         "string-body",
         Vars.TryGetValue("__outcome::string_body", out var __sco_string_body) ? __sco_string_body as Vouchfx.Engine.Abstractions.StepOutcome : null,
         Vars.TryGetValue("__capture_status::string_body", out var __scs_string_body) ? __scs_string_body as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_zeb_67_body_rules = __vouchfxRunCt;
+    _ = __stepCt_zeb_67_body_rules;
+    bool __stepBudgetGoverned_zeb_67_body_rules = false;
+    _ = __stepBudgetGoverned_zeb_67_body_rules;
+    StepEvents?.OnStepStarted("zeb-67-body-rules");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::zeb_67_body_rules",
+        "__capture_status::zeb_67_body_rules",
+        "svc::app",
+        "app",
+        "POST",
+        "/zeb-67",
+        "{\u0022overflow\u0022:\u00221e400\u0022,\u0022negativeOverflow\u0022:\u0022-1e400\u0022,\u0022keepLiteral\u0022:\u0022kept\\n\\n\u0022,\u0022stripFolded\u0022:\u0022true\u0022,\u0022literalNull\u0022:\u0022null\\n\u0022,\u0022emptyPlain\u0022:null,\u0022emptyQuoted\u0022:\u0022\u0022,\u0022tagStr\u0022:\u0022true\u0022,\u0022tagStrEmpty\u0022:\u0022\u0022,\u0022tagInt\u0022:10,\u0022tagIntHex\u0022:31,\u0022tagIntQuoted\u0022:-7,\u0022tagFloat\u0022:1.5,\u0022tagFloatInt\u0022:2,\u0022tagBool\u0022:true,\u0022tagBoolQuoted\u0022:false,\u0022tagTimestamp\u0022:\u00222026-11-17\u0022,\u0022defaults\u0022:{\u0022retries\u0022:3,\u0022region\u0022:\u0022eu\u0022},\u0022override\u0022:{\u0022region\u0022:\u0022eu\u0022,\u0022retries\u0022:5},\u0022layered\u0022:{\u0022region\u0022:\u0022us\u0022,\u0022retries\u0022:3,\u0022tier\u0022:\u0022silver\u0022}}",
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_zeb_67_body_rules,
+        __stepBudgetGoverned_zeb_67_body_rules);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::zeb_67_body_rules");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "zeb-67-body-rules",
+        Vars.TryGetValue("__outcome::zeb_67_body_rules", out var __sco_zeb_67_body_rules) ? __sco_zeb_67_body_rules as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::zeb_67_body_rules", out var __scs_zeb_67_body_rules) ? __scs_zeb_67_body_rules as string : null);
 }
 @@@@ end
