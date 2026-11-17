@@ -66,7 +66,7 @@ The reflective `StepKindRegistry` discovers your provider at suite startup by sc
 
 ### The Hard Rules: CsxFragment Composition (§13.3.1 of the Blueprint)
 
-When your `IStepCompiler<TModel>` emits a `CsxFragment`, three strict rules prevent collisions between providers and keep the memory model sound:
+When your `IStepCompiler<TModel>` emits a `CsxFragment`, five strict rules prevent collisions between providers and keep the memory model sound:
 
 **1. Three fields only.**
 

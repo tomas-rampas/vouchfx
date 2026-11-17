@@ -34,72 +34,20 @@ A tag push followed by Release publication starts one publishing run. A newer
 run does not automatically cancel an existing run (`cancel-in-progress: false`);
 manual cancellation remains possible.
 
----
+### Smoke-test without cutting a tag (`workflow_dispatch`)
 
-## First release after the Vouchfx.* rebrand (v1.0.0-alpha.4)
-
-The v1.0.0-alpha.4 release marks the first publish of the `Vouchfx.*` package IDs after the pre-GA namespace rebrand from `Platform.*`. This section documents the one-time release steps specific to this transition.
-
-### Pre-tag checklist
-
-- **Confirm NuGet.org Trusted Publishing permits first-time package creation.** The existing Trusted Publishing policy (created 2026-07-05 for the `vouchfx` CLI nupkg) was granted by NuGet.org for this repository. Verify that:
-  1. The policy's state is "active" on the NuGet.org Trusted Publishing page.
-  2. The policy permits creation of new package IDs under the `Vouchfx.` prefix (empirical precedent: the same policy created the six `Platform.*` package IDs at alpha.3). If in doubt, contact NuGet.org support in advance.
-  
-- **Confirm no third party holds a prefix reservation on `Vouchfx.*`.** Query NuGet.org to ensure `Vouchfx.Sdk`, `Vouchfx.Sdk.Testing`, `Vouchfx.Engine.Abstractions`, `Vouchfx.Engine.Authoring`, and `Vouchfx.Engine.Compilation` are unclaimed. All five must resolve to "not found" before proceeding.
-
-### Post-publish checklist
-
-Once the v1.0.0-alpha.4 tag publishes and NuGet.org surfaces the five new `Vouchfx.*` packages, immediately execute these steps **on NuGet.org**:
-
-1. **Unlist all versions of the six old package IDs:**
-   - `Platform.Sdk` (all versions)
-   - `Platform.Sdk.Testing` (all versions)
-   - `Platform.Engine.Abstractions` (all versions)
-   - `Platform.Engine.Authoring` (all versions)
-   - `Platform.Engine.Compilation` (all versions)
-   - `Community.Steps.JsonRpc` from the hub (if it was published as a separate NuGet ID; check current hub CI)
-
-   Unlisting keeps exact-version `dotnet restore` commands working for downstream consumers (e.g. the hub's pinned alpha.3 restore stays green until its repin PR), while hiding them from search and latest-version resolvers.
-
-2. **Set deprecation notices and alternate-package pointers on each unlisted package.** For each old ID:
-   - Go to the package's NuGet.org page.
-   - Mark it as **Deprecated**.
-   - Set the **Deprecation Alternate Package** field to the corresponding `Vouchfx.*` successor:
-     - `Platform.Sdk` → `Vouchfx.Sdk`
-     - `Platform.Sdk.Testing` → `Vouchfx.Sdk.Testing`
-     - `Platform.Engine.Abstractions` → `Vouchfx.Engine.Abstractions`
-     - `Platform.Engine.Authoring` → `Vouchfx.Engine.Authoring`
-     - `Platform.Engine.Compilation` → `Vouchfx.Engine.Compilation`
-     - `Community.Steps.JsonRpc` → `Vouchfx.Community.JsonRpc` (if applicable)
-   
-   The alternate-package pointer is the primary migration path; NuGet.org displays it to users who have the old ID restored, with a clear link to upgrade.
-
-3. **Note the version-line discontinuity in release notes.** The vouchfx CLI continues its version sequence: alpha.1 → alpha.2 → alpha.3 → alpha.4. However, the SDK and Engine packages are published for the *first time* under the `Vouchfx.*` names at v1.0.0-alpha.4 (there are no `Vouchfx.Sdk` alpha.1, alpha.2, or alpha.3 versions). The `Platform.*` package IDs carry alpha.1–alpha.3. Document this explicitly in the alpha.4 release notes to clarify the naming transition.
-
-### Post-release follow-up
-
-After the first successful `Vouchfx.*` publish and NuGet.org processing (typically within 1 hour), **apply for the `Vouchfx.` reserved ID prefix** on NuGet.org. This protects against third-party typosquatting. Submit a support request to NuGet.org via their website or contact form with:
-
-- Requested prefix: `Vouchfx.`
-- Justification: Brand protection for vouchfx open-source project.
-- Current owner package: `Vouchfx.Sdk` (v1.0.0-alpha.4)
-
----
-
-3. **Smoke-test without cutting a tag** (`workflow_dispatch`)
-   - In the GitHub Actions UI, select `Release (signed, provenance)` and
-     click **Run workflow**.
-   - Select the reviewed candidate ref and enter the version to validate.
-   - The pipeline builds all artifacts (nupkg, per-RID tarballs, SBOM, VSIX,
-     MSI, deb, pkg), creates provenance attestations and runs distribution checks.
-   - **NuGet, GitHub Release and Marketplace publication are skipped.** The
-     cosign steps are also skipped; optional certificate-based signing remains
-     dependent on configured secrets.
-   - **Attestations are public records**, including on preflight runs; skipping
-     package publication does not make the run private.
-   - Use this before publishing the next stable Release to validate the pipeline and native
-     installer builds. It does not establish that the public packages are available.
+- In the GitHub Actions UI, select `Release (signed, provenance)` and
+  click **Run workflow**.
+- Select the reviewed candidate ref and enter the version to validate.
+- The pipeline builds all artifacts (nupkg, per-RID tarballs, SBOM, VSIX,
+  MSI, deb, pkg), creates provenance attestations and runs distribution checks.
+- **NuGet, GitHub Release and Marketplace publication are skipped.** The
+  cosign steps are also skipped; optional certificate-based signing remains
+  dependent on configured secrets.
+- **Attestations are public records**, including on preflight runs; skipping
+  package publication does not make the run private.
+- Use this before publishing the next stable Release to validate the pipeline and native
+  installer builds. It does not establish that the public packages are available.
 
 ---
 
@@ -172,7 +120,7 @@ gpg --verify vouchfx.1.2.3.nupkg.asc vouchfx.1.2.3.nupkg
 
 ### Verify the SBOM
 
-The `vouchfx-<ver>.bom.json` is a CycloneDX 1.7 JSON SBOM listing all 214+
+The `vouchfx-<ver>.bom.json` is a CycloneDX 1.7 JSON SBOM listing the
 NuGet packages in the full solution dependency graph.  Inspect it with:
 
 ```bash
@@ -371,20 +319,9 @@ repository regardless of trigger, so this workflow-side guard is what keeps smok
 from publishing. Forks would in any case fail the token exchange since the policy
 names this repository.
 
-**Pending-activation caveat:**
-
-A newly created Trusted Publishing policy may start as "temporarily active" for
-up to 7 days (this usually applies to private repositories); check the actual
-state shown on the NuGet.org Trusted Publishing page.  It becomes permanently
-active on the first successful publish, which locks the GitHub repository and
-owner IDs in place.  If the policy shows as inactive and no publish has yet
-occurred, the activation window can be restarted at any time from the
-NuGet.org Trusted Publishing management page.
-
-**Before cutting a stable release tag,** log in to NuGet.org, navigate to the
-Trusted Publishing settings, and verify the policy's state.  If it has lapsed
-and no publish has succeeded, restart the activation window immediately.
-After the first successful publish, the policy will remain active permanently.
+**Policy state:** the policy became permanently active on the first successful publish, which locked
+the GitHub repository and owner IDs in place. If a publish ever fails at the token exchange, check the
+policy's state on the NuGet.org Trusted Publishing management page first.
 
 ---
 
@@ -393,10 +330,11 @@ After the first successful publish, the policy will remain active permanently.
 The following topics belong in README.md or product documentation (not here):
 
 - **Getting started / installation** — `dotnet tool install --global vouchfx`,
-  system requirements, the Aspire DCP prerequisite for new users.
+  system requirements.
 - **Verifying a downloaded binary** — a shorter consumer-facing version of
   the cosign and gh-attestation verification commands above.
 - **Upgrading** — `dotnet tool update --global vouchfx`.
 - **Building from source** — for the self-contained exe use case.
-- **The DCP prerequisite explained for users** — "why do I need Aspire
-  packages installed?" belongs in README/docs, not in RELEASING.md.
+- **How the bundled DCP works** — how stable distributions carry their own
+  DCP tools, and the `ASPIRE_DCP_PATH` override, belong in the user docs, not
+  in RELEASING.md.
