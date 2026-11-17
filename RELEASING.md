@@ -34,6 +34,33 @@ A tag push followed by Release publication starts one publishing run. A newer
 run does not automatically cancel an existing run (`cancel-in-progress: false`);
 manual cancellation remains possible.
 
+### Release-time documentation checklist
+
+Some published text is worded to be true both before and after a release, and some can only be
+finished once the tag is published. Work through this list in the release pull request or straight
+after publication:
+
+- Set `site/facts-fallback.json` (`engine_release`, `sdk_version`) to the newest **published**
+  release (for example `v1.2.1` and `1.2.1`). It is used only when the live fact fetch fails, so it
+  must never name an unpublished version.
+- Name the first release that bundles a new Aspire patch line where the docs say "up to and including
+  v1.2.1": `SECURITY.md` (the Aspire advisory section), the `CHANGELOG.md` Aspire entry, blueprint
+  section 5.7 and the `NuGetAuditSuppress` comment in `Directory.Build.props`. Check that the
+  `scripts/check_distribution.py` and `Vouchfx.Dcp.targets` comments still match the pinned Aspire.
+- Update texts that say "once published": `SECURITY.md` and `docs/getting-started.md` (the
+  `SslCa` advice for 1.2.1) and the vouchfx-mcp paragraph in `docs/getting-started.md` (until an MCP
+  release pins the new Core, the MCP rejects it, because its engine pin is an exact match).
+- Confirm `move-floating-tag.yml` moved the floating `v1` tag, and that `docs/ci-integration.md` still
+  describes the tags truthfully.
+- In `vouchfx-mcp`, bump `ENGINE_PIN` and run `scripts/sync-vendored.ps1 -Update`; `docs/recipes.md`,
+  `docs/language-reference.md` and the two composed-schema goldens are vendored byte-for-byte, so
+  mention any change to them in that pull request. In `vouchfx-samples`, bump its engine pin.
+- Re-read the .NET 10 wording in `docs/getting-started.md`, `docs/ci-integration.md` and
+  `ci/gitlab/README.md`, and measure the .NET 10 default image on GitLab SaaS if a fresh receipt is wanted
+  (the current receipts used `sdk:8.0`).
+- Re-check the landing page (`site/index.html`) for statements that were worded around an unpublished
+  release.
+
 ### Smoke-test without cutting a tag (`workflow_dispatch`)
 
 - In the GitHub Actions UI, select `Release (signed, provenance)` and
