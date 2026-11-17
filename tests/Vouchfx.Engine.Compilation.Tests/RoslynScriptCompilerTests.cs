@@ -46,6 +46,106 @@ public sealed class RoslynScriptCompilerTests
     }
 
     // -------------------------------------------------------------------------
+    // ZEB-49: repeated compiles must not leak a load context or re-read platform files.
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Compiling repeatedly adds no non-collectible <see cref="AssemblyLoadContext"/>.
+    /// Without the shared script loader, every <c>CSharpScript.Create</c> allocated an
+    /// <c>InteractiveAssemblyLoader</c> whose non-collectible context was never released.
+    /// Only non-collectible contexts are counted: they never leave
+    /// <see cref="AssemblyLoadContext.All"/>, while collectible ones from other tests can be
+    /// collected mid-test. Test parallelisation is disabled for this assembly, so the count is stable.
+    /// </summary>
+    [Fact]
+    public void CompileOnce_RepeatedCompiles_AddNoNonCollectibleLoadContext()
+    {
+        // Arrange — the first compile creates the shared loader, if it is not there already.
+        RoslynScriptCompiler.CompileOnce("1");
+        var before = AssemblyLoadContext.All.Count(c => !c.IsCollectible);
+
+        // Act
+        for (var i = 0; i < 3; i++)
+            RoslynScriptCompiler.CompileOnce("1");
+
+        // Assert
+        Assert.Equal(before, AssemblyLoadContext.All.Count(c => !c.IsCollectible));
+    }
+
+    /// <summary>
+    /// A trusted-platform assembly yields the same reference instance on every call, so the
+    /// platform set is read once per process. Any other path yields a fresh reference every
+    /// call, including after the file is rewritten with the same length and its last-write
+    /// time put back (the stale case a length and timestamp check would miss), and a deleted
+    /// file throws <see cref="FileNotFoundException"/> as <c>CreateFromFile</c> always did.
+    /// </summary>
+    [Fact]
+    public void GetReference_SharesPlatformFilesAndReadsEveryOtherPathAfresh()
+    {
+        // Platform path: shared.
+        var platformPath = typeof(object).Assembly.Location;
+        Assert.Contains(platformPath,
+            ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator));
+        Assert.Same(
+            RoslynScriptCompiler.GetReference(platformPath),
+            RoslynScriptCompiler.GetReference(platformPath));
+
+        var directory = Path.Combine(Path.GetTempPath(), "vouchfx-getreference-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            // Non-platform path: fresh, and it reflects a same-size rewrite with a restored timestamp.
+            var path = Path.Combine(directory, "Subject.dll");
+            EmitTinyAssembly(path, "Alpha");
+            var stamp = File.GetLastWriteTimeUtc(path);
+            var length = new FileInfo(path).Length;
+
+            var first = RoslynScriptCompiler.GetReference(path);
+            Assert.Equal("Alpha", TypeNamesOf(first));
+
+            EmitTinyAssembly(path, "Bravo");
+            File.SetLastWriteTimeUtc(path, stamp);
+            Assert.Equal(length, new FileInfo(path).Length);
+            Assert.Equal(stamp, File.GetLastWriteTimeUtc(path));
+
+            var second = RoslynScriptCompiler.GetReference(path);
+            Assert.NotSame(first, second);
+            Assert.Equal("Bravo", TypeNamesOf(second));
+            Assert.NotSame(second, RoslynScriptCompiler.GetReference(path));
+
+            // Deleted file: the failure surfaces from CreateFromFile, never a cached reference.
+            File.Delete(path);
+            Assert.Throws<FileNotFoundException>(() => RoslynScriptCompiler.GetReference(path));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    // Emits an assembly holding one empty public class. Names of equal length give files of equal length.
+    private static void EmitTinyAssembly(string path, string typeName)
+    {
+        var compilation = CSharpCompilation.Create(
+            "Subject",
+            new[] { CSharpSyntaxTree.ParseText($"public class {typeName} {{ }}") },
+            new[] { MetadataReference.CreateFromFile(typeof(object).Assembly.Location) },
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        var result = compilation.Emit(path);
+        Assert.True(result.Success, string.Join(Environment.NewLine, result.Diagnostics));
+    }
+
+    // The public type names a reference's image declares, other than the module type, comma-joined.
+    private static string TypeNamesOf(MetadataReference reference)
+    {
+        var metadata = ((PortableExecutableReference)reference).GetMetadata();
+        var reader = ((AssemblyMetadata)metadata).GetModules()[0].GetMetadataReader();
+        return string.Join(",", reader.TypeDefinitions
+            .Select(handle => reader.GetString(reader.GetTypeDefinition(handle).Name))
+            .Where(name => name != "<Module>"));
+    }
+
+    // -------------------------------------------------------------------------
     // S01-B-01 Test 1: compile-once produces a non-empty image and runs correctly.
     // -------------------------------------------------------------------------
 

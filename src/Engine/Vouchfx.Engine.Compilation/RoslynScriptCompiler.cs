@@ -71,15 +71,23 @@ public static class RoslynScriptCompiler
     // that the GC cannot see and that is freed only by a finalizer. Callers pass the
     // full trusted-platform-assemblies list (about 490 files, about 150 MB in a CLI or
     // test host), so creating fresh references per compile allocated that much native
-    // memory per compile and let it pile up between gen2 collections. One reference per
-    // file version is shared instead; it also lets Roslyn reuse its assembly symbols.
-    private static readonly ConcurrentDictionary<string, CachedReference> ReferenceCache =
-        new(StringComparer.Ordinal);
+    // memory per compile and let it pile up between gen2 collections (ZEB-49).
+    //
+    // Only files on that list are shared: one reference per file for the life of the
+    // process, because the runtime's own files do not change under a running process.
+    // Every other path (provider and customer assemblies, anything passed through
+    // additionalReferencePaths or ScriptOptions) gets a fresh reference per compile, as
+    // it always did, because such a file may be rewritten at the same path. The set is
+    // ordinal, as the runtime spells the paths. When the value is absent or empty
+    // nothing is cached. The same rule is mirrored in the Cli tests'
+    // PlatformMetadataReferences.
+    private static readonly HashSet<string> PlatformPaths = new(
+        ((AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty)
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries),
+        StringComparer.Ordinal);
 
-    private sealed record CachedReference(
-        long Length,
-        DateTime LastWriteTimeUtc,
-        Microsoft.CodeAnalysis.MetadataReference Reference);
+    private static readonly ConcurrentDictionary<string, Microsoft.CodeAnalysis.MetadataReference> PlatformReferences =
+        new(StringComparer.Ordinal);
 
     /// <summary>
     /// Compiles <paramref name="csxSource"/> into a portable-executable image exactly once.
@@ -537,45 +545,19 @@ public static class RoslynScriptCompiler
     }
 
     /// <summary>
-    /// Returns the shared metadata reference for <paramref name="path"/>, creating it
-    /// when the file is new to this process or its length or last-write time changed.
+    /// Returns the metadata reference for <paramref name="path"/>: one shared instance for a
+    /// trusted-platform assembly, a fresh one for every other path.
     /// </summary>
     /// <remarks>
     /// The reference still prefetches the whole image (no file stays open or locked).
-    /// A path that cannot be inspected bypasses the cache, so
+    /// A missing or unreadable file throws from
     /// <see cref="Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(string, Microsoft.CodeAnalysis.MetadataReferenceProperties, Microsoft.CodeAnalysis.DocumentationProvider?)"/>
-    /// reports the failure exactly as it did before the cache existed.
+    /// exactly as it did before the cache existed.
     /// </remarks>
-    private static Microsoft.CodeAnalysis.MetadataReference GetReference(string path)
-    {
-        FileInfo file;
-        try
-        {
-            file = new FileInfo(path);
-            if (!file.Exists)
-                return Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
-            or ArgumentException or NotSupportedException or System.Security.SecurityException)
-        {
-            return Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path);
-        }
-
-        // Read the version stamp before the image, so a file replaced mid-read is
-        // re-read on the next compile rather than cached under its new stamp.
-        var length = file.Length;
-        var lastWrite = file.LastWriteTimeUtc;
-        if (ReferenceCache.TryGetValue(path, out var cached)
-            && cached.Length == length
-            && cached.LastWriteTimeUtc == lastWrite)
-        {
-            return cached.Reference;
-        }
-
-        var reference = Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path);
-        ReferenceCache[path] = new CachedReference(length, lastWrite, reference);
-        return reference;
-    }
+    internal static Microsoft.CodeAnalysis.MetadataReference GetReference(string path) =>
+        PlatformPaths.Contains(path)
+            ? PlatformReferences.GetOrAdd(path, static p => Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(p))
+            : Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path);
 
     private static Assembly LoadImage(AssemblyLoadContext alc, byte[] image)
     {
