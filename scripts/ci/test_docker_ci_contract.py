@@ -183,6 +183,11 @@ source "$1"
         unit_command = shlex.split(unit_steps[0]["run"])
         for value in ["-m:1", "--no-build", "requires!=docker", "--collect:XPlat Code Coverage"]:
             self.assertIn(value, unit_command)
+        # ZEB-49: a hung test must name itself, and a stuck job is bounded at 40 minutes.
+        self.assertEqual("10m", unit_command[unit_command.index("--blame-hang-timeout") + 1])
+        self.assertEqual("none", unit_command[unit_command.index("--blame-hang-dump-type") + 1])
+        self.assertIn("--blame-hang", unit_command)
+        self.assertEqual(40, build["timeout-minutes"])
         self.assertEqual("TestResults", command[command.index("--results-directory") + 1])
         self.assertNotIn("VOUCHFX_DCP_CAPTURE_DIR", json.dumps(integration))
         self.assertNotIn("secrets.", json.dumps(integration))
@@ -242,6 +247,10 @@ source "$1"
                 self.assertIn("--no-build", command)
                 self.assertNotIn("if", current)
                 self.assertNotIn("continue-on-error", current)
+                if job in ("build", "compatibility"):
+                    self.assertIn("--blame-hang", command)
+                    self.assertEqual("10m", command[command.index("--blame-hang-timeout") + 1])
+                    self.assertEqual("none", command[command.index("--blame-hang-dump-type") + 1])
 
     def test_success_visits_every_image(self):
         _, _, calls, _ = self.run_case("success", {"one": [reply()], "quay.io/two": [reply()]}, tally=(0, 0))

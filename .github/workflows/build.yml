@@ -168,6 +168,12 @@ jobs:
   build:
     name: Build & unit tests
     runs-on: ubuntu-latest
+    # The job is green in about 15 minutes. The ZEB-49 failures were the hosted runner
+    # losing communication mid-test (runs 43707738732, 44070514767), which leaves no log.
+    # This bound ends a stuck job sooner; it does not preserve the log once the runner is
+    # starved: the compatibility job hit its 30-minute bound in the same step on
+    # 15 November 2026 (runs 43735628400, 43758635481) and has no log either.
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
@@ -276,6 +282,12 @@ jobs:
       # paragraph stops being true and the flag should be reconsidered with it.
       # Bound cross-project contention while preserving every existing test and timeout.
       # Per-project xUnit scheduling and exclusive certificate guards remain unchanged.
+      #
+      # --blame-hang makes the test host name a test that runs longer than 10 minutes and
+      # then terminates it, instead of the job going silent. A hang on 17 November 2026
+      # left no log and no test name (ZEB-49). No non-Docker test legitimately runs that
+      # long, and --blame-hang-dump-type none records the test name in Sequence_*.xml
+      # under TestResults/ without writing a dump.
       - name: Unit tests (requires!=docker)
         run: >
           dotnet test vouchfx.sln
@@ -284,6 +296,9 @@ jobs:
           --no-build
           --filter "requires!=docker"
           --collect:"XPlat Code Coverage"
+          --blame-hang
+          --blame-hang-timeout 10m
+          --blame-hang-dump-type none
           --results-directory TestResults
 
       - name: Verify tracked checkout is unchanged after tests
