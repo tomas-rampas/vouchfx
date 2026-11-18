@@ -187,7 +187,9 @@ public sealed class StdinShutdownWatcherTests
         var watcher = StdinShutdownWatcher.Start(uncancellableStream, () => { });
 
         var disposeTask = watcher.DisposeAsync().AsTask();
-        var completed = await Task.WhenAny(disposeTask, Task.Delay(WaitBound));
+        using var delayCts = new CancellationTokenSource();
+        var completed = await Task.WhenAny(disposeTask, Task.Delay(WaitBound, delayCts.Token));
+        delayCts.Cancel();
 
         Assert.Same(disposeTask, completed);
         await disposeTask; // Propagate any failure (there should be none).

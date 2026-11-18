@@ -22,7 +22,12 @@ RELEASE_LIBRARIES = (
     "Vouchfx.Engine.Compilation", "Vouchfx.Sdk.Testing",
 )
 PLANNING = "Vouchfx.Engine.Planning"
-TOOL_SETTINGS = "tools/net8.0/any/DotnetToolSettings.xml"
+# The CLI tool and the (unreleased) Planning library target net10.0; the release
+# libraries keep the v1.x net8.0 baseline (VouchfxProviderContractTargetFramework in
+# Directory.Build.props).
+RELEASE_LIBRARY_FRAMEWORK = "net8.0"
+LIBRARY_FRAMEWORKS = {PLANNING: "net10.0"}
+TOOL_SETTINGS = "tools/net10.0/any/DotnetToolSettings.xml"
 MAX_ARCHIVE_BYTES = 250_000_000
 MAX_ENTRIES = 10_000
 MAX_ENTRY_BYTES = 256_000_000
@@ -179,7 +184,8 @@ def check_package(path, library=None):
                 or any(entry.file_size > MAX_ENTRY_BYTES for entry in entries)):
             raise InvalidPublication("expanded package exceeds the publication limit")
         xml_entries = [entry for entry in entries if entry.filename.lower().endswith(".xml")]
-        expected = f"lib/net8.0/{library}.xml" if library else TOOL_SETTINGS
+        framework = LIBRARY_FRAMEWORKS.get(library, RELEASE_LIBRARY_FRAMEWORK)
+        expected = f"lib/{framework}/{library}.xml" if library else TOOL_SETTINGS
         if expected not in names:
             raise InvalidPublication("required XML package member is missing")
         if not library and {entry.filename for entry in xml_entries} != {"[Content_Types].xml", TOOL_SETTINGS}:

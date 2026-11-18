@@ -243,12 +243,44 @@ internal static class ProviderDirectoryScanner
 
     private static bool IsReservedNamespace(string ns) => ns is "Vouchfx.Engine" or "Vouchfx.Steps"
         || ns.StartsWith("Vouchfx.Engine.", StringComparison.Ordinal) || ns.StartsWith("Vouchfx.Steps.", StringComparison.Ordinal);
+    // Assemblies the host resolves from a shared framework listed in its runtimeconfig (Microsoft.NETCore.App and, for the
+    // CLI, Microsoft.AspNetCore.App) are runtime-owned: a provider built against an older framework package may reference
+    // a lower version, never a higher one. In the framework-dependent tool (dotnet tool install) the assemblies the CLI
+    // ships itself sit in the app directory, are app-local and keep needing an exact identity. In the self-contained
+    // archives and installers the runtime directory is the app directory, so every bundled assembly follows the same-or-lower
+    // rule, as it did before shared frameworks were recognised. A provider admitted at a lower version that calls an API
+    // removed since fails when the step runs, not at suite start; a higher version is always refused at suite start.
     private static bool CompatibleHost(AssemblyName requested, Image host) =>
         requested.Name is "Vouchfx.Sdk" or "Vouchfx.Engine.Abstractions"
             ? requested.Version?.Major == 1 && host.Identity.Version?.Major == 1 && SameToken(requested, host.Identity)
-            : File.Exists(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), requested.Name + ".dll"))
+            : IsSharedFrameworkImage(host)
                 ? requested.Version <= host.Identity.Version && SameToken(requested, host.Identity)
                 : SameIdentity(requested, host.Identity);
+    private static bool IsSharedFrameworkImage(Image host) =>
+        Path.GetDirectoryName(host.Path) is { } directory && s_frameworkDirectories.Value.Contains(NormalizeDirectory(directory));
+    private static string NormalizeDirectory(string directory) =>
+        Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    // The host publishes the deps.json of every file it resolved from (APP_CONTEXT_DEPS_FILES: the app's own, then one per
+    // shared framework in the runtimeconfig; FX_DEPS_FILE: the root framework). Each framework's deps.json sits in that
+    // framework's directory. In the framework-dependent tool the app's own directory is app-local and is not added from the
+    // deps files; in a self-contained build GetRuntimeDirectory() is the app directory and FX_DEPS_FILE is empty, so the
+    // app directory is added through the runtime directory below and its assemblies are treated as framework assemblies.
+    private static readonly Lazy<HashSet<string>> s_frameworkDirectories = new(() =>
+    {
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var appDirectory = NormalizeDirectory(AppContext.BaseDirectory);
+        var directories = new HashSet<string>(comparer)
+        {
+            NormalizeDirectory(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory())
+        };
+        foreach (var key in new[] { "APP_CONTEXT_DEPS_FILES", "FX_DEPS_FILE" })
+            foreach (var depsFile in ((AppContext.GetData(key) as string) ?? "")
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                if (Path.GetDirectoryName(depsFile) is { Length: > 0 } directory && NormalizeDirectory(directory) is var normalized
+                    && !comparer.Equals(normalized, appDirectory))
+                    directories.Add(normalized);
+        return directories;
+    });
     private static bool SameIdentity(AssemblyName left, AssemblyName right) =>
         string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase) && left.Version == right.Version
         && string.Equals(left.CultureName ?? "", right.CultureName ?? "", StringComparison.OrdinalIgnoreCase) && SameToken(left, right);

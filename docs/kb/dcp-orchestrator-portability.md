@@ -21,7 +21,7 @@ with matching Aspire 13.4.2 tools supplied through `ASPIRE_DCP_PATH`.
 
 The published `1.0.0` global tool carries complete `win-x64`, glibc `linux-x64`, `osx-x64` and `osx-arm64` DCP trees.
 Archives/installers carry their selected RID. Paths are relative to the resolved host assembly,
-not the current directory: `dcp/13.4.2/<rid>/tools/`.
+not the current directory: `dcp/<aspire-version>/<rid>/tools/`, where the version is the Aspire release the build pins (13.4.2 up to v1.2.1).
 
 | Condition | Behaviour |
 |---|---|
@@ -49,7 +49,7 @@ Aspire workload or warmed NuGet cache.
 
 If you must retain a legacy package, supply exact platform tools through `ASPIRE_DCP_PATH`.
 It names the directory containing `dcp`/`dcp.exe`, not the executable. An AppHost restore at
-Aspire 13.4.2 can populate those tools for legacy/source builds; the retired Aspire workload cannot.
+the exact Aspire version the build pins can populate those tools for legacy/source builds; the retired Aspire workload cannot.
 Do not describe an rc.6 install with this override as a standalone pass.
 See [troubleshooting](../troubleshooting.md#the-aspire-orchestration-component-is-not-installed-could-not-be-located).
 

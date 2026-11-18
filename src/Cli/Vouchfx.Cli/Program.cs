@@ -124,3 +124,17 @@ if (InvocationScope.IsRunInvocation(args))
 var parseResult = rootCommand.Parse(args);
 var invokeResult = await parseResult.InvokeAsync(invocationConfiguration);
 return InvocationScope.ResolveExitCode(parseResult.Errors.Count, invokeResult);
+
+/// <summary>
+/// The top-level-statement entry point type, declared here only to keep it internal.
+/// </summary>
+/// <remarks>
+/// From .NET 10 the ASP.NET Core shared framework, which reaches this project through Aspire,
+/// ships a source generator (PublicProgramSourceGenerator) that adds
+/// <c>public partial class Program</c> to any top-level-statement application without its own
+/// Program declaration. That would add Program to the CLI's public surface and move the
+/// public API golden; an explicit declaration makes the generator stand down.
+/// </remarks>
+internal partial class Program
+{
+}

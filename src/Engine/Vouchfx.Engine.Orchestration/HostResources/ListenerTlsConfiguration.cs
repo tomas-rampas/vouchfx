@@ -57,7 +57,10 @@ public sealed class ListenerTlsConfiguration : IDisposable
             var pkcs12 = server.Export(X509ContentType.Pkcs12, transferPassword);
             try
             {
-                var loadable = new X509Certificate2(
+                // X509CertificateLoader replaces the byte-array constructor (SYSLIB0057 since
+                // .NET 9). LoadPkcs12 accepts only PKCS#12, which is exactly what Export above
+                // produced, and keeps the same DefaultKeySet storage.
+                var loadable = X509CertificateLoader.LoadPkcs12(
                     pkcs12, transferPassword, X509KeyStorageFlags.DefaultKeySet);
                 server.Dispose();
                 server = loadable;

@@ -489,7 +489,9 @@ public sealed class HttpRestXPathCaptureTests
             // Bound the run: if DtdProcessing.Prohibit ever regressed, expansion would
             // OOM/hang long before this elapses.  A clean miss completes near-instantly.
             var runTask = RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
-            var completed = await Task.WhenAny(runTask, Task.Delay(TimeSpan.FromSeconds(15)));
+            using var delayCts = new CancellationTokenSource();
+            var completed = await Task.WhenAny(runTask, Task.Delay(TimeSpan.FromSeconds(15), delayCts.Token));
+            delayCts.Cancel();
             Assert.True(
                 ReferenceEquals(completed, runTask),
                 "Billion-laughs body must complete fast as a clean miss — it did not finish within 15s, " +

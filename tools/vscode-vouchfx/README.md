@@ -3,7 +3,10 @@
 Schema-aware authoring for vouchfx `*.e2e.yaml` integration tests.
 
 This extension binds the **frozen v1 vouchfx JSON Schema** to `*.e2e.yaml`
-files so that, inside VSCode, authors get:
+files. A schema v2 suite is flagged by the bundled v1 schema (its v2 `metadata`
+fields are not part of it) until you add an explicit modeline; see [Explicit v2 files](#explicit-v2-files).
+
+Authors get:
 
 - **Completion** — step types and fields offered as you type. The schema uses
   `if`/`then` on the `type` discriminator, so completions are step-type
@@ -33,7 +36,7 @@ Marketplace publication is optional; the GitHub VSIX is the supported distributi
 when that channel is unavailable. For an unreleased candidate, use its supplied
 VSIX or build this checkout with the [development commands](#development).
 Install a compatible CLI and configure `vouchfx.cliPath` before using Test Explorer;
-see the engine's [version-specific installation prerequisites](../../docs/getting-started.md#installing-vouchfx).
+see the engine's [version-specific installation prerequisites](https://vouchfx.io/getting-started/#installing-vouchfx).
 
 The extension also associates vouchfx environment-driver configuration files named
 `*.compose.yaml` with the separate Compose environment schema. Native Compose
@@ -42,7 +45,7 @@ matching CLI to check its external bindings before execution.
 
 ## How the schema is bound
 
-**Primary source (REQ-009):** on activation the extension prefers the **live
+**Primary source:** on activation the extension prefers the **live
 engine export** from the CLI configured by `vouchfx.cliPath`:
 
 1. `vouchfx list --json` — verifies every step type carries bar-B metadata
@@ -119,7 +122,7 @@ not an embedded C# region, so there is nothing to highlight inline. See
 | --- | --- |
 | YAML schema autocomplete / hover / validation | ✅ Shipped |
 | C# **syntax highlighting** inside `code:` | ✅ Shipped |
-| In-block C# **IntelliSense** (completion / diagnostics / hover) | ❌ Deferred fast-follow (target: a later sprint, e.g. S10) |
+| In-block C# **IntelliSense** (completion / diagnostics / hover) | ❌ Deferred fast-follow (planned for a later release) |
 
 Full in-block C# IntelliSense is a **documented fast-follow**, not built in v1.
 The intended path — an embedded "virtual document" that declares the engine's
@@ -128,7 +131,7 @@ The intended path — an embedded "virtual document" that declares the engine's
 installed C# extension — is deferred because the modern **C# Dev Kit / Roslyn
 LSP does not cleanly expose virtual-document completion forwarding** for an
 in-memory `.cs` not bound to an MSBuild project, and the YAML ↔ virtual
-position-mapping is non-trivial; a custom Roslyn LSP is a multi-sprint effort.
+position-mapping is non-trivial; a custom Roslyn LSP is a larger effort.
 The full rationale and planned approach are in
 [`docs/csharp-intellisense.md`](https://github.com/tomas-rampas/vouchfx/blob/main/tools/vscode-vouchfx/docs/csharp-intellisense.md).
 

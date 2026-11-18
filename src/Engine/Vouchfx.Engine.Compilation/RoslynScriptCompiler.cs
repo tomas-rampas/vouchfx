@@ -9,11 +9,13 @@
 //
 // Correct path: CSharpScript.Create<T> → GetCompilation() → Emit(MemoryStream) ONCE
 //               → per-run: new CollectibleScriptLoadContext → LoadFromStream → <Factory> → Unload().
+using System.Collections.Concurrent;
 using System.IO;
 using System.Reflection;
 using System.Runtime.Loader;
 using Microsoft.CodeAnalysis.CSharp.Scripting;
 using Microsoft.CodeAnalysis.Scripting;
+using Microsoft.CodeAnalysis.Scripting.Hosting;
 using Vouchfx.Engine.Abstractions;
 
 namespace Vouchfx.Engine.Compilation;
@@ -59,6 +61,37 @@ namespace Vouchfx.Engine.Compilation;
 /// </remarks>
 public static class RoslynScriptCompiler
 {
+    // One loader for every compile. Without it, CSharpScript.Create allocates a new
+    // InteractiveAssemblyLoader, whose non-collectible AssemblyLoadContext is never
+    // released: one leaked context per compile. Nothing is ever loaded through it,
+    // because scripts here are emitted and loaded into our own collectible contexts.
+    private static readonly InteractiveAssemblyLoader SharedScriptLoader = new();
+
+    // MetadataReference.CreateFromFile copies the whole PE image into unmanaged memory
+    // that the GC cannot see and that is freed only by a finalizer. Callers pass the
+    // full trusted-platform-assemblies list (about 490 files, about 150 MB in a CLI or
+    // test host), so creating fresh references per compile allocated that much native
+    // memory per compile and let it pile up between gen2 collections (ZEB-49).
+    //
+    // Only files on that list are shared: one reference per file for the life of the
+    // process, because these are the files the runtime itself loads for this process
+    // (the shared framework and the host's deps.json assemblies); replacing one under a
+    // running process is unsupported, and whoever can write them already controls the
+    // process.
+    // Every other path (provider and customer assemblies, anything passed through
+    // additionalReferencePaths or ScriptOptions) gets a fresh reference per compile, as
+    // it always did, because such a file may be rewritten at the same path. The set is
+    // ordinal, as the runtime spells the paths. When the value is absent or empty
+    // nothing is cached. The same rule is mirrored in the Cli tests'
+    // PlatformMetadataReferences.
+    private static readonly HashSet<string> PlatformPaths = new(
+        ((AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty)
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries),
+        StringComparer.Ordinal);
+
+    private static readonly ConcurrentDictionary<string, Microsoft.CodeAnalysis.MetadataReference> PlatformReferences =
+        new(StringComparer.Ordinal);
+
     /// <summary>
     /// Compiles <paramref name="csxSource"/> into a portable-executable image exactly once.
     /// </summary>
@@ -154,7 +187,8 @@ public static class RoslynScriptCompiler
         var script = CSharpScript.Create<object>(
             csxSource,
             options,
-            globalsType: typeof(ScriptGlobalVariables));
+            globalsType: typeof(ScriptGlobalVariables),
+            assemblyLoader: SharedScriptLoader);
 
         var compilation = script.GetCompilation();
 
@@ -409,12 +443,12 @@ public static class RoslynScriptCompiler
         if (string.IsNullOrEmpty(abstractionsLocation))
             throw new NotSupportedException(
                 "Could not resolve the assembly location for Vouchfx.Engine.Abstractions. " +
-                "This is unexpected under normal .NET 8 load contexts; ensure the assembly " +
+                "This is unexpected under normal .NET load contexts; ensure the assembly " +
                 "is not loaded from a single-file bundle without extraction.");
 
         var refs = new List<Microsoft.CodeAnalysis.MetadataReference>(tpaRefs)
         {
-            Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(abstractionsLocation),
+            GetReference(abstractionsLocation),
         };
 
         // Add caller-supplied per-script reference paths (e.g. provider or satellite
@@ -426,7 +460,7 @@ public static class RoslynScriptCompiler
             foreach (var path in additionalReferencePaths)
             {
                 if (!string.IsNullOrEmpty(path))
-                    refs.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path));
+                    refs.Add(GetReference(path));
             }
         }
 
@@ -504,14 +538,29 @@ public static class RoslynScriptCompiler
             throw new NotSupportedException(
                 $"The following required BCL assemblies could not be found in the " +
                 $"TRUSTED_PLATFORM_ASSEMBLIES list: {string.Join(", ", missing)}. " +
-                "Ensure the .NET 8 runtime is installed and the TPA list is complete.");
+                "Ensure a supported .NET runtime is installed and the TPA list is complete.");
 
         var refs = new List<Microsoft.CodeAnalysis.MetadataReference>(found.Count);
         foreach (var path in found.Values)
-            refs.Add(Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path));
+            refs.Add(GetReference(path));
 
         return refs;
     }
+
+    /// <summary>
+    /// Returns the metadata reference for <paramref name="path"/>: one shared instance for a
+    /// trusted-platform assembly, a fresh one for every other path.
+    /// </summary>
+    /// <remarks>
+    /// The reference still prefetches the whole image (no file stays open or locked).
+    /// A missing or unreadable file throws from
+    /// <see cref="Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(string, Microsoft.CodeAnalysis.MetadataReferenceProperties, Microsoft.CodeAnalysis.DocumentationProvider?)"/>
+    /// exactly as it did before the cache existed.
+    /// </remarks>
+    internal static Microsoft.CodeAnalysis.MetadataReference GetReference(string path) =>
+        PlatformPaths.Contains(path)
+            ? PlatformReferences.GetOrAdd(path, static p => Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(p))
+            : Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path);
 
     private static Assembly LoadImage(AssemblyLoadContext alc, byte[] image)
     {

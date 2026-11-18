@@ -19,7 +19,7 @@ This document collects task-oriented recipes for common testing scenarios in vou
 14. [CI integration with GitHub Actions](#ci-integration-with-github-actions)
 15. [CI integration with GitLab CI](#ci-integration-with-gitlab-ci)
 
-For the exhaustive reference on every step type's fields, see [`docs/language-reference.md`](language-reference.md). For the full DSL specification, see [`docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md`](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md).
+For the exhaustive reference on every step type's fields, see the [language reference](language-reference.md). For the full DSL specification, see the [YAML DSL specification](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md).
 
 ---
 
@@ -99,7 +99,7 @@ steps:
 - **All files are executed in order** against the named dependency before step 1 runs.
 - Seed SQL can contain DDL (CREATE TABLE) and DML (INSERT, UPDATE). Multi-statement files are split and executed serially.
 - **Seed failure = EnvironmentError**, not a test failure. If `fixtures/reference.sql` fails to execute, the whole run aborts with `EnvironmentError`, clearly signalling infrastructure trouble.
-- The reproducibility envelope records the **content hash** of each seeded fixture (see `docs/01` §4 and §14), never its raw SQL.
+- The reproducibility envelope records the **content hash** of each seeded fixture (see blueprint [§4](01_Technical_Architecture_and_Engineering_Blueprint.md#4-orchestration-engine-inline-and-registered-environments) and [§14](01_Technical_Architecture_and_Engineering_Blueprint.md#14-result-reporting-and-the-verdict-lifecycle)), never its raw SQL.
 
 ---
 
@@ -295,9 +295,9 @@ vouchfx run tests/integrations
 
 ## Injecting secrets from Vault
 
-**When to use:** Your secrets are stored in a centralized Vault (HashiCorp Vault, AWS Secrets Manager, or similar) and you want vouchfx to resolve them at execution time.
+**When to use:** Your secrets are stored in HashiCorp Vault (KV v2) and you want vouchfx to resolve them at run time.
 
-**How it works:** A `${secret:vault/path/to/secret}` reference is resolved by consulting the configured Vault backend at execution time. The Vault URL and authentication credentials are configured via environment variables (`VOUCHFX_VAULT_ADDR`, `VOUCHFX_VAULT_TOKEN`, etc., see `docs/01` §17 for full details).
+**How it works:** A `${secret:vault/<kvPath>#<field>}` reference is resolved by consulting the configured Vault backend at run time; the field after `#` is mandatory. The Vault URL and authentication token are configured via environment variables (`VAULT_ADDR`, `VAULT_TOKEN` and, optionally, `VAULT_KV_MOUNT`; see blueprint [§17](01_Technical_Architecture_and_Engineering_Blueprint.md#17-secrets-and-configuration-management) for full details).
 
 ### Example: secret from Vault
 
@@ -317,11 +317,11 @@ steps:
   - id: connect-with-vault-secret
     type: script.csharp
     code: |
-      // The Vars.Secrets property is the execution-time secret accessor.
-      // Call Vars.Secrets.Resolve("vault/database/prod") to get a SecretString.
-      // 
+      // The Secrets global is the run-time secret accessor (it is not a member of Vars).
+      // Call Secrets.Resolve("vault/database/prod#password") to get a SecretString.
+      //
       // To use the secret, call Reveal() to get the raw value:
-      var dbSecret = Vars.Secrets.Resolve("vault/database/prod");
+      var dbSecret = Secrets.Resolve("vault/database/prod#password");
       var revealed = dbSecret.Reveal();
       var connStr = $"Host=localhost;Username=db_user;Password={revealed};Database=prod";
       // The revealed value is valid only at the injection sink; never write it back
@@ -331,18 +331,18 @@ steps:
 Then configure Vault credentials before running:
 
 ```bash
-export VOUCHFX_VAULT_ADDR="https://vault.example.com"
-export VOUCHFX_VAULT_TOKEN="s.xxxxxxxxx"
+export VAULT_ADDR="https://vault.example.com"
+export VAULT_TOKEN="s.xxxxxxxxx"
 vouchfx run tests/secure
 ```
 
 **Key points:**
 
-- Vault sources are configured at runtime via environment variables (`VOUCHFX_VAULT_ADDR`, `VOUCHFX_VAULT_TOKEN`, etc.).
-- A `${secret:vault/path/to/secret}` reference is resolved from Vault at run time, never at compile time. In a step's own field that is immediately before the step executes; the one environment-level field that takes a reference, `security.clientKeyPassword`, resolves earlier — at first use of the certificate material, before any step runs (`docs/01` §17.1.1).
-- In `script.csharp` steps, a resolved secret is available as a `SecretString` (see `docs/01` §17) — a type that prevents accidental logging or serialization of the value.
-- The reference path (e.g., `vault/database/prod`) appears in output and the reproducibility envelope; the resolved value does not.
-- For the full Vault configuration and API, see `docs/01` §17 (Secrets).
+- Vault sources are configured at runtime via environment variables (`VAULT_ADDR`, `VAULT_TOKEN` and, optionally, `VAULT_KV_MOUNT`).
+- A `${secret:vault/<kvPath>#<field>}` reference is resolved from Vault at run time, never at compile time. In a step's own field that is immediately before the step executes; the one environment-level field that takes a reference, `security.clientKeyPassword`, resolves earlier — at first use of the certificate material, before any step runs (blueprint [§17.1.1](01_Technical_Architecture_and_Engineering_Blueprint.md#1711-resolution-happens-at-run-time-never-at-compile-time)).
+- In `script.csharp` steps, a resolved secret is available as a `SecretString` (see blueprint [§17](01_Technical_Architecture_and_Engineering_Blueprint.md#17-secrets-and-configuration-management)) — a type that prevents accidental logging or serialization of the value.
+- The reference path (e.g., `vault/database/prod#password`) appears in output and the reproducibility envelope; the resolved value does not.
+- For the full Vault configuration and API, see blueprint [§17 (Secrets)](01_Technical_Architecture_and_Engineering_Blueprint.md#17-secrets-and-configuration-management).
 
 ---
 
@@ -535,7 +535,7 @@ steps:
 - **Each attempt is recorded individually** in the `--events` output and rendered with a timeline in the HTML report, so you can see exactly when assertions started passing.
 - RETRY is available on **any step type** (not just database assertions).
 - **Authors never write `Thread.Sleep`** — the engine owns the backoff strategy.
-- For polling parameters (backoff curve, max attempts, etc.), see `docs/02` §7 and `docs/01` §5.7 (Polly v8 resilience pipelines). The per-attempt timeline is rendered in the HTML report.
+- For polling parameters (backoff curve, max attempts, etc.), see DSL specification [§7](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md#7-verification-modes-and-asynchronous-assertions) and blueprint [§5.7](01_Technical_Architecture_and_Engineering_Blueprint.md#57-library-and-version-commitments) (Polly v8 resilience pipelines). The per-attempt timeline is rendered in the HTML report.
 
 ---
 

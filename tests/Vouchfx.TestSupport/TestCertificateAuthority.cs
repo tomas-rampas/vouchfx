@@ -265,7 +265,7 @@ public static class TestCertificateAuthority
             // The CA is re-created from its own DER so the bed does not hold the CA's PRIVATE
             // key alive: a trust anchor never needs one, and keeping one around invites a test
             // to sign something the engine should have refused.
-            var anchor = new X509Certificate2(ca.Export(X509ContentType.Cert));
+            var anchor = X509CertificateLoader.LoadCertificate(ca.Export(X509ContentType.Cert));
 
             return new TestCertificateBed(
                 suiteDirectory,
@@ -536,16 +536,16 @@ public static class TestCertificateAuthority
 
         // Retain the intermediate's key only long enough to issue the leaf.
         using var intermediateWithKey = intermediateSigned.CopyWithPrivateKey(intermediateKey);
-        using var intermediateSigner = new X509Certificate2(
-            intermediateWithKey.Export(X509ContentType.Pkcs12));
+        using var intermediateSigner = X509CertificateLoader.LoadPkcs12(
+            intermediateWithKey.Export(X509ContentType.Pkcs12), password: null);
         var leaf = IssueLeaf(intermediateSigner, ServerSubjectCommonName, includeLocalhostSans: true, now);
 
         File.WriteAllText(Path.Combine(suiteDirectory, CaFileName), root.ExportCertificatePem());
 
         return new TestTwoTierBed(
             suiteDirectory,
-            new X509Certificate2(root.Export(X509ContentType.Cert)),
-            new X509Certificate2(intermediateSigned.Export(X509ContentType.Cert)),
+            X509CertificateLoader.LoadCertificate(root.Export(X509ContentType.Cert)),
+            X509CertificateLoader.LoadCertificate(intermediateSigned.Export(X509ContentType.Cert)),
             leaf.Certificate,
             leaf.Loadable);
     }
@@ -568,7 +568,7 @@ public static class TestCertificateAuthority
         var leaf = IssueLeaf(imposter, ServerSubjectCommonName, includeLocalhostSans: true, now);
         leaf.Loadable.Dispose();
 
-        return (new X509Certificate2(imposter.Export(X509ContentType.Cert)), leaf.Certificate);
+        return (X509CertificateLoader.LoadCertificate(imposter.Export(X509ContentType.Cert)), leaf.Certificate);
     }
 
     /// <summary>
@@ -601,8 +601,8 @@ public static class TestCertificateAuthority
         using var intermediateSigned = intermediateRequest.Create(
             root, now.AddDays(-1), now.AddDays(1), RandomNumberGenerator.GetBytes(8));
         using var intermediateWithKey = intermediateSigned.CopyWithPrivateKey(intermediateKey);
-        using var intermediateSigner = new X509Certificate2(
-            intermediateWithKey.Export(X509ContentType.Pkcs12));
+        using var intermediateSigner = X509CertificateLoader.LoadPkcs12(
+            intermediateWithKey.Export(X509ContentType.Pkcs12), password: null);
 
         var leaf = IssueLeaf(
             intermediateSigner, ServerSubjectCommonName, includeLocalhostSans: true, now, aiaUrl: caIssuersUrl);
@@ -620,7 +620,7 @@ public static class TestCertificateAuthority
 
         return new TestAiaBed(
             suiteDirectory,
-            new X509Certificate2(root.Export(X509ContentType.Cert)),
+            X509CertificateLoader.LoadCertificate(root.Export(X509ContentType.Cert)),
             leaf.Certificate,
             intermediate.Subject,
             intermediate.Thumbprint);
@@ -811,14 +811,14 @@ public static class TestCertificateAuthority
         var serial = RandomNumberGenerator.GetBytes(8);
         using var signed = request.Create(issuer, now.AddDays(-1), now.AddDays(1), serial);
 
-        var certificate = new X509Certificate2(signed.Export(X509ContentType.Cert));
+        var certificate = X509CertificateLoader.LoadCertificate(signed.Export(X509ContentType.Cert));
         using var withKey = signed.CopyWithPrivateKey(key);
 
         // The PKCS#12 round trip is the SAME one SecurityConfigurationAccessor performs, for
         // the same measured reason: a certificate carrying an ephemeral key completes neither
         // side of a TLS handshake on Windows. The bed's server certificate has to work, so it
         // gets the same treatment.
-        var loadable = new X509Certificate2(withKey.Export(X509ContentType.Pkcs12));
+        var loadable = X509CertificateLoader.LoadPkcs12(withKey.Export(X509ContentType.Pkcs12), password: null);
 
         return (certificate, key.ExportPkcs8PrivateKeyPem(), loadable);
     }

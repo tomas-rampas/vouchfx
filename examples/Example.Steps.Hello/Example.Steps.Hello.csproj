@@ -7,6 +7,11 @@
          its Core providers — a customer DLL declaring those is refused at startup.
          This worked example uses 'Example.Steps.Hello' to model the rule correctly. -->
     <RootNamespace>Example.Steps.Hello</RootNamespace>
+    <!-- A provider targets the frozen contract's framework (net8.0), not the engine's.
+         A net8.0 provider loads in the current net10.0 CLI and in older net8.0 CLIs
+         alike, and `vouchfx providers install` selects net8.0 package assets only.
+         The test project beside it stays on the repository's net10.0 baseline. -->
+    <TargetFramework>$(VouchfxProviderContractTargetFramework)</TargetFramework>
   </PropertyGroup>
 
   <ItemGroup>

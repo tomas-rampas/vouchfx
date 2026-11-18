@@ -830,7 +830,7 @@ public sealed class CacheAssertRedisProvider
         {
             if (i > 0)
                 sb.Append('+');
-            sb.Append(new string('-', widths[i] + 2));
+            sb.Append('-', widths[i] + 2);
         }
         sb.Append('\n');
 

@@ -42,6 +42,10 @@
 //      inside the budget and still produces a body orders of magnitude larger than the
 //      node count suggests.
 //
+// ZEB-67 addition (execution): a body bound from YAML with a merge key and a block scalar
+// still has its placeholder and secret resolved at run time. The bind-level rows for merge
+// keys, block scalars, empty values and tags are in HttpRestBodyYamlSemanticsTests.
+//
 // The in-process responder is an extension of the JSON responder in
 // HttpRestCaptureTests: it ECHOES the inbound request body back as the response
 // body AND records it for direct assertion, so the sent body can be observed
@@ -364,6 +368,76 @@ public sealed class HttpRestBodyTests
         }
     }
 
+    /// <summary>
+    /// ZEB-67: a body bound from YAML with a merge key and a block scalar, both carrying a
+    /// <c>{placeholder}</c> and a <c>${secret:env/...}</c> reference, is resolved at run time
+    /// exactly like any other body string — the YAML conversion happens at bind time, the
+    /// substitution at execution time, and the responder receives the resolved JSON.
+    /// </summary>
+    [Fact]
+    public async Task Execute_MergedAndBlockScalarBody_ResolvesPlaceholderAndSecret_AtRuntime()
+    {
+        var envName = "VOUCHFX_BODY_MERGE_" + Guid.NewGuid().ToString("N");
+        const string secretValue = "merged-s3cr3t";
+
+        Environment.SetEnvironmentVariable(envName, secretValue);
+        var port = FindFreePort();
+        var (baseUrl, responder) = StartEchoResponder(port);
+        try
+        {
+            var model = BindYaml($$"""
+                id: merged-run
+                target: svc
+                method: POST
+                path: /orders
+                shared: &auth
+                  token: "${secret:env/{{envName}}}"
+                  amount: 10
+                body:
+                  <<: *auth
+                  amount: 20
+                  note: |
+                    order {orderId}
+                  done: true
+                """);
+
+            Assert.Equal(
+                "{\"token\":\"${secret:env/" + envName + "}\",\"amount\":20,\"note\":\"order {orderId}\\n\",\"done\":true}",
+                model.Body);
+
+            var provider = new HttpRestProvider();
+            var fragment = provider.Emit(model with { Expect = new HttpExpect(Status: 200) }, new StubCtx("merged-run"));
+            var assembled = CsxAssembler.Assemble(new[] { ("merged-run", fragment) });
+            var compiled = RoslynScriptCompiler.CompileOnce(
+                assembled.CsxSource, additionalReferencePaths: s_refs);
+
+            var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                [VarKeys.Service("svc")] = baseUrl,
+                ["orderId"] = "order-42",
+            };
+            var accessor = new SecretAccessor(
+                new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() }));
+            var globals = new ScriptGlobalVariables(
+                vars,
+                new Dictionary<string, object>(StringComparer.Ordinal),
+                accessor);
+
+            await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+            var outcome = Assert.IsType<StepOutcome>(vars[VarKeys.Outcome(CsxFragment.SanitiseId("merged-run"))]);
+            Assert.Equal(Verdict.Pass, outcome.Verdict);
+            Assert.Equal(
+                "{\"token\":\"" + secretValue + "\",\"amount\":20,\"note\":\"order order-42\\n\",\"done\":true}",
+                responder.LastBody);
+        }
+        finally
+        {
+            responder.Dispose();
+            Environment.SetEnvironmentVariable(envName, null);
+        }
+    }
+
     // ── 5. Execution: missing secret in body → EnvironmentError ───────────────
 
     /// <summary>
@@ -502,12 +576,15 @@ public sealed class HttpRestBodyTests
     }
 
     /// <summary>
-    /// A structured <c>body:</c> nested one level past the depth bound is refused with a
-    /// catchable exception that names the step and the limit.
+    /// A structured <c>body:</c> nested one level past the depth bound is refused with an
+    /// authoring refusal that names the step and the limit.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The document is 65 levels deep, one past the bound.
+    /// The document is 65 levels deep, one past the bound. Bind does not throw: it binds no
+    /// body and carries the refusal in <see cref="HttpRestModel.BodyRefusal"/>, which
+    /// Validate reports, so the engine reports an authoring refusal rather than a provider
+    /// fault (ZEB-67 review).
     /// </para>
     /// <para>
     /// The line/column assertion is here because the message ADVERTISES a position, and an
@@ -515,24 +592,26 @@ public sealed class HttpRestBodyTests
     /// node is the 65th <c>k:</c>'s value — a plain scalar the parser read at one place, so the
     /// mark is meaningful for this shape. It deliberately is not advertised for the node-budget
     /// message, where an alias site carries the anchor's mark instead; see
-    /// <c>HttpRestProvider.DescribeMark</c>.
+    /// <c>HttpRestBodyConversion.DescribeMark</c>.
     /// </para>
     /// </remarks>
     [Fact]
-    public void Bind_StructuredBodyBeyondDepthLimit_ThrowsNamingStepAndLimit()
+    public void Bind_StructuredBodyBeyondDepthLimit_RefusesNamingStepAndLimit()
     {
         var yaml = DeepBodyYaml("deep-body", levels: 65);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => BindYaml(yaml));
+        var model = BindYaml(yaml);
+        Assert.Null(model.Body);
+        var refusal = Assert.IsType<string>(model.BodyRefusal);
 
-        Assert.Contains("step 'deep-body'", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("nests more than 64 levels deep", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("authoring fault", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("step 'deep-body'", refusal, StringComparison.Ordinal);
+        Assert.Contains("nests more than 64 levels deep", refusal, StringComparison.Ordinal);
+        Assert.Contains("authoring fault", refusal, StringComparison.Ordinal);
 
         // DeepBodyYaml writes 4 header lines, then `body:`, then one `k:` per level indented
         // two spaces further each time, then the leaf. The 65th body node is therefore the
         // leaf scalar on line 70, indented 65 * 2 spaces, i.e. 1-based column 131.
-        Assert.Contains("reached at line 70, column 131", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("reached at line 70, column 131", refusal, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -551,7 +630,7 @@ public sealed class HttpRestBodyTests
     /// prevention of an out-of-memory condition.
     /// </remarks>
     [Fact]
-    public void Bind_AliasAmplifiedBody_ThrowsNamingStepAndLimit()
+    public void Bind_AliasAmplifiedBody_RefusesNamingStepAndLimit()
     {
         const string yaml = """
             id: laughing-body
@@ -566,15 +645,17 @@ public sealed class HttpRestBodyTests
               e: [*d, *d, *d, *d, *d, *d, *d, *d, *d, *d]
             """;
 
-        var ex = Assert.Throws<InvalidOperationException>(() => BindYaml(yaml));
+        var model = BindYaml(yaml);
+        Assert.Null(model.Body);
+        var refusal = Assert.IsType<string>(model.BodyRefusal);
 
-        Assert.Contains("step 'laughing-body'", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("expands to more than 50000 JSON nodes", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("authoring fault", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("step 'laughing-body'", refusal, StringComparison.Ordinal);
+        Assert.Contains("expands to more than 50000 JSON nodes", refusal, StringComparison.Ordinal);
+        Assert.Contains("authoring fault", refusal, StringComparison.Ordinal);
 
         // No line/column: the node a budget breach lands on is a SHARED node carrying the
         // anchor's mark, not the alias site's, so the message deliberately advertises none.
-        Assert.DoesNotContain("reached at line", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("reached at line", refusal, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -718,8 +799,8 @@ public sealed class HttpRestBodyTests
         sb.Append("path: /orders\n");
         sb.Append("body:\n");
         for (var i = 0; i < levels - 1; i++)
-            sb.Append(new string(' ', (i + 1) * 2)).Append("k:\n");
-        sb.Append(new string(' ', levels * 2)).Append("leaf\n");
+            sb.Append(' ', (i + 1) * 2).Append("k:\n");
+        sb.Append(' ', levels * 2).Append("leaf\n");
         return sb.ToString();
     }
 

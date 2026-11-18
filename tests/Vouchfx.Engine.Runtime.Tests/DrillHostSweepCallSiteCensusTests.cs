@@ -191,7 +191,7 @@ public sealed class DrillHostSweepCallSiteCensusTests
         var assemblyDirectory = Path.GetDirectoryName(
             typeof(DrillHostSweepCallSiteCensusTests).Assembly.Location)!;
 
-        // bin/<cfg>/net8.0 -> the project directory.
+        // bin/<cfg>/net10.0 -> the project directory.
         return Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", ".."));
     }
 

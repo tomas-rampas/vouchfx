@@ -8,7 +8,7 @@ vouchfx providers emit source fragments that the engine compiles into the suite.
 
 ### Getting Started
 
-**Install the Provider SDK.** Reference the [`Vouchfx.Sdk`](https://www.nuget.org/packages/Vouchfx.Sdk) NuGet package in your project. This package is the frozen v1 contract — all interfaces and types you need to implement. Stable SDK packages are published on NuGet.org; the snippets below use the `1.0.0` provider-contract baseline.
+**Install the Provider SDK.** Reference the [`Vouchfx.Sdk`](https://www.nuget.org/packages/Vouchfx.Sdk) NuGet package in a class library that targets `net8.0`, the frozen contract target framework (a new project defaults to the SDK's own target framework, so set it explicitly; `vouchfx providers install` selects `net8.0`-compatible assets (a `net10.0`-only package is refused), and a `net8.0` provider loads into the .NET 10 CLI). This package is the frozen v1 contract — all interfaces and types you need to implement. Stable SDK packages are published on NuGet.org; the snippets below use the `1.0.0` provider-contract baseline.
 
 ```xml
 <PackageReference Include="Vouchfx.Sdk" Version="1.0.0" />
@@ -66,7 +66,7 @@ The reflective `StepKindRegistry` discovers your provider at suite startup by sc
 
 ### The Hard Rules: CsxFragment Composition (§13.3.1 of the Blueprint)
 
-When your `IStepCompiler<TModel>` emits a `CsxFragment`, three strict rules prevent collisions between providers and keep the memory model sound:
+When your `IStepCompiler<TModel>` emits a `CsxFragment`, five strict rules prevent collisions between providers and keep the memory model sound:
 
 **1. Three fields only.**
 

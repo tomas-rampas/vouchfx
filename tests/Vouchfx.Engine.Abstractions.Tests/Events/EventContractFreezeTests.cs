@@ -1446,11 +1446,19 @@ public sealed partial class EventContractFreezeTests
 
     /// <summary>
     /// Pins the MAJOR version of the central <c>System.Text.Json</c> <c>PackageVersion</c> in
-    /// <c>Directory.Packages.props</c> — the version the CLI ships, through central transitive
-    /// pinning — at 10, the major the file header's MEASURED facts were re-checked against
-    /// (running this file with the package referenced from the test project). A bump of that
-    /// line to a new major fails this test, so the notes are re-measured on the version that
-    /// actually ships rather than left describing an older one.
+    /// <c>Directory.Packages.props</c> at 10, the major the file header's MEASURED facts were
+    /// re-checked against. Since the net10.0 move the pin resolves in no project: NuGet prunes
+    /// a transitive <c>System.Text.Json</c> edge that the shared framework's version satisfies,
+    /// and every <c>System.Text.Json</c> edge in this solution is one, so the CLI serialises with the framework's
+    /// 10.x assembly (measured with SDK 10.0.115, with the pin at 10.0.15 and at 11.0.0). An
+    /// edge that requires 11.x or later is not pruned. The hazard a new major brings is
+    /// twofold. A net10.0 project that references the package directly (NuGet refuses a direct
+    /// 10.x reference it would prune with NU1510, but not an 11.x one) takes 11.x and ships it
+    /// beside the application, replacing the framework serializer (measured on a scratch
+    /// net10.0 app with 11.0.0). A net8.0 library that gains it transitively takes 11.x's
+    /// netstandard2.0 asset, which is unsupported on net8.0 (measured with SDK 10.0.115). A bump
+    /// of that line to a new major therefore fails this test, so the notes are re-measured
+    /// before a newer serializer can reach the event wire.
     /// </summary>
     [Fact]
     public void CentralSystemTextJsonPackageVersion_IsTheMajorTheNotesWereCheckedAgainst()
@@ -1470,10 +1478,12 @@ public sealed partial class EventContractFreezeTests
             $"Directory.Packages.props: the System.Text.Json PackageVersion '{versionText}' is not a plain version.");
         Assert.True(
             version!.Major == 10,
-            $"The central System.Text.Json PackageVersion moved to {versionText}; the CLI ships that "
-            + "version. Re-measure MEASURED (a)-(k) in EventContractFreezeTests' file header on it "
-            + "(this test project references the same central package), "
-            + "update any note that no longer holds, then update this pin.");
+            $"The central System.Text.Json PackageVersion moved to {versionText}. Above 10.x, a "
+            + "net10.0 project that references the package directly takes that version and ships "
+            + "it beside the application, replacing the framework serializer; a net8.0 library "
+            + "that gains it transitively takes its netstandard2.0 asset, unsupported on net8.0. Re-measure "
+            + "MEASURED (a)-(k) in EventContractFreezeTests' file header on it, update any note that "
+            + "no longer holds, then update this pin.");
     }
 
     /// <summary>

@@ -14,7 +14,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>vouchfx</AssemblyName>
     <RootNamespace>Vouchfx.Cli</RootNamespace>
     <!-- Mark this project as an Aspire host so the AppHost build targets embed the
@@ -26,7 +26,8 @@
     <SkipAddAspireDefaultReferences>true</SkipAddAspireDefaultReferences>
   </PropertyGroup>
 
-  <!-- Framework-dependent .NET 8 tool, including full version-matched DCP tools for
+  <!-- Framework-dependent .NET 10 tool (RollForward=Major from Directory.Build.props lets it
+       run on a newer major runtime, never an older one), including full version-matched DCP tools for
        every advertised RID. RID-specific archives include only their own DCP tree.
        No source checkout or pre-existing Aspire restore is an installation prerequisite.
        See Vouchfx.Dcp.targets, Vouchfx.DcpBundle.targets and
@@ -37,13 +38,13 @@
     <ToolCommandName>vouchfx</ToolCommandName>
     <!-- The Aspire.AppHost.Sdk sets IsPublishable=false (aspire/issues/147) to suppress
          `dotnet publish` on AppHost projects. PackAsTool however depends on the Publish
-         step to collect DLLs into tools/net8.0/any/. We explicitly re-enable IsPublishable
+         step to collect DLLs into tools/net10.0/any/. We explicitly re-enable IsPublishable
          here so that `dotnet pack` runs the publish pipeline and the tool nupkg contains
          all dependency DLLs — not just the DotnetToolSettings.xml skeleton. -->
     <IsPublishable>true</IsPublishable>
     <!-- NO XML DOC FILES IN THE TOOL PACKAGE. The repo-wide doc-comment gate (#490) sets
          GenerateDocumentationFile=true for every project, and PackAsTool packs the PUBLISH
-         output, so every reachable assembly's .xml was being shipped inside tools/net8.0/any —
+         output, so every reachable assembly's .xml was being shipped inside tools/net10.0/any —
          three megabytes of internal engineering prose, including doc comments on PRIVATE
          members. Nothing consumes it: this package is an executable, not a library, and no one
          compiles against the DLLs inside a dotnet tool.
@@ -64,7 +65,7 @@
     <VersionSuffix>0.local</VersionSuffix>
     <Authors>vouchfx</Authors>
     <Company>vouchfx</Company>
-    <Description>End-to-end integration testing for distributed .NET systems, authored in declarative .e2e.yaml. vouchfx compiles YAML to memory-safe C# via Roslyn, orchestrates the required container topology with .NET Aspire + Testcontainers, and verifies one business transaction across HTTP (REST/SOAP), databases (PostgreSQL, MySQL, SQL Server, MongoDB, DynamoDB), message brokers (Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams), cache/search (Redis, Elasticsearch), S3 object storage, Prometheus metrics, OTLP distributed traces, SMTP capture, webhooks and inline C# — twenty-five providers across eleven step families, with engine-owned RETRY polling, execution-time secret resolution with at-source redaction, and a four-verdict taxonomy where only Fail breaks CI by default.</Description>
+    <Description>End-to-end integration testing for distributed .NET systems, authored in declarative .e2e.yaml. vouchfx compiles YAML to memory-safe C# via Roslyn, orchestrates the required container topology with .NET Aspire, and verifies one business transaction across HTTP (REST/SOAP), databases (PostgreSQL, MySQL, SQL Server, MongoDB, DynamoDB), message brokers (Kafka, RabbitMQ, NATS, Azure Service Bus, Redis Streams), cache/search (Redis, Elasticsearch), S3 object storage, Prometheus metrics, OTLP distributed traces, SMTP capture, webhooks and inline C# — twenty-five providers across eleven step families, with engine-owned RETRY polling, execution-time secret resolution with at-source redaction, and a four-verdict taxonomy where only Fail breaks CI by default.</Description>
     <PackageReadmeFile>PACKAGE_README.md</PackageReadmeFile>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/tomas-rampas/vouchfx</RepositoryUrl>
@@ -105,11 +106,11 @@
          not orchestrated services that Aspire should treat as project resources. -->
     <ProjectReference Include="..\..\Engine\Vouchfx.Engine.Runtime\Vouchfx.Engine.Runtime.csproj"
                       IsAspireProjectResource="false" />
-    <!-- Opt-in, privacy-first telemetry (S10-G-04). A plain net8.0 library; no Aspire. -->
+    <!-- Opt-in, privacy-first telemetry (S10-G-04). A plain library; no Aspire. -->
     <ProjectReference Include="..\..\Engine\Vouchfx.Engine.Telemetry\Vouchfx.Engine.Telemetry.csproj"
                       IsAspireProjectResource="false" />
     <!-- M3 Planner (planner-coverage-and-gap-report): read-only coverage-and-gap analysis.
-         A plain net8.0 library; no Aspire, no topology. -->
+         A plain library; no Aspire, no topology. -->
     <ProjectReference Include="..\..\Engine\Vouchfx.Engine.Planning\Vouchfx.Engine.Planning.csproj"
                       IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\Providers\Core\Vouchfx.Steps.Core.HttpRest\Vouchfx.Steps.Core.HttpRest.csproj"

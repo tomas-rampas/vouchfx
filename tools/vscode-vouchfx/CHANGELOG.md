@@ -8,7 +8,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **REQ-009 live engine schema** — on activation the extension prefers
+- **Live engine schema** — on activation the extension prefers
   `vouchfx schema` / bar-B `vouchfx list --json` via `vouchfx.cliPath`, with
   documented fallbacks to `vouchfx.schemaPath` then the version-checked bundled
   offline schema. Source choice is logged on the **vouchfx** Output channel.
@@ -38,7 +38,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the bundled schema, kept in sync with the engine by the same byte-for-byte CI
   gate. An example fixture (`examples/script-csharp-external-file.e2e.yaml`) is
   included alongside its referenced `.csx` file.
-- **S11-D-01 reference fixture** (`src/test/fixtures/reference-four-tech.e2e.yaml`):
+- **Reference fixture** (`src/test/fixtures/reference-four-tech.e2e.yaml`):
   a faithful mirror of the canonical four-technology reference scenario
   (`examples/reference/reference.e2e.yaml`) used by the editor-surface tests.
   Ten `node:test` assertions in `src/test/referenceFourTech.test.ts` verify that

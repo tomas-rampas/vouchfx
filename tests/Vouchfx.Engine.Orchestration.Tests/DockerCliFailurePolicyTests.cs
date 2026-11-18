@@ -452,7 +452,7 @@ public sealed class DockerCliFailurePolicyTests
         var assemblyDirectory = Path.GetDirectoryName(
             typeof(DockerCliFailurePolicyTests).Assembly.Location)!;
 
-        // bin/<cfg>/net8.0 -> the project directory.
+        // bin/<cfg>/net10.0 -> the project directory.
         return Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", ".."));
     }
 

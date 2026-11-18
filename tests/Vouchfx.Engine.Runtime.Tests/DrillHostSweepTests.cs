@@ -74,7 +74,7 @@ public sealed class DrillHostSweepTests : IDisposable
         var killed = new List<int>();
         var candidate = Candidate(
             4242,
-            Path.Combine(s_root, "Release", "net8.0", "vouchfx.dll"));
+            Path.Combine(s_root, "Release", "net10.0", "vouchfx.dll"));
 
         var report = DrillHostSweep.Sweep(
             new[] { candidate }, s_root, selfPid: 1, RecordingKill(killed));
@@ -96,7 +96,7 @@ public sealed class DrillHostSweepTests : IDisposable
         var killed = new List<int>();
 
         DrillHostSweep.Sweep(
-            new[] { Candidate(7, Path.Combine(s_root, "Debug", "net8.0", "vouchfx.dll")) },
+            new[] { Candidate(7, Path.Combine(s_root, "Debug", "net10.0", "vouchfx.dll")) },
             s_root,
             selfPid: 1,
             RecordingKill(killed));
@@ -117,7 +117,7 @@ public sealed class DrillHostSweepTests : IDisposable
             9,
             Path.Combine(Path.GetTempPath(), "dotnet", "dotnet.exe"),
             Path.Combine(Path.GetTempPath(), "dotnet", "shared", "System.Private.CoreLib.dll"),
-            Path.Combine(s_root, "Release", "net8.0", "Vouchfx.Engine.Runtime.dll"));
+            Path.Combine(s_root, "Release", "net10.0", "Vouchfx.Engine.Runtime.dll"));
 
         DrillHostSweep.Sweep(new[] { candidate }, s_root, selfPid: 1, RecordingKill(killed));
 
@@ -153,7 +153,7 @@ public sealed class DrillHostSweepTests : IDisposable
         var sibling = s_root + "-scratch";
 
         DrillHostSweep.Sweep(
-            new[] { Candidate(13, Path.Combine(sibling, "net8.0", "vouchfx.dll")) },
+            new[] { Candidate(13, Path.Combine(sibling, "net10.0", "vouchfx.dll")) },
             s_root,
             selfPid: 1,
             RecordingKill(killed));
@@ -170,7 +170,7 @@ public sealed class DrillHostSweepTests : IDisposable
     {
         var killed = new List<int>();
         var candidate = Candidate(
-            99, Path.Combine(s_root, "Release", "net8.0", "vouchfx.dll"));
+            99, Path.Combine(s_root, "Release", "net10.0", "vouchfx.dll"));
 
         var report = DrillHostSweep.Sweep(
             new[] { candidate }, s_root, selfPid: 99, RecordingKill(killed));
@@ -204,7 +204,7 @@ public sealed class DrillHostSweepTests : IDisposable
     public void Sweep_ReportsAnOrphanThatSurvivedTheKillAsUnkillable()
     {
         var report = DrillHostSweep.Sweep(
-            new[] { Candidate(31, Path.Combine(s_root, "Release", "net8.0", "vouchfx.dll")) },
+            new[] { Candidate(31, Path.Combine(s_root, "Release", "net10.0", "vouchfx.dll")) },
             s_root,
             selfPid: 1,
             _ => KillOutcome.Failed("still running 10s after the kill"));
@@ -371,7 +371,7 @@ public sealed class DrillHostSweepTests : IDisposable
     }
 
     [Theory]
-    [InlineData("Release/net8.0/vouchfx.dll", true)]
+    [InlineData("Release/net10.0/vouchfx.dll", true)]
     [InlineData("vouchfx.dll", true)]
     [InlineData("../vouchfx.dll", false)]
     [InlineData("../obj/vouchfx.dll", false)]
@@ -422,7 +422,7 @@ public sealed class DrillHostSweepTests : IDisposable
     public void Sweep_ReportsAReusedPidAsASkipRatherThanAFailure()
     {
         var report = DrillHostSweep.Sweep(
-            new[] { Candidate(41, Path.Combine(s_root, "Release", "net8.0", "vouchfx.dll")) },
+            new[] { Candidate(41, Path.Combine(s_root, "Release", "net10.0", "vouchfx.dll")) },
             s_root,
             selfPid: 1,
             _ => KillOutcome.NotTheSameProcess("the pid now denotes a DIFFERENT process"));
@@ -444,7 +444,7 @@ public sealed class DrillHostSweepTests : IDisposable
     public void Sweep_SaysSoWhenAConfirmedKillLeftDescendantsBehind()
     {
         var report = DrillHostSweep.Sweep(
-            new[] { Candidate(61, Path.Combine(s_root, "Release", "net8.0", "vouchfx.dll")) },
+            new[] { Candidate(61, Path.Combine(s_root, "Release", "net10.0", "vouchfx.dll")) },
             s_root,
             selfPid: 1,
             _ => KillOutcome.ConfirmedWithSurvivingDescendants);
@@ -460,7 +460,7 @@ public sealed class DrillHostSweepTests : IDisposable
     public void Sweep_AddsNoCaveatClauseToACleanKill()
     {
         var report = DrillHostSweep.Sweep(
-            new[] { Candidate(63, Path.Combine(s_root, "Release", "net8.0", "vouchfx.dll")) },
+            new[] { Candidate(63, Path.Combine(s_root, "Release", "net10.0", "vouchfx.dll")) },
             s_root,
             selfPid: 1,
             _ => KillOutcome.Confirmed);
@@ -481,7 +481,7 @@ public sealed class DrillHostSweepTests : IDisposable
         var candidate = new HostCandidate(
             43,
             "dotnet",
-            new[] { Path.Combine(s_root, "Release", "net8.0", "vouchfx.dll") },
+            new[] { Path.Combine(s_root, "Release", "net10.0", "vouchfx.dll") },
             InspectionFailure: null,
             StartTime: started);
 

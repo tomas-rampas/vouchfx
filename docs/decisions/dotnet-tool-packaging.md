@@ -4,6 +4,17 @@
 
 **Updated:** 2026-10-25. Original tool decision: 2026-06-25.
 
+> **Superseded in part, 2026-11-15 (the `net10.0` move).** The target framework below is
+> historical. Current source builds the global tool and self-contained distributions for
+> `net10.0`; major roll-forward now lets the tool run on a newer major runtime when .NET 10 is
+> absent, never on .NET 8 or 9. The provider-contract libraries keep `net8.0` for the v1.x series.
+> Releases published before the move remain `net8.0` tools. The choice of a framework-dependent
+> `PackAsTool` global tool alongside self-contained archives, without single-file publishing, is
+> unchanged. The text below is kept as recorded. The same applies to the Aspire version and the
+> `dcp/13.4.2/<rid>/tools/` path it names: they describe the build as decided (up to v1.2.1). The
+> bundled version is whichever Aspire release `Directory.Packages.props` pins, and the directory is
+> `dcp/<aspire-version>/<rid>/tools/`.
+
 ## Problem and evidence
 
 Aspire 13.4.2 embeds absolute build-cache DCP paths in AppHost metadata. A tool installed on a

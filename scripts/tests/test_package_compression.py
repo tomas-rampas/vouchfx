@@ -63,10 +63,10 @@ class PackageCompressionTests(unittest.TestCase):
     def test_all_payload_and_metadata_survive_and_repeated_pack_is_stable(self):
         self.write([
             self.entry("tool.nuspec", b"<package/>"),
-            self.entry("tools/net8.0/any/dcp/linux-x64/tools/dcp", bytes(range(256)) * 4096, 0o755),
-            self.entry("tools/net8.0/any/dcp/linux-x64/tools/NOTICE", b"licence and notices\x00" * 4096),
-            self.entry("tools/net8.0/any/empty/", b"", 0o755),
-            self.entry("tools/net8.0/any/\u017elu\u0165ou\u010dk\u00fd.txt", b"Unicode file name"),
+            self.entry("tools/net10.0/any/dcp/linux-x64/tools/dcp", bytes(range(256)) * 4096, 0o755),
+            self.entry("tools/net10.0/any/dcp/linux-x64/tools/NOTICE", b"licence and notices\x00" * 4096),
+            self.entry("tools/net10.0/any/empty/", b"", 0o755),
+            self.entry("tools/net10.0/any/\u017elu\u0165ou\u010dk\u00fd.txt", b"Unicode file name"),
         ])
         before = self.snapshot()
         original_size = self.package.stat().st_size

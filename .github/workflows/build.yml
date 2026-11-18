@@ -16,8 +16,9 @@
 #               client closure (Npgsql, Confluent.Kafka, MongoDB.Driver,
 #               StackExchange.Redis, HttpClient).  Docker-independent — the
 #               closure script touches client types in-memory only, never
-#               connects.  Also scheduled daily for 06:17 UTC to catch
-#               regressions introduced by dependency upgrades between pushes.
+#               connects.  Runs on every pull request and push, and also on the daily
+#               06:17 UTC schedule to catch regressions introduced by dependency
+#               upgrades between pushes.
 #               Exit non-zero iff NetDelta > threshold-bytes (2 MB) or context
 #               not reclaimed; a failure here blocks merge.
 #
@@ -33,12 +34,23 @@
 #  docs-build   Blocking documentation build and publication gate on every PR.
 #               Uses the Pages build inputs without publishing or dispatching.
 #
+#  tls-transport / tls-transport-gate
+#               Blocking: the reusable TLS transport acceptance workflow on
+#               Windows and Linux; the gate job requires both hosted platforms.
+#
 #  workflow-contract Blocking workflow lint and actual Docker pre-pull regressions.
 #               Uses fixture commands only; it never pulls or starts containers.
 #
-#  analyser-forward Advisory, non-blocking rebuild with .NET 10's recommended
-#               analysers.  Runs outside the checkout so global.json's .NET 8
-#               SDK pin cannot hide rules added in later SDKs.
+#  vscode-extension Non-blocking (continue-on-error): builds, lints, tests and
+#               packages the VS Code extension.
+#
+#  site-tools-tests Blocking Python regression tests for scripts/site-tools,
+#               the shared static-site package the satellite repositories use.
+#
+#  analyser-forward Advisory, non-blocking rebuild with the next major SDK's
+#               (.NET 11) recommended analysers.  Runs outside the checkout so
+#               global.json's .NET 10 SDK pin cannot hide rules added in later
+#               SDKs.
 #
 #  vuln-scan    ADVISORY, NON-BLOCKING dependency-vulnerability scan
 #               (continue-on-error: true).  Surfaces known-vulnerable
@@ -156,18 +168,24 @@ jobs:
   build:
     name: Build & unit tests
     runs-on: ubuntu-latest
+    # The job is green in about 15 minutes. The ZEB-49 failures were the hosted runner
+    # losing communication mid-test (runs 43707738732, 44070514767), which leaves no log.
+    # This bound ends a stuck job sooner; it does not preserve the log once the runner is
+    # starved: the compatibility job hit its 30-minute bound in the same step on
+    # 15 November 2026 (runs 43735628400, 43758635481) and has no log either.
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Install the .NET 8 SDK.  The version spec "8.0.x" satisfies global.json
-      # (sdk.version = "8.0.424", rollForward = latestFeature) — the setup
-      # action will resolve the latest 8.0 feature band available on the runner.
-      - name: Set up .NET 8 SDK
+      # Install the .NET 10 SDK.  The version spec "10.0.x" satisfies global.json
+      # (sdk.version = "10.0.100", rollForward = latestFeature) — the setup
+      # action will resolve the latest 10.0 feature band available on the runner.
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       # Restore NuGet packages using the lock file if present; otherwise resolve
       # centrally-managed versions from Directory.Packages.props.
@@ -264,6 +282,12 @@ jobs:
       # paragraph stops being true and the flag should be reconsidered with it.
       # Bound cross-project contention while preserving every existing test and timeout.
       # Per-project xUnit scheduling and exclusive certificate guards remain unchanged.
+      #
+      # --blame-hang makes the test host name a test that runs longer than 10 minutes and
+      # then terminates it, instead of the job going silent. A hang on 17 November 2026
+      # left no log and no test name (ZEB-49). No non-Docker test legitimately runs that
+      # long, and --blame-hang-dump-type none records the test name in Sequence_*.xml
+      # under TestResults/ without writing a dump.
       - name: Unit tests (requires!=docker)
         run: >
           dotnet test vouchfx.sln
@@ -272,6 +296,9 @@ jobs:
           --no-build
           --filter "requires!=docker"
           --collect:"XPlat Code Coverage"
+          --blame-hang
+          --blame-hang-timeout 10m
+          --blame-hang-dump-type none
           --results-directory TestResults
 
       - name: Verify tracked checkout is unchanged after tests
@@ -296,9 +323,11 @@ jobs:
 
   # Rebuild every project with the newer SDK's recommended analyser set. An
   # incremental build can skip already-built projects and miss violations.
-  # This is advisory while the repository's supported SDK remains .NET 8.
+  # This is advisory: the repository's supported SDK is .NET 10, and this job
+  # looks one major ahead. (With the target itself on net10.0, a .NET 10 forward
+  # job would only repeat the build job.)
   analyser-forward:
-    name: Analyser forward (.NET 10, non-blocking)
+    name: Analyser forward (.NET 11, non-blocking)
     runs-on: ubuntu-latest
     continue-on-error: true
 
@@ -306,29 +335,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up .NET 10 SDK
+      - name: Set up .NET 11 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: "11.0.x"
 
       - name: Rebuild solution with forward analysers
         working-directory: ${{ runner.temp }}
         run: |
           # The hosted image carries several SDKs and the muxer picks the newest
-          # one when no global.json is in scope, so a newer major (.NET 11) would
-          # beat the 10.0 SDK installed above.  The muxer resolves global.json by
-          # walking up from the working directory, not from the solution, so a
-          # pin written into a scratch directory outside the checkout governs
-          # both the version check and the build while the repository's own
-          # .NET 8 pin stays out of the way.  latestFeature rolls only within
-          # 10.0, so it takes the newest installed 10.0.x and fails closed if
-          # none exists instead of drifting to another major.
+          # one when no global.json is in scope, so a newer major (.NET 12)
+          # would beat the 11.0 SDK installed above.  The muxer resolves
+          # global.json by walking up from the working directory, not from the
+          # solution, so a pin written into a scratch directory outside the
+          # checkout governs both the version check and the build while the
+          # repository's own .NET 10 pin stays out of the way.  latestFeature
+          # rolls only within 11.0, so it takes the newest installed 11.0.x and
+          # fails closed if none exists instead of drifting to another major.
           mkdir -p analyser-forward
           cd analyser-forward
-          printf '%s\n' '{"sdk":{"version":"10.0.100","rollForward":"latestFeature"}}' > global.json
+          printf '%s\n' '{"sdk":{"version":"11.0.100","rollForward":"latestFeature"}}' > global.json
           sdk_version="$(dotnet --version)"
           echo "Forward analyser SDK: $sdk_version"
-          [[ "$sdk_version" == 10.* ]]
+          [[ "$sdk_version" == 11.* ]]
           dotnet build "$GITHUB_WORKSPACE/vouchfx.sln" -c Release -t:Rebuild -warnaserror
 
   windows-unit:
@@ -342,10 +371,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up .NET 8 SDK
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Restore dependencies
         run: dotnet restore vouchfx.sln
@@ -396,10 +425,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up .NET 8 SDK
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Restore dependencies
         run: dotnet restore vouchfx.sln
@@ -411,8 +440,8 @@ jobs:
       # --mode closure  exercises the full Core-provider client type closure
       #                 (Npgsql, Confluent.Kafka, MongoDB.Driver,
       #                  StackExchange.Redis, HttpClient) — no live connections.
-      # --iterations 5000  is the calibrated run length (verified locally:
-      #                    NetDelta ≈ 1.7 KB against a 2 MB threshold, ≈1000× headroom).
+      # --iterations 5000  is the calibrated run length (NetDelta stays far below the
+      #                    2 MB threshold; see docs/memory-harness.md for a dated run).
       # --threshold-bytes 2000000  (2 MB) is the M1 permanent threshold.
       # Exit 0 iff Passed && ContextReclaimed; any non-zero exit fails the pipeline.
       - name: Run memory-leak harness (closure, 5 000 iterations, 2 MB threshold)
@@ -425,7 +454,7 @@ jobs:
 
   # ── Docker / Aspire integration — topology and provider tests ───────────────────
   # ubuntu-22.04 runners include Docker Engine, which is required for the
-  # Aspire topology (Testcontainers, §4).  Tests decorated with
+  # Aspire topology (§4).  Tests decorated with
   # [Trait("requires","docker")] run here after the `build` job. This job no
   # longer runs on pull requests or pushes: it runs daily on main via the schedule
   # and on demand via workflow_dispatch on any branch (Actions tab -> CI -> Run
@@ -448,10 +477,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up .NET 8 SDK
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Set up Python for capture collection
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -1330,7 +1359,7 @@ jobs:
       #     a row owns no named resource, prove the property in-process instead.
       #   • -m:1 below serialises solution test projects across assemblies (#525).
       #     scripts/ci/probe_docker_serialization.py measures this with two real
-      #     .NET 8 test hosts and an overlapping control; it is not hosted Docker proof.
+      #     .NET 10 test hosts and an overlapping control; it is not hosted Docker proof.
       # (The Sprint08 parallel capstone intentionally runs two topologies at once
       # via the engine's own ParallelSuiteRunner — unaffected by, and orthogonal
       # to, xUnit/VSTest scheduling.)
@@ -1376,7 +1405,7 @@ jobs:
         run: |
           python -B scripts/assert-owned-environment-acceptance.py --prepare \
             --directory "$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS" \
-            --cli src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll \
+            --cli src/Cli/Vouchfx.Cli/bin/Release/net10.0/vouchfx.dll \
             --checkout-sha "$(git rev-parse HEAD)" --head-sha "$VOUCHFX_TOPOLOGY_PR_HEAD_SHA"
           echo "VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS=$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS" >> "$GITHUB_ENV"
 
@@ -1409,7 +1438,7 @@ jobs:
         run: |
           python -B scripts/assert-owned-environment-acceptance.py \
             --directory "$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS" \
-            --cli src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll
+            --cli src/Cli/Vouchfx.Cli/bin/Release/net10.0/vouchfx.dll
 
       - name: Upload first-attempt owned topology evidence
         if: always() && steps.topology-evidence-preparation.outcome == 'success'
@@ -1490,17 +1519,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up .NET 8 SDK
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Restore dependencies
         run: dotnet restore vouchfx.sln
 
       # Scan the whole solution's transitive graph for packages with a known
       # advisory.  --include-transitive surfaces the indirect footprint (the
-      # bulk of the CVE surface flows through Aspire/Testcontainers deps).
+      # bulk of the CVE surface flows through the Aspire deps).
       # The command prints flagged packages, severities and advisory URLs to
       # the Actions log; it exits 0 regardless of findings, so combined with
       # continue-on-error this step is purely informational.
@@ -1707,10 +1736,10 @@ jobs:
           name: coverage
           path: TestResults
 
-      - name: Set up .NET 8 SDK
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       # Exact-version pin per repo convention for third-party tooling.  The
       # global-tool shim lands under ~/.dotnet/tools, which is NOT guaranteed

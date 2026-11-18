@@ -9,7 +9,7 @@ to *author and run* `.e2e.yaml` suites, install the [`vouchfx`](https://www.nuge
 CLI tool instead — `Vouchfx.Sdk` is for provider authors, not test authors.
 
 vouchfx compiles declarative `.e2e.yaml` integration tests into C#, runs them through
-Roslyn, and orchestrates the required container topology with .NET Aspire + Testcontainers
+Roslyn, and orchestrates the required container topology with .NET Aspire
 to test **distributed .NET systems end-to-end** — one business transaction crossing a REST
 call, a Kafka event, a DB mutation and an outbound webhook.
 
@@ -18,7 +18,9 @@ call, a Kafka event, a DB mutation and an outbound webhook.
 A step provider is a **compile-time, source-level plugin**. The CLI supports trusted external
 provider directory loading before registry freeze, alongside bundled project references.
 Provider code executes in the default assembly context without sandboxing. You add a project, reference `Vouchfx.Sdk`,
-implement the contract interfaces, and mark your provider class `[StepProvider]`; the
+implement the contract interfaces, and mark your provider class `[StepProvider]`. Target
+`net8.0`, the frozen contract target framework: `vouchfx providers install` selects
+`net8.0`-compatible assets (a `net10.0`-only package is refused), and a `net8.0` provider loads into the current .NET 10 CLI. The
 engine's reflective `StepKindRegistry` (frozen at startup) discovers it.
 
 The contract surface exposed by this package:

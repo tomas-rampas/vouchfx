@@ -10,7 +10,7 @@ vouchfx is a coordinated ecosystem of five repositories, each with an associated
 |---|---|---|---|
 | **vouchfx** (main) | The engine: compiler, orchestration, CLI, provider SDK, core providers, and documentation | [https://vouchfx.io/](https://vouchfx.io/) | [github.com/tomas-rampas/vouchfx](https://github.com/tomas-rampas/vouchfx) |
 | **vouchfx-providers** | Community provider hub: registry, Vouched badge, conformance testing, examples | [https://providers.vouchfx.io/](https://providers.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-providers](https://github.com/tomas-rampas/vouchfx-providers) |
-| **vouchfx-samples** | Four production-grade sample applications with complete test suites in C#, Python, Node.js and Java, plus worked migration examples (Postman, xUnit, SpecFlow) | [https://samples.vouchfx.io/](https://samples.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) |
+| **vouchfx-samples** | Four production-grade sample applications with complete test suites in C#, Python, Node.js and Java, a Compose variant and a Kafka mutual-TLS suite, plus worked migration examples (Postman, xUnit, SpecFlow) | [https://samples.vouchfx.io/](https://samples.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) |
 | **vouchfx-telemetry-backend** | Opt-in telemetry backend: schema, deployment, verification, self-hosting guide | [https://telemetry.vouchfx.io/](https://telemetry.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-telemetry-backend](https://github.com/tomas-rampas/vouchfx-telemetry-backend) |
 | **vouchfx-mcp** | Model Context Protocol (MCP) server for AI-assisted test authoring: schema validation, step-type catalogue lookup, suite execution, and event-stream diagnostics | [https://vouchfx-mcp.vouchfx.io/](https://vouchfx-mcp.vouchfx.io/) | [github.com/tomas-rampas/vouchfx-mcp](https://github.com/tomas-rampas/vouchfx-mcp) |
 
@@ -18,7 +18,7 @@ vouchfx is a coordinated ecosystem of five repositories, each with an associated
 
 **The main repository** — where the platform lives.
 
-The engine comprises the YAML→AST→C#→Roslyn compiler, the Aspire/Testcontainers orchestration layer, the five-layer architecture, twenty-five Core providers across eleven families (HTTP, databases, message publishing and consumption, caches, storage, metrics, traces, mail, webhooks, scripts), the CLI, and the full set of design documentation.
+The engine comprises the YAML→AST→C#→Roslyn compiler, the Aspire orchestration layer, the five-layer architecture, twenty-five Core providers across eleven families (HTTP, databases, message publishing and consumption, caches, storage, metrics, traces, mail, webhooks, scripts), the CLI, and the full set of design documentation.
 
 **Start here:**
 - **[Getting started](getting-started.md)** — 60-minute path to your first PASS
@@ -39,7 +39,7 @@ Two governance tiers (Core and Community) plus the maintainer-awarded Vouched ba
 
 ## Sample applications
 
-**Four production-grade services to learn from and fork.**
+**Four production-grade services to learn from and fork, plus a Compose variant and a Kafka mutual-TLS suite.**
 
 Real microservices in C#, Python, Node.js and Java with complete end-to-end test suites demonstrating vouchfx patterns across multiple providers and technologies. Clone, run one command, see a complete suite execute.
 

@@ -2,7 +2,7 @@
 
 Use your own Compose project with existing vouchfx assertions. Select a registered environment driver in the suite; the adapter owns its separate configuration grammar. Omitting `source` retains inline provisioning. Core `1.0.0` introduced Compose support through the engine's binding/ready-lease boundary. That contract is format-neutral; other external formats require a registered driver implementation without changing step providers.
 
-Install the latest stable CLI with the .NET 8 SDK and verify the native Docker Compose plugin:
+Install the latest stable CLI with a .NET SDK it supports and verify the native Docker Compose plugin:
 
 ```sh
 dotnet tool install --global vouchfx
@@ -16,7 +16,7 @@ For contributor work on unreleased source, build and select that checkout's DLL 
 
 ```sh
 dotnet build src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release -warnaserror
-dotnet src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll --version
+dotnet src/Cli/Vouchfx.Cli/bin/Release/net10.0/vouchfx.dll --version
 ```
 
 ```yaml

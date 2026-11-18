@@ -221,7 +221,7 @@ public sealed class ListenerTlsHandshakeTests
             using var pem = X509Certificate2.CreateFromPemFile(
                 Path.Combine(clientBed.SuiteDirectory, "client.pem"),
                 Path.Combine(clientBed.SuiteDirectory, "client-key.pem"));
-            handler.ClientCertificates.Add(new X509Certificate2(pem.Export(X509ContentType.Pkcs12)));
+            handler.ClientCertificates.Add(X509CertificateLoader.LoadPkcs12(pem.Export(X509ContentType.Pkcs12), password: null));
         }
 
         return new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };

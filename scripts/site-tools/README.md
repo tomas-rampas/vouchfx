@@ -44,8 +44,8 @@ SEO files — though any hand-authored companions under `site/` (including a
 always have. When both exist, the generated files win (they are written
 after the companion copy).
 
-Two further optional parameters were added for the fleet-wide SEO audit
-(specs/seo-fleet-audit.md); both are additive — a consuming repo that
+Two further optional parameters were added for a fleet-wide SEO audit;
+both are additive — a consuming repo that
 leaves them unset gets byte-identical output to today.
 
 `semantic_headings` (default `False`) controls two independent things
@@ -310,8 +310,7 @@ placeholders are generated and passed to templates.
 
 A companion suite at
 `scripts/site-tools/tests/test_semantic_headings_and_llms_txt.py` locks the
-additive `SiteConfig.semantic_headings` and `SiteConfig.llms_summary` contracts
-(specs/seo-fleet-audit.md): both new fields unset produces a byte-identical
+additive `SiteConfig.semantic_headings` and `SiteConfig.llms_summary` contracts: both new fields unset produces a byte-identical
 tree to omitting them entirely (no `llms.txt`, sidebar group labels still
 `<h4>`); `semantic_headings=True` yields exactly one `<h1>` per rendered
 page and zero `<h4>` sidebar group labels; `llms.txt` follows the

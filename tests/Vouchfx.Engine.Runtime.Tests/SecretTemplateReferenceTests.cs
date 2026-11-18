@@ -229,29 +229,130 @@ public sealed class SecretTemplateReferenceTests
         }
     }
 
+    // The census reads a structured body through the binder's own conversion (ZEB-67 review:
+    // HttpRestBodyConversion is one source file compiled into both assemblies). One row per
+    // rule the conversion applies — merge with an override, block scalar, plain empty value,
+    // !!str and the other core tags, non-finite number text — beside the original rows.
     [Theory]
     [InlineData("body: { integer: 42, float: 1.25, boolean: true, nil: null, quoted: '42', sequence: [false, null, 'a\\b'] }")]
     [InlineData("body: { '${secret:env/BODY_KEY}': { nested: '${secret:env/BODY_VALUE}' }, unicode: 'é😀', empty: '' }")]
     [InlineData("body: &shared { a: [1, 2] }\nheaders: { copied: ignored }")]
     [InlineData("body: 'scalar ${secret:env/BODY_VALUE}'")]
+    [InlineData("body: { <<: { a: 1, t: '${secret:env/OVERRIDDEN}' }, t: '${secret:env/SENT}' }")]
+    [InlineData("base: &base { a: 1, t: '${secret:env/MERGED}' }\nbody: { <<: [*base, { z: 2 }], b: 3 }")]
+    [InlineData("body:\n  n: |\n    123\n  t: >-\n    token\n    ${secret:env/BLOCK}\n  k: |+\n    true\n\n")]
+    [InlineData("body:\n  note:\n  quoted: ''\n  count: 1")]
+    [InlineData("body: { count: !!str 123, n: !!int '5', f: !!float '1.5', b: !!bool 'true', z: !!null '', ts: !!timestamp 2026-11-17 }")]
+    [InlineData("body: { nan: NaN, inf: Infinity, neg: -Infinity, big: 1e400, fin: 1e308 }")]
     public void RestBody_CollectedTextExactlyEqualsOnceBoundBody(string yaml)
     {
-        var stream = new YamlStream();
-        stream.Load(new StringReader(yaml));
-        var raw = (YamlMappingNode)stream.Documents[0].RootNode;
-        raw.Add("target", "fixture"); raw.Add("method", "POST"); raw.Add("path", "/");
-        var node = CreateFixture("http.rest").Node with { RawNode = raw };
+        var node = RestNode(yaml);
         Assert.True(Discover().TryGet("http.rest", out var provider));
         var (model, _) = BindAndEmit(provider!.Instance, node);
+        var bound = (HttpRestModel)model;
+        Assert.Null(bound.BodyRefusal);
         var collection = StepTemplateCensus.Collect(node);
-        Assert.Null(collection.Failure);
-        Assert.Equal(((HttpRestModel)model).Body, Assert.Single(collection.Fields, field => field.Location == "body").Text);
+        Assert.Equal(bound.Body, Assert.Single(collection.Fields, field => field.Location == "body").Text);
+    }
+
+    // The two invariants the reviewer named, end to end through the census's three consumers:
+    // a reference in a member the explicit key overrides is never sent, so the check before
+    // acquisition must not refuse it, and provenance and the reproducibility envelope must
+    // not list it; a reference that IS sent through a merge must be found by all three.
+    [Fact]
+    public void RestBody_MergeOverriddenUnknownSource_IsAcceptedAndNotListed()
+    {
+        var node = RestNode("body: { <<: { t: '${secret:nosuchsource/X}' }, t: fixed }");
+        Assert.False(ScenarioRunner.TryValidateSecretReferences(Ast(node), out var diagnostic, out _), diagnostic);
+        Assert.Null(ScenarioRunner.DeriveSubstitutionProvenance(node, new Dictionary<string, string>()));
+        Assert.Empty(ScenarioRunner.BuildReproducibilityEnvelope(Ast(node), null).SecretReferences);
+
+        var result = ScenarioValidator.ValidateScenario(
+            RestSuite("body: { <<: { t: '${secret:nosuchsource/X}' }, t: fixed }"),
+            "merge.e2e.yaml", Discover(), Path.GetTempPath());
+        Assert.True(result.IsValid, string.Join('\n', result.Diagnostics.Select(d => d.Stage + ": " + d.Message)));
+    }
+
+    private static readonly string[] s_sentMergeLabels = { "env/MERGED", "env/SENT" };
+
+    [Fact]
+    public void RestBody_MergedAndOverridden_OnlySentReferencesReachProvenanceAndEnvelope()
+    {
+        var node = RestNode("body: { <<: { m: '${secret:env/MERGED}', t: '${secret:env/OVERRIDDEN}' }, t: '${secret:env/SENT}' }");
+        Assert.False(ScenarioRunner.TryValidateSecretReferences(Ast(node), out var diagnostic, out _), diagnostic);
+
+        var provenance = ScenarioRunner.DeriveSubstitutionProvenance(node, new Dictionary<string, string>())!;
+        Assert.Equal(s_sentMergeLabels,
+            provenance.Where(reference => reference.SecretDerived).Select(reference => reference.Placeholder).OrderBy(label => label, StringComparer.Ordinal));
+
+        var hashes = ScenarioRunner.BuildReproducibilityEnvelope(Ast(node), null).SecretReferences;
+        var serialized = JsonSerializer.Serialize(hashes);
+        Assert.Equal(2, hashes.Count);
+        Assert.Contains(ReferenceHash("${secret:env/MERGED}"), serialized, StringComparison.Ordinal);
+        Assert.Contains(ReferenceHash("${secret:env/SENT}"), serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain(ReferenceHash("${secret:env/OVERRIDDEN}"), serialized, StringComparison.Ordinal);
     }
 
     [Theory]
+    [InlineData("body: { <<: { t: '${secret:nosuchsource/MERGED}' }, a: 1 }", "nosuchsource")]
+    [InlineData("body:\n  note: |\n    token ${secret:nosuchsource/BLOCK}\n", "nosuchsource")]
+    [InlineData("body:\n  note: >-\n    ${secret:env/}\n", "malformed")]
+    public void RestBody_SentReferenceInMergeOrBlockScalar_IsStillChecked(string yaml, string expected)
+    {
+        var node = RestNode(yaml);
+        Assert.True(ScenarioRunner.TryValidateSecretReferences(Ast(node), out var diagnostic, out _));
+        Assert.Contains("step 'census'", diagnostic, StringComparison.Ordinal);
+        Assert.Contains(expected, diagnostic, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("(field 'body')", diagnostic, StringComparison.Ordinal);
+    }
+
+    // ZEB-67 review: a body the conversion refuses is an AUTHORING refusal. Through the full
+    // engine path the author sees the provider's own message once, on the pipeline stage,
+    // with no provider-fault attribution, and the secret census adds nothing of its own (it
+    // used to add a "maximum depth 64 and 50000 nodes" line for an over-limit body). Each row
+    // passes schema validation, so it reaches the binder on the real path.
+    public static IEnumerable<object[]> RefusedBodies() => new[]
+    {
+        new object[] { "body:\n  v: !!bool yes\n", "tags the value at line 12, column 10 as !!bool, but the value is not one of true" },
+        new object[] { "body:\n  <<: oops\n", "has a merge key '<<' at line 12, column 7 that cannot be applied: its value is a scalar" },
+        new object[] { "body:\n  v: !money 5\n", "uses the YAML tag '!money' on a scalar at line 12, column 10" },
+        new object[] { "body:\n  a: &a [\"x\",\"x\",\"x\",\"x\",\"x\",\"x\",\"x\",\"x\",\"x\",\"x\"]\n  b: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]\n  c: &c [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]\n  d: &d [*c, *c, *c, *c, *c, *c, *c, *c, *c, *c]\n  e: [*d, *d, *d, *d, *d, *d, *d, *d, *d, *d]\n", "expands to more than 50000 JSON nodes" },
+    };
+
+    [Theory]
+    [MemberData(nameof(RefusedBodies))]
+    public void RestBody_ConversionRefusal_IsOneAuthoringRefusalNeverAProviderFault(string bodyYaml, string expected)
+    {
+        var yaml = RestSuite(bodyYaml);
+        var registry = Discover();
+
+        var result = ScenarioValidator.ValidateScenario(yaml, "refused.e2e.yaml", registry, Path.GetTempPath());
+        Assert.False(result.IsValid);
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(ValidationStage.Pipeline, diagnostic.Stage);
+        Assert.StartsWith("Step 'census' model validation failed: http.rest: the 'body' of step 'census' ", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains(expected, diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains("This is an authoring fault, not a fault in the service under test", diagnostic.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("defect in the provider", diagnostic.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("maximum depth 64 and 50000 nodes", diagnostic.Message, StringComparison.Ordinal);
+        Assert.All(diagnostic.Message, ch => Assert.True(ch is >= ' ' and <= '~', $"non-ASCII U+{(int)ch:X4}"));
+
+        var ast = AstBuilder.Build(YamlDocumentParser.Parse(yaml), registry);
+        var failure = ProviderPipeline.Compile(ast, registry, "CensusRefusal").Failure;
+        Assert.NotNull(failure);
+        Assert.False(failure!.IsProviderOrEngineFault);
+        Assert.Equal(diagnostic.Message, failure.Message);
+        Assert.Empty(ScenarioRunner.CollectSecretReferenceFaults(ast));
+    }
+
+    // The depth bound cannot be reached through schema validation (the bridge refuses 50
+    // levels), so the over-depth row binds a body built in code and drives the pipeline
+    // directly. Both bounds: no census refusal, one authoring refusal naming the step and the
+    // limit, never the body's own value, never a provider fault.
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void RestBody_OverDepthOrNodeBudget_IsBoundedSafeRefusal(bool depth)
+    public void RestBody_OverDepthOrNodeBudget_IsOneBoundedAuthoringRefusal(bool depth)
     {
         const string canary = "synthetic-sensitive-body-value";
         YamlNode body = new YamlScalarNode(canary);
@@ -260,13 +361,40 @@ public sealed class SecretTemplateReferenceTests
         else body = new YamlSequenceNode(Enumerable.Range(0, 50_001).Select(_ => new YamlScalarNode(canary)));
         var node = CreateFixture("http.rest").Node;
         node.RawNode.Children[new YamlScalarNode("body")] = body;
-        Assert.True(ScenarioRunner.TryValidateSecretReferences(Ast(node), out var diagnostic, out _));
-        Assert.Contains("maximum depth 64 and 50000 nodes", diagnostic, StringComparison.Ordinal);
-        Assert.DoesNotContain(canary, diagnostic, StringComparison.Ordinal);
-        Assert.True(Discover().TryGet("http.rest", out var provider));
-        var error = Assert.Throws<System.Reflection.TargetInvocationException>(() => BindAndEmit(provider!.Instance, node));
-        Assert.NotNull(error.InnerException);
+
+        Assert.False(ScenarioRunner.TryValidateSecretReferences(Ast(node), out var diagnostic, out _), diagnostic);
+        Assert.DoesNotContain(StepTemplateCensus.Collect(node).Fields, field => field.Location == "body");
+
+        var failure = ProviderPipeline.Compile(Ast(node), Discover(), "CensusBounds").Failure;
+        Assert.NotNull(failure);
+        Assert.False(failure!.IsProviderOrEngineFault);
+        Assert.Contains("the 'body' of step 'census'", failure.Message, StringComparison.Ordinal);
+        Assert.Contains(depth ? "nests more than 64 levels deep" : "expands to more than 50000 JSON nodes", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("defect in the provider", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(canary, failure.Message, StringComparison.Ordinal);
     }
+
+    /// <summary>An http.rest census node whose raw mapping is <paramref name="yaml"/> plus a fixed target, method and path.</summary>
+    private static StepNode RestNode(string yaml)
+    {
+        var stream = new YamlStream();
+        stream.Load(new StringReader(yaml));
+        var raw = (YamlMappingNode)stream.Documents[0].RootNode;
+        raw.Add("target", "fixture"); raw.Add("method", "POST"); raw.Add("path", "/");
+        return CreateFixture("http.rest").Node with { RawNode = raw };
+    }
+
+    /// <summary>
+    /// A whole one-step suite whose step 'census' ends with <paramref name="bodyYaml"/>
+    /// (block lines at step indentation); its first body line is line 11.
+    /// </summary>
+    private static string RestSuite(string bodyYaml) =>
+        "environment:\n  services:\n    fixture:\n      image: app:1.0\n"
+        + "steps:\n  - id: census\n    type: http.rest\n    target: fixture\n    method: POST\n    path: /\n"
+        + string.Join('\n', bodyYaml.Split('\n').Select(line => line.Length == 0 ? line : "    " + line));
+
+    private static string ReferenceHash(string reference) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(reference))).ToLowerInvariant();
 
     private static ScenarioAst Ast(StepNode node) => new(null, null, new Dictionary<string, string>(), new[] { node });
 

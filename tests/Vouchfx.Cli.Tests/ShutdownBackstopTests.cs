@@ -47,7 +47,9 @@ public sealed class ShutdownBackstopTests
 
         backstop.Arm();
 
-        var completed = await Task.WhenAny(forceExitSignal.Task, Task.Delay(WaitBound));
+        using var delayCts = new CancellationTokenSource();
+        var completed = await Task.WhenAny(forceExitSignal.Task, Task.Delay(WaitBound, delayCts.Token));
+        delayCts.Cancel();
 
         Assert.Same(forceExitSignal.Task, completed);
         Assert.True(await forceExitSignal.Task);
@@ -109,7 +111,9 @@ public sealed class ShutdownBackstopTests
         // then only a SHORT settle period comfortably longer than the budget — long enough for a
         // hypothetical second, spurious timer to also have fired by then, but far cheaper than
         // unconditionally waiting the full WaitBound regardless of how fast the first fire was.
-        var completed = await Task.WhenAny(firstFireSignal.Task, Task.Delay(WaitBound));
+        using var delayCts = new CancellationTokenSource();
+        var completed = await Task.WhenAny(firstFireSignal.Task, Task.Delay(WaitBound, delayCts.Token));
+        delayCts.Cancel();
         Assert.Same(firstFireSignal.Task, completed);
 
         await Task.Delay(SmallBudget + SmallBudget);
@@ -133,7 +137,9 @@ public sealed class ShutdownBackstopTests
         var backstop = new ShutdownBackstop(SmallBudget, () => forceExitSignal.TrySetResult(true));
 
         backstop.Arm();
-        var completed = await Task.WhenAny(forceExitSignal.Task, Task.Delay(WaitBound));
+        using var delayCts = new CancellationTokenSource();
+        var completed = await Task.WhenAny(forceExitSignal.Task, Task.Delay(WaitBound, delayCts.Token));
+        delayCts.Cancel();
         Assert.Same(forceExitSignal.Task, completed);
         Assert.True(await forceExitSignal.Task);
 
@@ -221,7 +227,9 @@ public sealed class ShutdownBackstopTests
             // never runs the blocking delegate inline under Arm's own lock.
             deadline.SetResult(true);
 
-            var entered = await Task.WhenAny(exitEntered.Task, Task.Delay(WaitBound));
+            using var delayCts = new CancellationTokenSource();
+            var entered = await Task.WhenAny(exitEntered.Task, Task.Delay(WaitBound, delayCts.Token));
+            delayCts.Cancel();
             Assert.Same(exitEntered.Task, entered);
 
             await backstop.DisposeAsync().AsTask().WaitAsync(WaitBound);

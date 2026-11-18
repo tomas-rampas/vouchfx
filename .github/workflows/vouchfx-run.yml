@@ -7,8 +7,9 @@
 # reference caller in .github/workflows/vouchfx-run-reference.yml).
 #
 # ── How vouchfx is installed (parameterised; build-from-source by default) ──────────
-# vouchfx IS published as a NuGet global tool — `dotnet tool install --global vouchfx
-# --prerelease` (docs/getting-started.md) is the recommended way to run suites locally.
+# vouchfx IS published as a NuGet global tool — `dotnet tool install --global vouchfx`
+# (docs/getting-started.md; omit `--prerelease`, stable releases exist) is the recommended
+# way to run suites locally.
 # It is not published as a container image.
 #   This workflow nevertheless DELIBERATELY installs by building from source at a
 #   pinned ref, rather than installing the packaged tool: the default `vouchfx-ref` is
@@ -18,7 +19,7 @@
 #   source build is an immutable supply-chain reference, consistent with this header's
 #   pinning rules (see below).
 #   A consumer tracking a released engine pins `vouchfx-ref` to the release tag (e.g.
-#   `v1.0.0-alpha.9`) — still a source build. Installing the packaged tool instead
+#   `v1.2.1`) — still a source build. Installing the packaged tool instead
 #   could become an optional install mode later; the install step is intentionally the
 #   only thing that would change.
 #
@@ -132,11 +133,12 @@ on:
       dotnet-version:
         description: >-
           The .NET SDK version to install for building vouchfx and running the suite.
-          Current source supports .NET 8, 9 and 10 with a net8.0 binary baseline.
+          Current source targets net10.0 and needs the .NET 10 SDK; an older
+          `vouchfx-ref` of 1.2.1 or earlier, built for net8.0, builds with .NET 8.
           The SDK is isolated so another installed major cannot satisfy this run.
         type: string
         required: false
-        default: "8.0.x"
+        default: "10.0.x"
 
       fail-on-env-error:
         description: >-
@@ -183,8 +185,8 @@ on:
 
       runs-on:
         description: >-
-          The runner label the job executes on. Must provide Docker (the topology uses
-          Testcontainers via Aspire); the default ubuntu-latest does.
+          The runner label the job executes on. Must provide Docker (the topology is
+          orchestrated by Aspire); the default ubuntu-latest does.
         type: string
         required: false
         default: "ubuntu-latest"
@@ -249,8 +251,8 @@ jobs:
           ref: ${{ inputs.vouchfx-ref }}
           path: .vouchfx-src
 
-      # 3. Isolate the requested SDK so a preinstalled .NET 8 cannot hide a
-      # failure to build or start the executable on a newer runtime.
+      # 3. Isolate the requested SDK so a preinstalled SDK or runtime of another
+      # major cannot hide a failure to build or start the executable on this one.
       - name: Configure isolated suite SDK
         run: printf 'DOTNET_INSTALL_DIR=%s/vouchfx-suite-dotnet\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
@@ -284,7 +286,7 @@ jobs:
             [CmdletBinding()]
             param(
                 [Parameter(Mandatory)]
-                [ValidateSet('8.0', '9.0', '10.0')]
+                [ValidateSet('8.0', '9.0', '10.0', '11.0')]
                 [string]$ExpectedDotnet,
                 [string]$InstallRoot = $env:DOTNET_INSTALL_DIR,
                 [string]$RunnerTemp = $env:RUNNER_TEMP
@@ -383,7 +385,7 @@ jobs:
 
       - name: Require the selected SDK and runtime only
         # Run from the vouchfx checkout so SDK selection uses vouchfx's own global.json
-        # (rollForward: major), not a global.json in the consumer's repository root. A
+        # (its pinned line and rollForward policy), not a global.json in the consumer's repository root. A
         # consumer pinned to another SDK would otherwise fail this check even though
         # vouchfx itself builds and runs fine with the isolated SDK.
         working-directory: .vouchfx-src
