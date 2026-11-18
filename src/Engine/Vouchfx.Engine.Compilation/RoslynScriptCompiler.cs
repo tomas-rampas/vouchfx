@@ -74,7 +74,10 @@ public static class RoslynScriptCompiler
     // memory per compile and let it pile up between gen2 collections (ZEB-49).
     //
     // Only files on that list are shared: one reference per file for the life of the
-    // process, because the runtime's own files do not change under a running process.
+    // process, because these are the files the runtime itself loads for this process
+    // (the shared framework and the host's deps.json assemblies); replacing one under a
+    // running process is unsupported, and whoever can write them already controls the
+    // process.
     // Every other path (provider and customer assemblies, anything passed through
     // additionalReferencePaths or ScriptOptions) gets a fresh reference per compile, as
     // it always did, because such a file may be rewritten at the same path. The set is
