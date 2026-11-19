@@ -21,7 +21,9 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
-This will be released as 1.4.0, the first release that targets .NET 10. 1.3.0 was not published; the changes that were prepared under that number ship in 1.4.0 and are included below.
+## [1.4.0] — 2026-11-19
+
+1.4.0 is the first release that targets .NET 10. 1.3.0 was not published; the changes that were prepared under that number ship in this release and are included below.
 
 **Upgrade notes.** Four changes in this release can stop an existing setup:
 
@@ -83,7 +85,7 @@ This will be released as 1.4.0, the first release that targets .NET 10. 1.3.0 wa
 ### Security
 
 - Use patched MSAL Node 7.1.1 in the VS Code packaging toolchain for [GHSA-xcx6-jx8p-x3h5](https://github.com/AzureAD/microsoft-authentication-library-for-js/security/advisories/GHSA-xcx6-jx8p-x3h5). A scoped VSCE dependency override bridges Azure Identity's current MSAL 6.x requirement.
-- The published tool bundles `tools/net8.0/any/MySqlConnector.dll` at FileVersion 2.4.0 (ProductVersion `2.4.0+76f8c519f746d65b1847a5bf5f168a2744589958`), inside [GHSA-473q-m89c-ghf8](https://github.com/advisories/GHSA-473q-m89c-ghf8). The full conditions are in the security policy; the getting-started guide links there. The patched library is in the upcoming 1.4.0 release, which is not yet published.
+- The published tool bundles `tools/net8.0/any/MySqlConnector.dll` at FileVersion 2.4.0 (ProductVersion `2.4.0+76f8c519f746d65b1847a5bf5f168a2744589958`), inside [GHSA-473q-m89c-ghf8](https://github.com/advisories/GHSA-473q-m89c-ghf8). The full conditions are in the security policy; the getting-started guide links there. The patched library (MySqlConnector 2.6.2) is in 1.4.0.
 
 ### Fixed
 
