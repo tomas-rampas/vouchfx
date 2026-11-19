@@ -131,8 +131,8 @@ Every published `vouchfx` tool in the v1.x series bundles the
 `Aspire.Hosting` and `Aspire.Hosting.AppHost` DLLs at the 13.4.x release
 pinned at its release tag, and every 13.4.x release is inside the advisory's
 range. Releases up to and including v1.2.1 bundle 13.4.2; the published
-packages for v1.0.4, v1.1.0, v1.2.0 and v1.2.1 were inspected. The first
-release that includes the Aspire 13.4.6 update recorded in `CHANGELOG.md`
+packages for v1.0.4, v1.1.0, v1.2.0 and v1.2.1 were inspected. v1.4.0, the
+first release that includes the Aspire 13.4.6 update recorded in `CHANGELOG.md`,
 bundles 13.4.6, a patch update that does not fix this advisory; later v1.x
 releases bundle the 13.4.x release pinned at their tag. The tool bundles no
 Aspire dashboard binaries. 13.4.2 and 13.4.6 are inside
