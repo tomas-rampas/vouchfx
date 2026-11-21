@@ -33,7 +33,8 @@
 // EVERY ROW THAT CAN REACH THAT GAP TAKES ONE LATE LOOK BEFORE ITS CHILD BECOMES UNREACHABLE — rows
 // 1 and 2 in their `finally`, row 5 in front of its pid assertion and, on the paths that end it
 // before that, in its `finally` too, the cancel-stage ordering row
-// (Run_WhenTheCallerCancels_RecordsEachCancelStageInOrder) in its `finally`, and the two rows that
+// (Run_WhenTheCallerCancels_RecordsEachCancelStageInOrder) and the hook-variant cancellation row
+// (Run_WhenTheCallerCancels_KillsTheChildWhateverTheHookDoes) in theirs, and the two rows that
 // launch a shape directly
 // (PidFileWriters_PublishAPidTheReaderAccepts, TheGuardsAnchors_StayInTheOrderARealChildProduces)
 // in theirs —
@@ -80,7 +81,7 @@
 // THAT PLACEMENT IS PINNED BY THREE ROWS RATHER THAN ASSERTED HERE, AND BETWEEN THEM THEY LEAVE
 // ONE HALF OPEN. EveryFinallyThatKills_ReclaimsAPidFirst is a Roslyn census over this file's own
 // source: each killing `finally` must carry a `pid is null`-guarded reclaim ahead of its kill, and
-// there must be exactly six of them. TheLateLookFlag_IsArmedOnlyAfterTheLookCompletes is its
+// there must be exactly seven of them. TheLateLookFlag_IsArmedOnlyAfterTheLookCompletes is its
 // counterpart in the BODY: row 5's `lateLookTaken = true` must sit after the loud look it records,
 // because a flag armed first suppresses the `finally`'s only look on the path where that look
 // throws. The third row pins the quiet wrapper the placement census names — a pid
@@ -102,8 +103,10 @@
 // a standing rule, and a sweep is only reliable if the thing being swept has been written down.
 //
 // The two directly-launching rows can each leave one more directory per parametrisation, so the
-// four of them add as many as four to the eight above. Their `finally` attempts the delete on
-// EVERY path, and
+// four of them add as many as four to the eight above. The ×1 rows — row 5, the cancel-stage
+// ordering row, and the hook-variant cancellation row once per parametrisation — can each leave
+// one on the same no-pid path, four more: sixteen in all for a bad run of this file. The
+// directly-launching rows' `finally` attempts the delete on EVERY path, and
 // what decides the outcome is whether the process holding the directory has gone by then. Two
 // mechanisms sit in front of that delete and they cover different paths. A kill only ISSUES a
 // termination (see DeathWindow), so after killing the row polls until the target is gone, for at
@@ -426,6 +429,10 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="TheGuardsAnchors_StayInTheOrderARealChildProduces"/> each pay it once, in their
     /// <c>finally</c>, only when no pid arrived — which is that row failing — so it delays a
     /// report by five seconds and buys a grandchild that wrote late a teardown that can name it.
+    /// The sixth and seventh payers are the cancel-stage ordering row
+    /// (<see cref="Run_WhenTheCallerCancels_RecordsEachCancelStageInOrder"/>) and the hook-variant
+    /// cancellation row (<see cref="Run_WhenTheCallerCancels_KillsTheChildWhateverTheHookDoes"/>),
+    /// which pay it the same way: once, in their <c>finally</c>, only when no pid arrived.
     /// </para>
     /// <para>
     /// It is on no assertion's critical path within its own attempt: on rows 1 and 2 it runs in the
@@ -471,10 +478,13 @@ public sealed class SystemProcessRunnerTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>THREE consumers, and they need a figure for the same reason: there is no
+    /// <strong>FIVE consumers, and they need a figure for the same reason: there is no
     /// <c>Run</c> whose settling could end the wait.</strong> Row 5's runner carries
     /// <see cref="UnreachableBudget"/> and the row itself is what ends the call, so "wait until
-    /// Run settles" would wait for something the row has not done yet. The two rows that launch a
+    /// Run settles" would wait for something the row has not done yet; the two other cancellation
+    /// rows (<see cref="Run_WhenTheCallerCancels_RecordsEachCancelStageInOrder"/> and
+    /// <see cref="Run_WhenTheCallerCancels_KillsTheChildWhateverTheHookDoes"/>) are built the same
+    /// way for the same reason. The two rows that launch a
     /// shape directly — <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> (#541) and
     /// <see cref="TheGuardsAnchors_StayInTheOrderARealChildProduces"/> (#529) — have no
     /// <c>Run</c> at all, and each passes this as BOTH of <see cref="WaitForPid"/>'s windows; the
@@ -529,9 +539,9 @@ public sealed class SystemProcessRunnerTests
     /// here and 2.2x the worst on record.</strong> Raising it buys only a host thrashing harder
     /// than 128 burners on 20 cores, whose whole lane is failing for other reasons — and it is
     /// not free, since the failing path costs this ceiling PLUS <see cref="LateReadWindow"/>:
-    /// every second added is paid five times on a fully red run (the four parametrisations of the
-    /// two directly-launching rows, and row
-    /// 5), and comes out of the margin under <see cref="ChildLifetime"/> that row 5's guard
+    /// every second added is paid eight times on a fully red run (the four parametrisations of the
+    /// two directly-launching rows, row 5, the cancel-stage ordering row, and the two
+    /// parametrisations of the hook-variant cancellation row), and comes out of the margin under <see cref="ChildLifetime"/> that row 5's guard
     /// defends. A measured case for a change would be a sample inside 2x of thirty; none of the
     /// 96 taken here is — and 96 samples no more bound this tail than eight bounded the one the
     /// file header reads as a LOWER BOUND ON THE SPREAD AND NOTHING ELSE, the probe that missed
@@ -554,8 +564,9 @@ public sealed class SystemProcessRunnerTests
     /// How long teardown waits for the abandoned <c>Run</c> to unwind once its child is dead.
     /// </summary>
     /// <remarks>
-    /// Also the further wait row 5 allows a late <c>Run</c> before it renders the cancel-stage
-    /// timeline for its failure message (<see cref="DescribeSlowUnwindAsync"/>).
+    /// Also the further wait <see cref="DescribeSlowUnwindAsync"/> allows a cancelled <c>Run</c>
+    /// that missed <see cref="RunUnwindSlack"/>, in row 5 only for the cancel-stage timeline in
+    /// its failure message and in the cancel-stage ordering row as the rest of that row's bound.
     /// </remarks>
     private static readonly TimeSpan DrainWindow = TimeSpan.FromSeconds(10);
 
@@ -574,8 +585,10 @@ public sealed class SystemProcessRunnerTests
     /// the window closes the class rather than resting on the host that happened to be green.
     /// </para>
     /// <para>
-    /// <strong>FIVE CONSUMERS, AND THE LAST THREE WANT A DIFFERENT THING FROM THE ANSWER.</strong>
-    /// Rows 1 and 5 assert on it: the window is the budget for "the runner abandoned its child"
+    /// <strong>SIX CONSUMERS, AND THE LAST THREE WANT A DIFFERENT THING FROM THE ANSWER.</strong>
+    /// Rows 1 and 5 and the hook-variant cancellation row
+    /// (<see cref="Run_WhenTheCallerCancels_KillsTheChildWhateverTheHookDoes"/>) assert on it:
+    /// the window is the budget for "the runner abandoned its child"
     /// to be believed, and a dead sample inside it is the verdict. The two directly-launching
     /// rows (#541, #529) take the same wait in their <c>finally</c> and DISCARD the answer —
     /// nothing there fails on it — because what they want is the directory released before the
@@ -867,14 +880,20 @@ public sealed class SystemProcessRunnerTests
     /// happen.
     /// </para>
     /// <para>
-    /// <strong>Two relationships depend on it, and each is asserted where it applies rather than
+    /// <strong>Five relationships depend on it, and each is asserted where it applies rather than
     /// described here.</strong> Rows 1 and 2 need the WHOLE of an attempt to fit — the largest
     /// budget, the unwind slack after it and the death poll after that — which is what
     /// <see cref="WithEscalatingBudget"/> checks; asserting only the budget would have left the
     /// other twelve seconds unpinned. Row 5 needs <see cref="UnracedPidCeiling"/> to fit, and
-    /// asserts that itself. Neither is currently near its limit; the assertions exist so that the
-    /// next edit to any of these numbers is caught by a red row rather than by a reader. THIRD
-    /// and FOURTH consumers arrived with #541 and #529, and neither adds an assertion of its own:
+    /// asserts that itself; it also needs its slow-unwind death poll, which can run until
+    /// <see cref="UnracedPidCeiling"/>, <see cref="RunUnwindSlack"/> and <see cref="DrainWindow"/>
+    /// after the pid wait began, to end before the child could expire by itself, and asserts that
+    /// in the same guard. The cancel-stage ordering row and the hook-variant cancellation row each
+    /// wait that long and then <see cref="DeathWindow"/> more, and each asserts that sum at its
+    /// own top. None is currently near its limit; the assertions exist
+    /// so that the
+    /// next edit to any of these numbers is caught by a red row rather than by a reader. Two more
+    /// consumers arrived with #541 and #529, and neither adds an assertion of its own:
     /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> and
     /// <see cref="TheGuardsAnchors_StayInTheOrderARealChildProduces"/> each spend the same
     /// <see cref="UnracedPidCeiling"/> plus <see cref="LateReadWindow"/> row 5 does, so row 5's
@@ -1180,8 +1199,9 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="ChildLifetime"/>. Milder than the same hole on rows 1 and 2, and deliberately
     /// described that way: there an orphan could hide behind a LATER attempt that passed, whereas a
     /// failure here is read by whoever ran the suite. Hygiene on a red row, not a leak test failing
-    /// to fail. It is the header's original ×1 gap on one of the two rows still carrying it (the
-    /// cancel-stage ordering row, which reclaims in its <c>finally</c>, is the other) — ×1 because
+    /// to fail. It is the header's original ×1 gap on one of the three rows still carrying it (the
+    /// cancel-stage ordering row and the hook-variant cancellation row, which reclaim in their
+    /// <c>finally</c>, are the others) — ×1 because
     /// this row runs once and never escalates, which #539 did not change.
     /// </para>
     /// <para>
@@ -1227,6 +1247,19 @@ public sealed class SystemProcessRunnerTests
             FormattableString.Invariant(
                 $"This row can spend {longestLook.TotalSeconds:F0}s looking for a pid ({UnracedPidCeiling.TotalSeconds:F0}s of UnracedPidCeiling, plus {LateReadWindow.TotalSeconds:F0}s of LateReadWindow on the failing path), which is not below the child's own lifetime ({ChildLifetime.TotalSeconds:F0}s). A look that outlives the child can end against one that simply exited, so a missing pid would no longer mean a host that could not start a shell, and a pid found late would no longer mean a process teardown can do anything about. Lower UnracedPidCeiling or LateReadWindow, or raise ChildLifetime."));
 
+        // The same guard's second sum, for the failure path of the unwind assertion below. There
+        // DescribeSlowUnwindAsync polls the child's death until RunUnwindSlack and DrainWindow
+        // after the pid was read, and the pid is read at most UnracedPidCeiling after its wait
+        // began, so the poll ends 30 + 10 + 10 = 50s in today. Past ChildLifetime the poll could
+        // see a child that expired by itself and stamp it ChildExited, which the timeline would
+        // otherwise read as the kill landing. (The recorder also words a ChildExited it sees that
+        // late as such, for the case this sum cannot cover: a pid wait that itself started late.)
+        var longestTimeline = UnracedPidCeiling + RunUnwindSlack + DrainWindow;
+        Assert.True(
+            longestTimeline < ChildLifetime,
+            FormattableString.Invariant(
+                $"This row's slow-unwind death poll can run until {longestTimeline.TotalSeconds:F0}s after its pid wait began ({UnracedPidCeiling.TotalSeconds:F0}s of UnracedPidCeiling, {RunUnwindSlack.TotalSeconds:F0}s of RunUnwindSlack and {DrainWindow.TotalSeconds:F0}s of DrainWindow), which is not below the child's own lifetime ({ChildLifetime.TotalSeconds:F0}s). A child seen gone that late may have expired by itself, so the failure timeline could no longer tell a kill that landed from one that never ran. Lower one of the three, or raise ChildLifetime."));
+
         var startedUtc = DateTime.UtcNow;
         var directory = CreateScratchDirectory();
         var pidFile = Path.Combine(directory, PidFileName);
@@ -1235,8 +1268,10 @@ public sealed class SystemProcessRunnerTests
         // Stage timestamps for the unwind, read only by the two failure messages below: a slow
         // cancel is reported with WHICH stage was slow rather than as a bare "too slow". Diagnostic
         // scaffolding (see CancelStage). The runner returns, throws, kills and disposes identically
-        // with or without the hook; what the hook adds is its own calls on the cancel path.
-        var stages = new CancelStageRecorder();
+        // with or without the hook; what the hook adds is its own calls on the cancel path. Made
+        // before the launch and told the child's lifetime, so it can tell a ChildExited the child's
+        // own expiry could explain from one only the kill can.
+        var stages = new CancelStageRecorder(ChildLifetime);
         var runner = new SystemProcessRunner(UnreachableBudget, stages.Record);
         using var cancellation = new CancellationTokenSource();
 
@@ -1279,9 +1314,17 @@ public sealed class SystemProcessRunnerTests
         {
             // Cancelled only once the child is known to be RUNNING. Cancelling earlier could be
             // answered by the pre-launch ThrowIfCancellationRequested, which would leave the row
-            // asserting nothing about a live child.
+            // asserting nothing about a live child. The instant the wait returned is kept for the
+            // slow-unwind death poll's deadline; it is taken on the waiting thread so that the
+            // await's own continuation latency does not move it later.
+            long pidReadAt = 0;
             pid = await Task.Run(
-                () => WaitForPid(pidFile, work, PidSettleWindow, UnracedPidCeiling));
+                () =>
+                {
+                    var found = WaitForPid(pidFile, work, PidSettleWindow, UnracedPidCeiling);
+                    pidReadAt = Stopwatch.GetTimestamp();
+                    return found;
+                });
 
             // CHECKED BEFORE THE PID IS JUDGED, because the pid wait now ends early when the RUN
             // settles — a bound this row did not have before #524. Nothing has been cancelled yet,
@@ -1386,10 +1429,12 @@ public sealed class SystemProcessRunnerTests
                     $"The never-exiting child did not write '{PidFileName}' into its working directory within {UnracedPidCeiling.TotalSeconds:F0}s, so this row could not establish that a child was ever running. The run had not finished and nothing was racing to kill that child — the injected budget is {UnreachableBudget.TotalMinutes:F0} minutes — so this is a host that did not start a shell inside {UnracedPidCeiling.TotalSeconds:F0}s. That is a defect in the row's environment, not in SystemProcessRunner. A further {LateReadWindow.TotalSeconds:F0}s look, for teardown's sake rather than for this verdict, found {lateLook}."));
 
             // Cancel() runs the token's callbacks on THIS thread. Whether the runner's continuation
-            // is run inside it is not assumed either way: on macOS it was measured not to be
-            // (Observed stamped after SignalReturned in every run of the ordering row below), but
-            // nothing pins that. The slack below is timed from after Cancel() returns, and the two
-            // stamps are what tell the two spans apart on a host where it is.
+            // runs inside that call is not assumed either way. MEASURED on macOS only, under this
+            // file's xunit host: it did not (Observed stamped after SignalReturned in every run of
+            // the ordering row below, idle and under thread-pool load). Nothing here was measured
+            // on Windows or Linux, or in the real CLI. The slack below is timed from after Cancel()
+            // returns, and in any one run the Signalled, SignalReturned and Observed stamps show
+            // which happened.
             stages.Mark(CancelStage.Signalled);
             cancellation.Cancel();
             stages.Mark(CancelStage.SignalReturned);
@@ -1403,7 +1448,7 @@ public sealed class SystemProcessRunnerTests
             // would name the slow step, so the timeline is taken after a further bounded wait.
             var slowUnwind = finished
                 ? string.Empty
-                : await DescribeSlowUnwindAsync(stages, work, pid, startedUtc, pidFile);
+                : (await DescribeSlowUnwindAsync(stages, work, pid, startedUtc, pidFile, pidReadAt)).Timeline;
             Assert.True(
                 finished,
                 FormattableString.Invariant(
@@ -1454,10 +1499,20 @@ public sealed class SystemProcessRunnerTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Asserts ORDER only, never a duration, and REQUIRES only the stages that cannot
+    /// Asserts ORDER, and REQUIRES only the stages that cannot
     /// legitimately go unstamped: the caller's own, and those the runner reports on its own thread
     /// between observing the cancellation and the throw leaving its <c>using</c> block. Those are
     /// totally ordered.
+    /// </para>
+    /// <para>
+    /// <strong>Its one duration is a bound, not a latency, and it is deliberately NOT row 5's.</strong>
+    /// The order can only be read once <c>Run</c> has returned, and a run that never returns must
+    /// not wedge this blocking gate, so the row waits <see cref="RunUnwindSlack"/> and then, through
+    /// the same <see cref="DescribeSlowUnwindAsync"/> row 5's failure message uses, a further
+    /// <see cref="DrainWindow"/>: twenty seconds where row 5 allows ten. Judging the ten-second
+    /// latency is row 5's job; repeating that check here would give one intermittent cause two
+    /// chances per run to redden CI. A run that misses both windows fails with the same
+    /// cancel-stage timeline row 5 would print.
     /// </para>
     /// <para>
     /// <see cref="CancelStage.ReadersDrained"/> is NOT required: it arrives on whichever thread
@@ -1469,19 +1524,29 @@ public sealed class SystemProcessRunnerTests
     /// can exit between the snapshot and the kill, and that is the guard doing its job.
     /// </para>
     /// <para>
-    /// This row replaced a version that also required <see cref="CancelStage.ChildExited"/> from
-    /// a watch on the runner's own <see cref="Process"/>. Disposing a Process stops watching for
-    /// exit and discards an exit callback that has not yet run, so that stage was lost in a
-    /// fraction of runs and the row failed for a reason that was not a defect.
+    /// <see cref="CancelStage.ChildExited"/> is not taken from a watch on the runner's own
+    /// <see cref="Process"/>: disposing a Process stops watching for exit and discards an exit
+    /// callback that has not yet run, so such a stage would go missing in a fraction of runs for a
+    /// reason that is not a defect. This row polls the pid instead.
     /// </para>
     /// </remarks>
     [Fact]
     public async Task Run_WhenTheCallerCancels_RecordsEachCancelStageInOrder()
     {
+        // The child-lifetime arithmetic for this row, asserted where it applies (see
+        // ChildLifetime): the pid wait, then RunUnwindSlack and DrainWindow for Run to return, then
+        // DeathWindow for the timeline's death poll. A child seen gone after ChildLifetime may have
+        // expired by itself, and the ChildExited stamp would then misread as the kill landing.
+        var longestWait = UnracedPidCeiling + RunUnwindSlack + DrainWindow + DeathWindow;
+        Assert.True(
+            longestWait < ChildLifetime,
+            FormattableString.Invariant(
+                $"This row can wait {longestWait.TotalSeconds:F0}s ({UnracedPidCeiling.TotalSeconds:F0}s of UnracedPidCeiling, {RunUnwindSlack.TotalSeconds:F0}s of RunUnwindSlack, {DrainWindow.TotalSeconds:F0}s of DrainWindow and {DeathWindow.TotalSeconds:F0}s of DeathWindow), which is not below the child's own lifetime ({ChildLifetime.TotalSeconds:F0}s). A child seen gone that late may have expired by itself. Lower one of the four, or raise ChildLifetime."));
+
         var directory = CreateScratchDirectory();
         var pidFile = Path.Combine(directory, PidFileName);
         var shape = NeverExitingChild();
-        var stages = new CancelStageRecorder();
+        var stages = new CancelStageRecorder(ChildLifetime);
         var runner = new SystemProcessRunner(UnreachableBudget, stages.Record);
         using var cancellation = new CancellationTokenSource();
         var startedUtc = DateTime.UtcNow;
@@ -1505,7 +1570,14 @@ public sealed class SystemProcessRunnerTests
         int? pid = null;
         try
         {
-            pid = await Task.Run(() => WaitForPid(pidFile, work, PidSettleWindow, UnracedPidCeiling));
+            long pidReadAt = 0;
+            pid = await Task.Run(
+                () =>
+                {
+                    var found = WaitForPid(pidFile, work, PidSettleWindow, UnracedPidCeiling);
+                    pidReadAt = Stopwatch.GetTimestamp();
+                    return found;
+                });
             Assert.False(work.IsCompleted, "Run finished before this row cancelled anything.");
             Assert.NotNull(pid);
 
@@ -1513,10 +1585,20 @@ public sealed class SystemProcessRunnerTests
             cancellation.Cancel();
             stages.Mark(CancelStage.SignalReturned);
 
+            // RunUnwindSlack first, then the rest of the bound through row 5's own slow-unwind
+            // path (see the remarks): a bound that keeps this gate from wedging, not a latency.
             using var delayCts = new CancellationTokenSource();
             var finished = await Task.WhenAny(work, Task.Delay(RunUnwindSlack, delayCts.Token)) == work;
             delayCts.Cancel();
-            Assert.True(finished, stages.Describe());
+            if (!finished)
+            {
+                var (returned, timeline) = await DescribeSlowUnwindAsync(stages, work, pid, startedUtc, pidFile, pidReadAt);
+                Assert.True(
+                    returned,
+                    FormattableString.Invariant(
+                        $"SystemProcessRunner.Run did not return within {(RunUnwindSlack + DrainWindow).TotalSeconds:F0}s of its cancellation token being signalled, so this row has no complete timeline whose order it could check. Row 5 judges the latency; this is the bound that keeps a runner that never returns from wedging the gate. {timeline}"));
+            }
+
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => work);
 
             // For the timeline only; whether the child died is row 5's verdict, not this row's.
@@ -1575,9 +1657,147 @@ public sealed class SystemProcessRunnerTests
     }
 
     /// <summary>
+    /// A cancelled <c>Run</c> throws the same <see cref="OperationCanceledException"/> and its
+    /// child dies whether the runner carries no cancel-stage hook, as production does, or one that
+    /// throws at every stage.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>none</c> is the production configuration, and the only cancellation in this file
+    /// that uses it.</strong> Row 5 and the ordering row both pass a recorder, so without this
+    /// parametrisation an edit that dereferenced the absent hook on the cancel path — a
+    /// <c>processDisposedStamp!.Arm()</c> where the <c>?.</c> is — would turn a Ctrl+C into a
+    /// <see cref="NullReferenceException"/> in the shipped CLI while every row stayed green. The
+    /// runner is built with the one-argument constructor, the one
+    /// <see cref="SystemProcessRunner.Instance"/> uses, so no hook argument is in play at all.
+    /// MEASURED 2026-11-21 on macOS: that mutant reddens this parametrisation and no other row of
+    /// this class. The mutant is spelled with <c>!</c> because dropping the <c>?</c> alone does
+    /// not compile (CS8602, a warning made an error).
+    /// </para>
+    /// <para>
+    /// <strong><c>throws</c> pins the runner's swallowing of a hook's exceptions.</strong> A hook
+    /// that threw at <see cref="CancelStage.KillIssued"/> would otherwise skip the tree-kill, the
+    /// stream disposal and the timer cancellation, and one that threw anywhere would replace the
+    /// cancellation. The stages the hook was called at are asserted as well, so this
+    /// parametrisation cannot pass merely because the hook was never called. MEASURED 2026-11-21
+    /// on macOS: with the helper's <c>try</c>/<c>catch</c> removed, this parametrisation reddens
+    /// (the hook's <see cref="InvalidOperationException"/> replaces the cancellation) and no
+    /// other row of this class does.
+    /// </para>
+    /// <para>
+    /// Judges what is thrown and whether the child died, not how fast: latency is row 5's verdict.
+    /// So the fail-fast wait is the ordering row's longer bound,
+    /// <see cref="RunUnwindSlack"/> plus <see cref="DrainWindow"/>, and the teardown is the one
+    /// every killing <c>finally</c> here carries — a <c>pid is null</c>-guarded reclaim, then the
+    /// kill.
+    /// </para>
+    /// </remarks>
+    /// <param name="hook"><c>none</c> for no hook; <c>throws</c> for a hook that throws at every stage.</param>
+    [Theory]
+    [InlineData("none")]
+    [InlineData("throws")]
+    public async Task Run_WhenTheCallerCancels_KillsTheChildWhateverTheHookDoes(string hook)
+    {
+        // This row's child-lifetime arithmetic, asserted where it applies (see ChildLifetime): the
+        // pid wait, the fail-fast wait for Run, then the death poll that is this row's verdict. A
+        // child seen gone after ChildLifetime may have expired by itself, and the row would pass
+        // over a kill that never ran.
+        var longestWait = UnracedPidCeiling + RunUnwindSlack + DrainWindow + DeathWindow;
+        Assert.True(
+            longestWait < ChildLifetime,
+            FormattableString.Invariant(
+                $"This row can wait {longestWait.TotalSeconds:F0}s ({UnracedPidCeiling.TotalSeconds:F0}s of UnracedPidCeiling, {RunUnwindSlack.TotalSeconds:F0}s of RunUnwindSlack, {DrainWindow.TotalSeconds:F0}s of DrainWindow and {DeathWindow.TotalSeconds:F0}s of DeathWindow), which is not below the child's own lifetime ({ChildLifetime.TotalSeconds:F0}s). A child seen gone that late may have expired by itself, so its death would no longer show the runner's kill. Lower one of the four, or raise ChildLifetime."));
+
+        var directory = CreateScratchDirectory();
+        var pidFile = Path.Combine(directory, PidFileName);
+        var shape = NeverExitingChild();
+        var hookCalls = new System.Collections.Concurrent.ConcurrentQueue<CancelStage>();
+        var runner = hook switch
+        {
+            "none" => new SystemProcessRunner(UnreachableBudget),
+            "throws" => new SystemProcessRunner(
+                UnreachableBudget,
+                (stage, _) =>
+                {
+                    hookCalls.Enqueue(stage);
+                    throw new InvalidOperationException("A cancel-stage hook that throws at every stage.");
+                }),
+            _ => throw new ArgumentOutOfRangeException(nameof(hook), hook, "Expected 'none' or 'throws'."),
+        };
+        using var cancellation = new CancellationTokenSource();
+        var startedUtc = DateTime.UtcNow;
+
+        var work = Task.Run(
+            () => runner.Run(
+                shape.FileName,
+                shape.Arguments,
+                directory,
+                cancellationToken: cancellation.Token));
+        int? pid = null;
+        try
+        {
+            pid = await Task.Run(() => WaitForPid(pidFile, work, PidSettleWindow, UnracedPidCeiling));
+            Assert.False(work.IsCompleted, "Run finished before this row cancelled anything.");
+            Assert.NotNull(pid);
+
+            cancellation.Cancel();
+
+            using var delayCts = new CancellationTokenSource();
+            var finished = await Task.WhenAny(work, Task.Delay(RunUnwindSlack + DrainWindow, delayCts.Token)) == work;
+            delayCts.Cancel();
+            Assert.True(
+                finished,
+                FormattableString.Invariant(
+                    $"SystemProcessRunner.Run (hook: {hook}) did not return within {(RunUnwindSlack + DrainWindow).TotalSeconds:F0}s of its cancellation token being signalled. Row 5 judges the latency and prints the cancel-stage timeline; this is the bound that keeps a runner that never returns from wedging the gate."));
+
+            // Exactly the type and token the runner throws without a hook: a hook, throwing or
+            // not, must not change it, and a NullReferenceException from an absent one is the
+            // regression the `none` parametrisation exists for.
+            var thrown = await Assert.ThrowsAsync<OperationCanceledException>(() => work);
+            Assert.Equal(cancellation.Token, thrown.CancellationToken);
+
+            var dead = await Task.Run(() => WaitForDeath(pid, startedUtc, DeathWindow, pidFile));
+            Assert.True(
+                dead,
+                FormattableString.Invariant(
+                    $"SystemProcessRunner.Run (hook: {hook}) threw on cancellation but child pid {pid} was still alive {DeathWindow.TotalSeconds:F0}s later. A hook that throws must not skip the tree-kill, and a runner without one must reach it as row 5's does."));
+
+            if (hook == "throws")
+            {
+                var called = hookCalls.ToArray();
+                var expected = new[]
+                {
+                    CancelStage.Observed,
+                    CancelStage.KillIssued,
+                    CancelStage.KillReturned,
+                    CancelStage.StreamsDisposed,
+                    CancelStage.Thrown,
+                    CancelStage.ProcessDisposed,
+                };
+                var uncalled = expected.Where(stage => !called.Contains(stage)).ToArray();
+                Assert.True(
+                    uncalled.Length == 0,
+                    $"The throwing hook was never called at {string.Join(", ", uncalled)}; it was called at {string.Join(", ", called)}. Each of those stages is reported on the runner's own thread on every cancelled run, so a missing one means the swallowing helper is not what this row exercised.");
+            }
+        }
+        finally
+        {
+            if (pid is null)
+            {
+                pid = await ReclaimPidForTeardownQuietlyAsync(pidFile, work);
+            }
+
+            KillTreeQuietly(pid, startedUtc, pidFile);
+            await DrainAsync(work);
+            TryDeleteDirectory(directory);
+        }
+    }
+
+    /// <summary>
     /// A report taken while the run is still outstanding names the runner stages it has not
     /// reached as NOT REACHED, the two observational stages as merely not observed, the swallowed
-    /// kill failure's type, and the thread-pool deltas.
+    /// kill failure's type, and the thread pool at the signal — and, its gaps all being short,
+    /// no per-gap deltas and no reading guide.
     /// </summary>
     [Fact]
     public void CancelStageRecorder_Describe_SeparatesUnreachedFromUnobservedStages()
@@ -1594,8 +1814,39 @@ public sealed class SystemProcessRunnerTests
         Assert.Matches(@"not observed as of t=.*: ChildExited, ReadersDrained;", text);
         Assert.DoesNotMatch(@"NOT REACHED[^;]*\b(ChildExited|ReadersDrained)\b", text);
         Assert.Contains("kill swallowed: System.AggregateException", text, StringComparison.Ordinal);
-        Assert.Contains("work items completed", text, StringComparison.Ordinal);
-        Assert.Contains("ms of process CPU time", text, StringComparison.Ordinal);
+        Assert.Matches(@"thread pool at signal: threads=\d+ pending=\d+ completed=\d+ ", text);
+        Assert.DoesNotContain("work items completed +", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Reading the brackets", text, StringComparison.Ordinal);
+        Assert.DoesNotContain('\n', text);
+    }
+
+    /// <summary>
+    /// A gap of <see cref="CancelStageRecorder.LongGap"/> or more carries the CPU, work-item,
+    /// thread and pending changes across it, the reading guide follows once, and a
+    /// <see cref="CancelStage.ChildExited"/> stamped once the child's own lifetime could have run
+    /// out says so rather than reading as the kill landing.
+    /// </summary>
+    [Fact]
+    public void CancelStageRecorder_Describe_PrintsDeltasForALongGap_AndFlagsALateChildExited()
+    {
+        // A zero lifetime makes every ChildExited "late": the child could have expired at once.
+        var stages = new CancelStageRecorder(TimeSpan.Zero);
+        stages.Mark(CancelStage.Signalled);
+        stages.Mark(CancelStage.SignalReturned);
+        Thread.Sleep(CancelStageRecorder.LongGap + TimeSpan.FromMilliseconds(50));
+        stages.Record(CancelStage.Observed, detail: null);
+        stages.Mark(CancelStage.ChildExited);
+
+        var text = stages.Describe();
+
+        Assert.Matches(
+            @"Observed \+\d+\.\d \(t=\d+\.\d\) \[CPU \+\d+\.\d ms \(\d+\.\d% of \d+ CPUs\), work items completed \+\d+, threads [+-]\d+ \(\d+ to \d+\), pending \d+ to \d+\];",
+            text);
+        Assert.Matches(@"SignalReturned \+\d+\.\d \(t=\d+\.\d\);", text);
+        Assert.Contains("ChildExited", text, StringComparison.Ordinal);
+        Assert.Contains("[observed after the child's own lifetime could have ended, so it does not show that the kill landed]", text, StringComparison.Ordinal);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(text, "Reading the brackets"));
+        Assert.DoesNotContain('\n', text);
     }
 
     /// <summary>
@@ -2264,8 +2515,8 @@ public sealed class SystemProcessRunnerTests
     /// <para>
     /// <strong>Nothing backstops that, and the census is the wrong shape to.</strong>
     /// <see cref="EveryFinallyThatKills_ReclaimsAPidFirst"/> counts killing <c>finally</c> blocks,
-    /// so a kill added to THIS row's <c>finally</c> would redden it, the census finding seven where
-    /// it covers six — but a kill
+    /// so a kill added to THIS row's <c>finally</c> would redden it, the census finding eight where
+    /// it covers seven — but a kill
     /// added to its BODY is invisible to a rule about <c>finally</c> clauses. That matters more
     /// here than anywhere else in the file: the pid this row hands to
     /// <see cref="TryOpen"/> is the test runner's own, and
@@ -2749,7 +3000,7 @@ public sealed class SystemProcessRunnerTests
     /// <remarks>
     /// <para>
     /// <strong>NOT A <c>Run</c> ROW.</strong> It launches no child and never calls
-    /// <see cref="SystemProcessRunner"/>. What it pins is the SEMANTICS the six <c>finally</c>
+    /// <see cref="SystemProcessRunner"/>. What it pins is the SEMANTICS the seven <c>finally</c>
     /// blocks depend on: that a write COMPLETING after the caller's original wait gave up is still
     /// picked up — which requires the reader to look again after refusing an incomplete one, the
     /// entire mechanism <see cref="ReclaimPidForTeardownAsync"/>'s first paragraph describes — and
@@ -2887,10 +3138,11 @@ public sealed class SystemProcessRunnerTests
     /// behaviour, and until this row nothing exercised it.</strong> Everything else that method
     /// does is delegate. Its <c>catch</c> exists because a <c>finally</c> that throws REPLACES the
     /// finding being propagated — the wedged runner, the undead child — with a permission detail,
-    /// and the six teardown blocks that call it are all <c>finally</c> blocks. A deleted catch
+    /// and the seven teardown blocks that call it are all <c>finally</c> blocks. A deleted catch
     /// changes no other row in this file: rows 1, 2 and 5, the two directly-launching rows
     /// that joined them as the fourth and fifth callers (#541, #529), and the cancel-stage
-    /// ordering row that joined as the sixth, never meet an ACL fault on
+    /// ordering row and the hook-variant cancellation row that joined as the sixth and seventh,
+    /// never meet an ACL fault on
     /// a scratch directory they created themselves, so the suite would stay green over it.
     /// </para>
     /// <para>
@@ -3007,7 +3259,7 @@ public sealed class SystemProcessRunnerTests
             Assert.True(
                 elapsed < promptCeiling,
                 FormattableString.Invariant(
-                    $"ReclaimPidForTeardownQuietlyAsync answered null after {elapsed.TotalSeconds:F1}s against a pid file whose very first read faults, which is not the prompt answer the six finally blocks are costed against. A catch that swallows the fault and then keeps polling spends the whole {LateReadWindow.TotalSeconds:F0}s window on a file that will never become readable, and every 'at most one LateReadWindow per row' claim in this file is written against the prompt answer."));
+                    $"ReclaimPidForTeardownQuietlyAsync answered null after {elapsed.TotalSeconds:F1}s against a pid file whose very first read faults, which is not the prompt answer the seven finally blocks are costed against. A catch that swallows the fault and then keeps polling spends the whole {LateReadWindow.TotalSeconds:F0}s window on a file that will never become readable, and every 'at most one LateReadWindow per row' claim in this file is written against the prompt answer."));
         }
         finally
         {
@@ -3092,7 +3344,7 @@ public sealed class SystemProcessRunnerTests
 
     /// <summary>
     /// Every <c>finally</c> in THIS file that tree-kills is preceded, in the same block, by a
-    /// <c>pid is null</c>-guarded reclaim — and there are exactly six of them.
+    /// <c>pid is null</c>-guarded reclaim — and there are exactly seven of them.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -3112,7 +3364,7 @@ public sealed class SystemProcessRunnerTests
     /// (<see cref="ReclaimPidForTeardownQuietly_TakesALateWholeLinePid_AndNullWhenNoneArrives"/>),
     /// this row's PLACEMENT, and the ARMING POINT of the flag this row's guard consults
     /// (<see cref="TheLateLookFlag_IsArmedOnlyAfterTheLookCompletes"/>). Between them, a reclaim
-    /// deleted from any of the six <c>finally</c> blocks reddens here, a reclaim that stopped
+    /// deleted from any of the seven <c>finally</c> blocks reddens here, a reclaim that stopped
     /// picking up late writes reddens in the first, and a flag armed too early reddens in the
     /// third — a defect THIS row structurally cannot see, since it changes no <c>finally</c>.
     /// </para>
@@ -3167,8 +3419,8 @@ public sealed class SystemProcessRunnerTests
     /// </para>
     /// <para>
     /// <strong>Applied only where it can apply, by looking for the flag's DECLARATION.</strong>
-    /// Rows 1 and 2, the cancel-stage ordering row and the two directly-launching rows take no
-    /// body look, so they have nothing to
+    /// Rows 1 and 2, the cancel-stage ordering row, the hook-variant cancellation row and the two
+    /// directly-launching rows take no body look, so they have nothing to
     /// repeat and carry no flag; requiring the conjunct of them would be requiring a test of a
     /// local that does not exist. The rule
     /// therefore asks which killing <c>finally</c> sits in a method declaring a
@@ -3183,10 +3435,11 @@ public sealed class SystemProcessRunnerTests
     /// at the line, which is the safe direction for a rule that must never go quiet.
     /// </para>
     /// <para>
-    /// <strong>Exactly six, because a count is what turns this from a check into a
-    /// census.</strong> Rows 1, 2 and 5 carry one each, as does
-    /// <see cref="Run_WhenTheCallerCancels_RecordsEachCancelStageInOrder"/>, which launches its
-    /// own never-exiting child through the runner; so do
+    /// <strong>Exactly seven, because a count is what turns this from a check into a
+    /// census.</strong> Rows 1, 2 and 5 carry one each, as do
+    /// <see cref="Run_WhenTheCallerCancels_RecordsEachCancelStageInOrder"/> and
+    /// <see cref="Run_WhenTheCallerCancels_KillsTheChildWhateverTheHookDoes"/>, each of which
+    /// launches its own never-exiting child through the runner; so do
     /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> (#541) and
     /// <see cref="TheGuardsAnchors_StayInTheOrderARealChildProduces"/> (#529), the two rows that
     /// launch a child shape directly. Those last two hold TWO kills each rather than one: a pid —
@@ -3194,7 +3447,7 @@ public sealed class SystemProcessRunnerTests
     /// through the handle they hold, spelled <c>ChildProcess.KillTreeQuietly</c>.
     /// Both are covered, because the match below is on the BARE NAME and a member access carries
     /// the same one. What the count adds is NOT that an unreclaimed newcomer would go unnoticed —
-    /// the offenders loop walks every clause it finds, so a SEVENTH killing <c>finally</c> without
+    /// the offenders loop walks every clause it finds, so an EIGHTH killing <c>finally</c> without
     /// a reclaim reddens with or without it. It is what that loop structurally cannot see: a
     /// well-formed newcomer, and a teardown path that has GONE. Both are changes to the set this
     /// file's residual-child arithmetic is stated over, which is the "enumeration standing in for
@@ -3265,8 +3518,8 @@ public sealed class SystemProcessRunnerTests
         const string KillMethod = "KillTreeQuietly";
         const string ReclaimMethod = "ReclaimPidForTeardownQuietlyAsync";
         const string FlagName = "lateLookTaken";
-        const int ExpectedKillingFinallies = 6;
-        const int ExpectedPidKills = 6;
+        const int ExpectedKillingFinallies = 7;
+        const int ExpectedPidKills = 7;
         const int ExpectedHandleKills = 2;
 
         var killing = SelfSource()
@@ -3278,7 +3531,7 @@ public sealed class SystemProcessRunnerTests
         Assert.True(
             killing.Count == ExpectedKillingFinallies,
             FormattableString.Invariant(
-                $"This file holds {killing.Count} `finally` block(s) calling `{KillMethod}` in either form (a bareword pid kill or a `ChildProcess.{KillMethod}` handle kill), not the {ExpectedKillingFinallies} this census covers (rows 1, 2 and 5, the cancel-stage ordering row that launches its own never-exiting child, and the two rows that launch a shape directly — the writer-contract theory #541 added and the guard-anchor row #529 added). A new PID kill needs the same guarded `{ReclaimMethod}` ahead of it — see #539 — a handle kill does not (#549, see below); either way, one that has gone means a teardown path was removed. Re-aim this count rather than deleting it."));
+                $"This file holds {killing.Count} `finally` block(s) calling `{KillMethod}` in either form (a bareword pid kill or a `ChildProcess.{KillMethod}` handle kill), not the {ExpectedKillingFinallies} this census covers (rows 1, 2 and 5, the cancel-stage ordering row and the hook-variant cancellation row that each launch their own never-exiting child, and the two rows that launch a shape directly — the writer-contract theory #541 added and the guard-anchor row #529 added). A new PID kill needs the same guarded `{ReclaimMethod}` ahead of it — see #539 — a handle kill does not (#549, see below); either way, one that has gone means a teardown path was removed. Re-aim this count rather than deleting it."));
 
         // #549: split by receiver shape rather than counting every `KillMethod` invocation as one
         // undifferentiated kind. Only a PID kill needs the guarded reclaim ahead of it — a HANDLE
@@ -3345,7 +3598,7 @@ public sealed class SystemProcessRunnerTests
         Assert.True(
             flagged.Count == 1,
             FormattableString.Invariant(
-                $"{flagged.Count} of the {ExpectedKillingFinallies} killing `finally` blocks sit in a method declaring a `{FlagName}` local, not the 1 this rule covers (row 5). Rows 1 and 2, the cancel-stage ordering row and the two directly-launching rows have no body look to repeat, so they carry no flag; row 5 does. A second flagged method means another row grew a body look — it needs the same `&& !{FlagName}` conjunct — and none means row 5's has gone."));
+                $"{flagged.Count} of the {ExpectedKillingFinallies} killing `finally` blocks sit in a method declaring a `{FlagName}` local, not the 1 this rule covers (row 5). Rows 1 and 2, the cancel-stage ordering row, the hook-variant cancellation row and the two directly-launching rows have no body look to repeat, so they carry no flag; row 5 does. A second flagged method means another row grew a body look — it needs the same `&& !{FlagName}` conjunct — and none means row 5's has gone."));
 
         var unflagged = flagged
             .Where(clause => !GuardAlsoTestsTheFlag(clause, ReclaimMethod, FlagName))
@@ -3631,7 +3884,7 @@ public sealed class SystemProcessRunnerTests
     /// <c>pid ??= …</c> with no <c>if</c> around it are all refused even though each guards the
     /// look perfectly well. The census reddens on them, loudly and at the line, and the fix is to
     /// spell the pattern; pinning one spelling is what keeps this decidable without a symbol
-    /// table, and the call sites it governs are six lines in one file.
+    /// table, and the call sites it governs are seven lines in one file.
     /// </para>
     /// </remarks>
     private static bool GuardedOnANullPid(SyntaxNode node) =>
@@ -4520,7 +4773,7 @@ public sealed class SystemProcessRunnerTests
     /// opposite of what "better loud" argues for, since what makes loudness right everywhere else
     /// is that the fault is then the most informative thing the row can say. The sites where it is —
     /// rows 1 and 2's body wait, row 5's body wait and body late look, the cancel-stage ordering
-    /// row's body wait, and the body wait each of
+    /// row's and the hook-variant cancellation row's body waits, and the body wait each of
     /// the two directly-launching rows added (#541, #529) — remain loud. Row
     /// 5's
     /// third read, the guarded one #539 put in its <c>finally</c>, is quiet for the same reason
@@ -4848,7 +5101,7 @@ public sealed class SystemProcessRunnerTests
     /// leak whatever it names for <see cref="ChildLifetime"/>, and a teardown that kills nothing
     /// is the leak #481 exists to prevent. Every caller therefore ends up no worse off than it
     /// was before #529, and better off whenever the file is there — which on every TEARDOWN path
-    /// in this file it is, all six of those blocks running strictly before the
+    /// in this file it is, all seven of those blocks running strictly before the
     /// <see cref="TryDeleteDirectory"/> that removes it. The guard rows are the deliberate
     /// exception: <c>no-pid-file</c> hands this method a path with nothing at it precisely to
     /// exercise the fallback, so "the file is there" is a property of the teardown blocks rather
@@ -4921,7 +5174,7 @@ public sealed class SystemProcessRunnerTests
         // AND IT IS DECIDED BEFORE ANYTHING IS OPENED, which is the whole reason it sits here
         // rather than beside the comparison it governs. The default throws, and a throw from
         // below the line would escape TryOpen with a Process handle already in hand — leaked,
-        // and leaked into whichever of the six killing `finally` blocks called in. Deciding
+        // and leaked into whichever of the seven killing `finally` blocks called in. Deciding
         // first means the only thing that escapes is the exception.
         var applyUpperBound = bounds switch
         {
@@ -5246,37 +5499,70 @@ public sealed class SystemProcessRunnerTests
     }
 
     /// <summary>
-    /// Row 5's failure branch only: waits a further <see cref="DrainWindow"/> for a cancelled
-    /// <c>Run</c> that missed <see cref="RunUnwindSlack"/>, polling the child's death alongside,
-    /// and then renders the cancel-stage timeline.
+    /// The cancellation rows' slow-unwind path: waits a further <see cref="DrainWindow"/> for a
+    /// cancelled <c>Run</c> that missed <see cref="RunUnwindSlack"/>, polling the child's death
+    /// alongside, and then renders the cancel-stage timeline.
     /// </summary>
+    /// <returns>
+    /// Whether <c>Run</c> had returned when the timeline was taken, read once so the answer and
+    /// the timeline's own wording agree, and the timeline.
+    /// </returns>
     /// <remarks>
-    /// The verdict is already fixed when this runs; it only delays the message, so a run that
-    /// returns late still reports the stages after the slow one. Bounded by
-    /// <see cref="DrainWindow"/> because the child lives for <see cref="ChildLifetime"/> and a
-    /// wedged runner must not wedge the row. The death poll stamps
-    /// <see cref="CancelStage.ChildExited"/> if it sees the child gone, which tells a kill that
-    /// landed apart from one that never ran. That reading holds only while the child cannot yet
-    /// have exited of its own accord: the pid arrives within <see cref="UnracedPidCeiling"/> of
-    /// the launch, so this poll ends at most 30 + 10 + 10 = 50s in, under
-    /// <see cref="ChildLifetime"/>'s 60s today. Nothing asserts that sum.
+    /// <para>
+    /// Row 5 reads only the timeline: its verdict is already fixed when this runs, so this only
+    /// delays the message, and a run that returns late still reports the stages after the slow
+    /// one. The cancel-stage ordering row reads the answer as well, as the rest of its bound.
+    /// Bounded by <see cref="DrainWindow"/> because the child lives for
+    /// <see cref="ChildLifetime"/> and a wedged runner must not wedge the row.
+    /// </para>
+    /// <para>
+    /// <strong>The death poll runs on a dedicated thread, with a deadline fixed by the pid
+    /// read.</strong> The failure this path describes may be a thread pool with no thread free;
+    /// a poll queued to that pool would start late and its window with it, and could then run on
+    /// past the child's own lifetime. Its deadline is <paramref name="pidReadAt"/> plus
+    /// <see cref="RunUnwindSlack"/> and <see cref="DrainWindow"/>, so where it starts does not
+    /// move where it ends; a deadline already past still takes one sample.
+    /// </para>
+    /// <para>
+    /// The poll stamps <see cref="CancelStage.ChildExited"/> if it sees the child gone, which
+    /// tells a kill that landed apart from one that never ran — but only while the child cannot
+    /// yet have expired by itself. The pid is read at most <see cref="UnracedPidCeiling"/> after
+    /// its wait began, so the poll ends at most 30 + 10 + 10 = 50s after that, under
+    /// <see cref="ChildLifetime"/>'s 60s: asserted at the top of each row that calls this. The
+    /// pid wait itself can start after the child does, which no sum here bounds, so the recorder
+    /// also words a <see cref="CancelStage.ChildExited"/> stamped once the child's lifetime could
+    /// have run out as exactly that.
+    /// </para>
+    /// <para>
+    /// Only the poll is moved off the pool: awaiting <c>Run</c> and the delay still needs a pool
+    /// thread for each continuation, which no row in this file can avoid.
+    /// </para>
     /// </remarks>
-    private static async Task<string> DescribeSlowUnwindAsync(
-        CancelStageRecorder stages, Task<ProcessResult> work, int? pid, DateTime startedUtc, string pidFile)
+    private static async Task<(bool Returned, string Timeline)> DescribeSlowUnwindAsync(
+        CancelStageRecorder stages, Task<ProcessResult> work, int? pid, DateTime startedUtc, string pidFile, long pidReadAt)
     {
-        var death = Task.Run(() =>
-        {
-            if (WaitForDeath(pid, startedUtc, DrainWindow, pidFile))
+        var pollEndsAt = pidReadAt + (long)((RunUnwindSlack + DrainWindow).TotalSeconds * Stopwatch.Frequency);
+        var death = Task.Factory.StartNew(
+            () =>
             {
-                stages.Mark(CancelStage.ChildExited);
-            }
-        });
+                var window = Stopwatch.GetElapsedTime(Stopwatch.GetTimestamp(), pollEndsAt);
+                if (WaitForDeath(pid, startedUtc, window > TimeSpan.Zero ? window : TimeSpan.Zero, pidFile))
+                {
+                    stages.Mark(CancelStage.ChildExited);
+                }
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
         using var delayCts = new CancellationTokenSource();
         await Task.WhenAny(work, Task.Delay(DrainWindow, delayCts.Token)).ConfigureAwait(false);
         delayCts.Cancel();
         await death.ConfigureAwait(false);
-        return FormattableString.Invariant(
-            $"This timeline was taken after waiting up to a further {DrainWindow.TotalSeconds:F0}s for Run, which by then {(work.IsCompleted ? "had returned" : "still had not returned")}: {stages.Describe()}");
+        var returned = work.IsCompleted;
+        return (
+            returned,
+            FormattableString.Invariant(
+                $"This timeline was taken after waiting up to a further {DrainWindow.TotalSeconds:F0}s for Run, which by then {(returned ? "had returned" : "still had not returned")}: {stages.Describe()}"));
     }
 
     /// <summary>Creates a per-row scratch directory outside the repository.</summary>
