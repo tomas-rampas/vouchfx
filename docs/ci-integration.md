@@ -678,14 +678,26 @@ pushes. It runs daily on `main`, scheduled for 06:17 UTC, and on manual dispatch
 Docker-test failure therefore surfaces on the next daily run, not before merge. On a pull request the
 Docker integration check is reported as skipped, which is expected.
 
-Nobody has to watch the Actions tab for those daily runs. `scheduled-run-alerts.yml` opens one issue
-per workflow, titled "Scheduled run alert", when a scheduled run of `CI` or `.NET compatibility`
-fails, is cancelled or times out, adds a comment for each further occurrence, and closes the issue
-when a later scheduled run succeeds, so an open issue means the workflow is currently broken. A daily
-watchdog in the same file opens or updates that issue when either workflow is not active or has no
-completed scheduled run in the last 36 hours. GitHub disables scheduled workflows after 60 days
-without repository activity, and the watchdog is itself scheduled, so check the Actions tab for
-disabled workflows (state `disabled_inactivity`) before a release and re-enable all three together.
+Failures no longer depend on someone watching the Actions tab for those daily runs.
+`scheduled-run-alerts.yml` opens one issue per workflow, titled "Scheduled run alert", when a
+scheduled run of `CI` or `.NET compatibility` fails, is cancelled or times out. The issue lists the
+jobs that did not succeed and the jobs that were skipped (the Docker suite is skipped when the build
+job fails, so it gave no result that day). Each further occurrence adds a comment, a later scheduled
+run that succeeds and is the newest one closes the issue, and a break within 30 days of a close
+reopens the same issue, so an open issue means the workflow is currently broken. The repository
+owner is assigned to the issue so that they are notified whatever their watch settings.
+
+A daily watchdog in the same file opens or updates that issue when either workflow is not active, or
+when no scheduled run was created on `main` in the last 12 hours, whatever its status. A run that
+is still in progress, or one that fails, is the first job's responsibility; the watchdog also opens
+the issue if the newest completed scheduled run was unsuccessful and no issue is open, so a lost
+event or a failed API call does not hide a failure.
+
+The state check catches a workflow that was disabled by hand. GitHub disables scheduled workflows
+after 60 days without repository activity for the whole repository at once, so `CI`,
+`.NET compatibility` and the watchdog stop together and nothing in these workflows can report it.
+Check the Actions tab for disabled workflows (state `disabled_inactivity`) before a release, as the
+checklist in `RELEASING.md` says, and re-enable all three together.
 
 To run the Docker suite on a branch before merging, open the Actions tab, choose the `CI` workflow,
 select **Run workflow** and pick the branch. Manual dispatch needs write access to this repository: a
