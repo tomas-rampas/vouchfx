@@ -71,7 +71,7 @@ Four classes of actor interact with the platform, and each shapes a different pa
 
 The architecture is evaluated against seven goals. They are listed in priority order, because several of them trade against one another and the ordering tells an engineer which way to resolve a conflict.
 
-1. **Topological parity. **An identical test suite must execute unchanged on a developer laptop and inside a CI pipeline (each on local Docker today) and on the planned SaaS cloud fabric (§6, §7.2; proposed behaviour rather than capabilities of the installed CLI). Parity outranks raw performance, because eliminating the “works on my machine” failure mode is the platform's central promise.
+1. **Topological parity. **An identical test suite must execute unchanged on a developer laptop, inside a CI pipeline (both on local Docker today), and on the planned SaaS cloud fabric (§6, §7.2; proposed behaviour rather than capabilities of the installed CLI). Parity outranks raw performance, because eliminating the “works on my machine” failure mode is the platform's central promise.
 1. **Determinism under asynchrony. **Distributed tests are inherently flaky; the engine, not the test author, owns retry, polling, and backoff so that results do not depend on hardware speed.
 1. **Bounded resource consumption. **Dynamically compiled scripts must be fully reclaimable; a long-running suite must not leak assemblies, memory, or orphaned containers.
 1. **Isolation. **Concurrent test runs, and concurrent tenants, must not observe one another's data, ports, or containers.

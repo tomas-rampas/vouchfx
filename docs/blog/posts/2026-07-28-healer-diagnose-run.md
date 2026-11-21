@@ -18,7 +18,7 @@ I already wrote about the broader agentic day — catalogue, scaffold, the borin
 <!-- more -->
 
 !!! note "Update, 21 November 2026"
-    This post describes `diagnose_run` as it was when written. The tool now returns two kinds of proposal. `proposals` holds assertion-level patches and is produced for **Fail** steps only. `specEditProposals` holds scoped YAML spec-edit fragments and is produced for **EnvironmentError** and **Inconclusive** steps and for environment-error records. Neither list is ever applied automatically. The [tool reference](https://vouchfx-mcp.vouchfx.io/docs/tools-and-resources.html#diagnose_run) describes the current behaviour.
+    This post describes `diagnose_run` as it was when written. The tool now returns two kinds of proposal. `proposals` holds assertion-level patches and is produced for **Fail** steps only. `specEditProposals` holds scoped YAML spec-edit fragments and is produced for **EnvironmentError** and **Inconclusive** steps and for environment-error records. Neither list is ever applied automatically, and neither weakens an assertion. The [tool reference](https://vouchfx-mcp.vouchfx.io/docs/tools-and-resources.html#diagnose_run) describes the current behaviour.
 
 ## The bug that is not a bug
 
