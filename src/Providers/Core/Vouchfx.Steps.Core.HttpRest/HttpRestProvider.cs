@@ -181,6 +181,15 @@ public sealed class HttpRestProvider
     {
         "static class HttpRest_Helpers\n" +
         "{\n" +
+        "    // Same combined grammar as Secret_Helpers.ResolveTemplate: a secret token is tried\n" +
+        "    // before a {placeholder}, and Regex.Replace does not re-scan a replacement. A\n" +
+        "    // revealed value is then JSON-escaped, which ResolveTemplate does not do, because\n" +
+        "    // this template is a JSON document and the token sits inside a string.\n" +
+        "    private static readonly System.Text.RegularExpressions.Regex s_jsonTemplate =\n" +
+        "        new System.Text.RegularExpressions.Regex(\n" +
+        "            @\"(?<secret>\\$\\{secret:[A-Za-z0-9_-]+/[^}]+\\})|(?<ph>\\{(?<phName>[A-Za-z_][A-Za-z0-9_]*)\\})\",\n" +
+        "            System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant);\n" +
+        "\n" +
         "    /// <summary>\n" +
         "    /// Issues an HTTP request, evaluates the response status against the\n" +
         "    /// optional expectation, and writes a typed StepOutcome into Vars.\n" +
@@ -203,6 +212,7 @@ public sealed class HttpRestProvider
         "        string method,\n" +
         "        string pathTemplate,\n" +
         "        string? bodyTemplate,\n" +
+        "        bool structuredBody,\n" +
         "        string[] headerNames,\n" +
         "        string[] headerValueTemplates,\n" +
         "        int? expectedStatus,\n" +
@@ -305,14 +315,12 @@ public sealed class HttpRestProvider
         "                    // request-header collection.\n" +
         "                    req.Headers.TryAddWithoutValidation(headerName, headerValue);\n" +
         "                }\n" +
-        "                // Resolve + attach the request body INSIDE the guarded region (§17),\n" +
-        "                // mirroring the path/header handling EXACTLY. When bodyTemplate is\n" +
-        "                // non-null the original template is resolved in a SINGLE pass via\n" +
-        "                // ResolveTemplate (both {placeholder} substitution AND ${secret:...}\n" +
-        "                // resolution over the original text), so a substituted placeholder is\n" +
-        "                // never re-scanned as a secret token and a revealed secret is never\n" +
-        "                // re-scanned as a placeholder. The revealed body feeds the content sink\n" +
-        "                // directly and is never written back to Vars. A missing secret throws\n" +
+        "                // Resolve + attach the request body INSIDE the guarded region (§17).\n" +
+        "                // A scalar body is the author's text: ResolveTemplate substitutes it as\n" +
+        "                // text. A structured body is JSON: ResolveStructuredBody uses the same\n" +
+        "                // single pass (a replacement is never re-scanned) and JSON-escapes each\n" +
+        "                // revealed value, so a quote or backslash in a secret cannot change the\n" +
+        "                // shape of the document. A missing secret throws\n" +
         "                // SecretResolutionException → caught below → EnvironmentError. The\n" +
         "                // StringContent is owned by the HttpRequestMessage and is disposed when\n" +
         "                // the request is disposed by the 'using' block above (a using-declaration\n" +
@@ -320,7 +328,9 @@ public sealed class HttpRestProvider
         "                // MVP content type: application/json.\n" +
         "                if (bodyTemplate != null)\n" +
         "                {\n" +
-        "                    var body = Secret_Helpers.ResolveTemplate(secrets, vars, bodyTemplate);\n" +
+        "                    var body = structuredBody\n" +
+        "                        ? ResolveStructuredBody(secrets, vars, bodyTemplate)\n" +
+        "                        : Secret_Helpers.ResolveTemplate(secrets, vars, bodyTemplate);\n" +
         "                    req.Content = new System.Net.Http.StringContent(\n" +
         "                        body, System.Text.Encoding.UTF8, \"application/json\");\n" +
         "                }\n" +
@@ -612,6 +622,39 @@ public sealed class HttpRestProvider
         "        }\n" +
         "        vars[outcomeKey] = new Vouchfx.Engine.Abstractions.StepOutcome(\n" +
         "            verdict, sw.ElapsedMilliseconds, observation);\n" +
+        "    }\n" +
+        "\n" +
+        "    /// <summary>\n" +
+        "    /// Resolves ${secret:...} and {placeholder} tokens in a structured JSON body and\n" +
+        "    /// JSON-escapes each replacement. One left-to-right pass over the original\n" +
+        "    /// template: a revealed value is not scanned for further tokens (§17).\n" +
+        "    /// </summary>\n" +
+        "    public static string ResolveStructuredBody(\n" +
+        "        Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
+        "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
+        "        string template)\n" +
+        "    {\n" +
+        "        return s_jsonTemplate.Replace(template, m =>\n" +
+        "        {\n" +
+        "            string resolved;\n" +
+        "            if (m.Groups[\"secret\"].Success)\n" +
+        "            {\n" +
+        "                resolved = secrets.Resolve(m.Value).Reveal();\n" +
+        "            }\n" +
+        "            else\n" +
+        "            {\n" +
+        "                var key = m.Groups[\"phName\"].Value;\n" +
+        "                resolved = vars.TryGetValue(key, out var val) && val is not null\n" +
+        "                    ? System.Convert.ToString(val, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty\n" +
+        "                    : string.Empty;\n" +
+        "            }\n" +
+        "            // Serialize produces a quoted JSON string; the token already sits inside\n" +
+        "            // a JSON string, so only the escaped contents are spliced back.\n" +
+        "            var serialised = System.Text.Json.JsonSerializer.Serialize(resolved);\n" +
+        "            return serialised.Length >= 2\n" +
+        "                ? serialised.Substring(1, serialised.Length - 2)\n" +
+        "                : resolved;\n" +
+        "        });\n" +
         "    }\n" +
         "}",
         """
@@ -1049,8 +1092,10 @@ public sealed class HttpRestProvider
         // never a provider fault. The step mapping is passed only to name the step.
         string? body = null;
         string? bodyRefusal = null;
+        var structuredBody = false;
         if (mapping.Children.TryGetValue(new YamlScalarNode("body"), out var bodyNode))
         {
+            structuredBody = bodyNode is YamlMappingNode or YamlSequenceNode;
             var converted = HttpRestBodyConversion.ToTemplate(bodyNode, mapping);
             body = converted.Text;
             bodyRefusal = converted.Refusal;
@@ -1097,7 +1142,8 @@ public sealed class HttpRestProvider
             Headers: headers,
             Body: body,
             Expect: expect,
-            BodyRefusal: bodyRefusal);
+            BodyRefusal: bodyRefusal,
+            StructuredBody: structuredBody && bodyRefusal is null);
     }
 
     // ── IStepValidator<HttpRestModel> ─────────────────────────────────────────
@@ -1492,6 +1538,7 @@ public sealed class HttpRestProvider
                     {{JsonSerializer.Serialize(model.Method)}},
                     {{pathTemplateLiteral}},
                     {{bodyTemplateLiteral}},
+                    {{(model.StructuredBody ? "true" : "false")}},
                     {{headerNamesLiteral}},
                     {{headerValueTemplatesLiteral}},
                     {{expectedLiteral}},

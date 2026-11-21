@@ -15,6 +15,7 @@
 // It never resolves a secret and never reads one: a `${secret:source/path}` token is text
 // here, and stays inside a JSON string for execution-time resolution (§17).
 using System.Globalization;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using YamlDotNet.Core;
@@ -187,6 +188,17 @@ internal static class HttpRestBodyConversion
     /// </param>
     internal sealed record Result(string? Text, string? Refusal);
 
+    // JSON does not require '+' , '<' , '>' , '&' or non-ASCII to be escaped. The default
+    // encoder escapes them anyway (HTML embedding). A secret reference is text inside that
+    // JSON, and the run-time resolver matches the serialised text, so "\u002B" in a path
+    // would be requested instead of "+". Relaxed escaping leaves the author's token intact.
+    // '"' , '\\' and controls stay escaped, because those are required and would otherwise
+    // break the JSON. Resolved values are escaped again at execution time.
+    private static readonly JsonSerializerOptions BodyJson = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     /// <summary>
     /// Converts <paramref name="body"/>, the value of the step's <c>body</c> key, into the
     /// template that is sent.
@@ -207,7 +219,7 @@ internal static class HttpRestBodyConversion
         {
             var budget = MaxBodyNodes;
             var node = ToJsonNode(body, new Merges(step), depth: 1, ref budget);
-            return new Result(JsonSerializer.Serialize(node), null);
+            return new Result(JsonSerializer.Serialize(node, BodyJson), null);
         }
         catch (RefusalException refusal)
         {

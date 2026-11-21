@@ -438,6 +438,138 @@ public sealed class HttpRestBodyTests
         }
     }
 
+    /// <summary>
+    /// A <c>+</c> in a secret path is part of the path. The structured body must not
+    /// JSON-escape it before resolution, or the run requests a different variable.
+    /// </summary>
+    [Fact]
+    public async Task Execute_StructuredBody_PlusInSecretPath_ResolvesTheDeclaredPath()
+    {
+        const string path = "a+b";
+        const string secretValue = "plus-secret";
+        Environment.SetEnvironmentVariable(path, secretValue);
+        var port = FindFreePort();
+        var (baseUrl, responder) = StartEchoResponder(port);
+        try
+        {
+            var model = BindYaml("""
+                id: plus-path
+                target: svc
+                method: POST
+                path: /orders
+                body:
+                  token: "${secret:env/a+b}"
+                """);
+            Assert.True(model.StructuredBody);
+            Assert.Contains("${secret:env/a+b}", model.Body, StringComparison.Ordinal);
+
+            var outcome = await RunPostedBodyAsync(model, "plus-path", baseUrl, new Dictionary<string, object?>());
+            Assert.Equal(Verdict.Pass, outcome.Verdict);
+            Assert.Equal("{\"token\":\"" + secretValue + "\"}", responder.LastBody);
+        }
+        finally
+        {
+            responder.Dispose();
+            Environment.SetEnvironmentVariable(path, null);
+        }
+    }
+
+    /// <summary>
+    /// A secret value that contains a quote and a backslash stays inside its JSON
+    /// string. Splicing it raw would close the string and add a member.
+    /// </summary>
+    [Fact]
+    public async Task Execute_StructuredBody_QuoteAndBackslashInSecret_StayInsideTheString()
+    {
+        var envName = "VOUCHFX_BODY_QUOTE_" + Guid.NewGuid().ToString("N");
+        const string secretValue = "p\"ass\\word";
+        Environment.SetEnvironmentVariable(envName, secretValue);
+        var port = FindFreePort();
+        var (baseUrl, responder) = StartEchoResponder(port);
+        try
+        {
+            var model = BindYaml($$"""
+                id: quoted-secret
+                target: svc
+                method: POST
+                path: /orders
+                body:
+                  password: "${secret:env/{{envName}}}"
+                  note: "x{extra}y"
+                """);
+            Assert.True(model.StructuredBody);
+
+            var outcome = await RunPostedBodyAsync(
+                model, "quoted-secret", baseUrl, new Dictionary<string, object?> { ["extra"] = "a\"b" });
+            Assert.Equal(Verdict.Pass, outcome.Verdict);
+            Assert.Equal(
+                "{\"password\":\"p\\u0022ass\\\\word\",\"note\":\"xa\\u0022by\"}",
+                responder.LastBody);
+        }
+        finally
+        {
+            responder.Dispose();
+            Environment.SetEnvironmentVariable(envName, null);
+        }
+    }
+
+    /// <summary>
+    /// A revealed secret is not scanned again. A value that looks like another
+    /// secret reference is sent as text.
+    /// </summary>
+    [Fact]
+    public async Task Execute_StructuredBody_RevealedSecretIsNotResolvedAgain()
+    {
+        var outer = "VOUCHFX_BODY_OUTER_" + Guid.NewGuid().ToString("N");
+        var inner = "VOUCHFX_BODY_INNER_" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable(outer, "${secret:env/" + inner + "}");
+        Environment.SetEnvironmentVariable(inner, "should-not-be-sent");
+        var port = FindFreePort();
+        var (baseUrl, responder) = StartEchoResponder(port);
+        try
+        {
+            var model = BindYaml($$"""
+                id: no-rescan
+                target: svc
+                method: POST
+                path: /orders
+                body:
+                  token: "${secret:env/{{outer}}}"
+                """);
+
+            var outcome = await RunPostedBodyAsync(model, "no-rescan", baseUrl, new Dictionary<string, object?>());
+            Assert.Equal(Verdict.Pass, outcome.Verdict);
+            Assert.Equal(
+                "{\"token\":\"${secret:env/" + inner + "}\"}",
+                responder.LastBody);
+            Assert.DoesNotContain("should-not-be-sent", responder.LastBody, StringComparison.Ordinal);
+        }
+        finally
+        {
+            responder.Dispose();
+            Environment.SetEnvironmentVariable(outer, null);
+            Environment.SetEnvironmentVariable(inner, null);
+        }
+    }
+
+    private static async Task<StepOutcome> RunPostedBodyAsync(
+        HttpRestModel model,
+        string stepId,
+        string baseUrl,
+        Dictionary<string, object?> vars)
+    {
+        var fragment = new HttpRestProvider().Emit(model with { Expect = new HttpExpect(Status: 200) }, new StubCtx(stepId));
+        var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
+        var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: s_refs);
+        vars[VarKeys.Service("svc")] = baseUrl;
+        var globals = new ScriptGlobalVariables(
+            vars,
+            new Dictionary<string, object>(StringComparer.Ordinal),
+            new SecretAccessor(new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() })));
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+        return Assert.IsType<StepOutcome>(vars[VarKeys.Outcome(CsxFragment.SanitiseId(stepId))]);
+    }
+
     // ── 5. Execution: missing secret in body → EnvironmentError ───────────────
 
     /// <summary>

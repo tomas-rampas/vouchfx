@@ -203,7 +203,7 @@ Set `type: http.rest` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `body` | `any` | Optional request body, given inline as YAML and serialised to JSON. In a mapping or sequence body, merge keys are applied, quoted and block scalars are strings, an empty value is null, and core-schema tags decide the type (see the DSL specification, section 5.1). |
+| `body` | `any` | Optional request body, given inline as YAML and serialised to JSON. In a mapping or sequence body, merge keys are applied, quoted and block scalars are strings, an empty value is null, and core-schema tags decide the type. A token in that JSON is the token written, and a resolved secret or placeholder is JSON-escaped into its string. A scalar body is the author's text (see the DSL specification, section 5.1). |
 | `expect` | `object` | Optional assertion block applied to the HTTP response: status, json (JSONPath assertions over a JSON body) and bodyContains (a body substring). Body assertions are evaluated only once the status check has passed. |
 | `headers` | `object` | Optional map of request header names to values. |
 

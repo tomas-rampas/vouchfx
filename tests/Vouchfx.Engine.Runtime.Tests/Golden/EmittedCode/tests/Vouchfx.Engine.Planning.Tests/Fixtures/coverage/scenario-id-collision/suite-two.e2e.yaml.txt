@@ -21,7 +21,8 @@ timeout-ms: none
   "Headers": null,
   "Body": null,
   "Expect": null,
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "StructuredBody": false
 }
 @@@@ step 1 host-resources
 []

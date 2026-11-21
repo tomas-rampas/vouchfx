@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
@@ -227,6 +228,21 @@ public sealed class SecretTemplateReferenceTests
         {
             foreach (var (marker, original) in saved) Environment.SetEnvironmentVariable(marker, original);
         }
+    }
+
+    // A '+' in a secret path is legal (the path runs to the closing brace). The structured
+    // body is JSON, and the default encoder would rewrite '+' as \u002B before the census
+    // and the resolver ever see the token, so the run would request a different path.
+    [Fact]
+    public void RestBody_PlusInSecretPath_ReachesTheCensusUnescaped()
+    {
+        var node = RestNode("body: { token: '${secret:env/a+b}' }");
+        var text = Assert.Single(StepTemplateCensus.Collect(node).Fields, field => field.Location == "body").Text;
+        Assert.Contains("${secret:env/a+b}", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\u002B", text, StringComparison.Ordinal);
+        var reference = Assert.Single(SecretReference.FindAll(text));
+        Assert.Equal("env", reference.Source);
+        Assert.Equal("a+b", reference.Path);
     }
 
     // The census reads a structured body through the binder's own conversion (ZEB-67 review:
