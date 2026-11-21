@@ -1,0 +1,9 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/expect-json-extra-matcher-key-http-rest.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic 1 of 2
+/steps/0/expect/json/$.id	(line 17) Value should have at most 1 properties
+@@@@ diagnostic 2 of 2
+/steps/0/expect/json/$.id/type	(line 17) Unknown property 'type'
+@@@@ end

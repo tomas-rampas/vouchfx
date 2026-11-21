@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/security-mtls-missing-clientkey.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic 1 of 1
+/environment/dependencies/events-kafka/security	(line 13) Required properties ["clientKey"] are not present on dependency 'events-kafka'
+@@@@ end

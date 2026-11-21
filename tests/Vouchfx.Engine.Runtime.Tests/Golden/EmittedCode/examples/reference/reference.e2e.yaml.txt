@@ -1,0 +1,761 @@
+vouchfx emitted-code baseline v2
+suite: examples/reference/reference.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 7
+
+@@@@ step 1 of 7
+id: rest-get-whoami
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "whoami",
+  "Method": "GET",
+  "Path": "/api",
+  "Headers": {
+    "Authorization": "Bearer ${secret:env/VOUCHFX_REF_BEARER_TOKEN}"
+  },
+  "Body": null,
+  "Expect": {
+    "Status": 200,
+    "Json": null,
+    "BodyContains": null
+  },
+  "BodyRefusal": null
+}
+@@@@ step 1 host-resources
+[]
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::rest_get_whoami",
+        "__capture_status::rest_get_whoami",
+        "svc::whoami",
+        "whoami",
+        "GET",
+        "/api",
+        null,
+        new string[] { "Authorization" },
+        new string[] { "Bearer ${secret:env/VOUCHFX_REF_BEARER_TOKEN}" },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { "hostname" },
+        new string[] { "$.hostname" },
+        new string[] { "json" },
+        __stepCt_rest_get_whoami,
+        __stepBudgetGoverned_rest_get_whoami);
+}
+
+@@@@ step 2 of 7
+id: db-insert-row
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Code": "var connStr = (string)Vars[\"conn::refdb\"];\nvar hostVal = (string)Vars[\"hostname\"];\nvar conn = new Npgsql.NpgsqlConnection(connStr);\nawait conn.OpenAsync();\ntry {\n  var cmd = conn.CreateCommand();\n  try {\n    cmd.CommandText =\n      \"INSERT INTO orders (hostname, status) VALUES (@h, @s);\";\n    cmd.Parameters.AddWithValue(\"h\", hostVal);\n    cmd.Parameters.AddWithValue(\"s\", \"PENDING\");\n    var rows = await cmd.ExecuteNonQueryAsync();\n    if (rows != 1)\n      throw new System.Exception(\"Expected INSERT to affect 1 row, got \" + rows + \".\");\n  } finally { cmd.Dispose(); }\n} finally { await conn.DisposeAsync(); }\n",
+  "File": null
+}
+@@@@ step 2 host-resources
+[]
+@@@@ step 2 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+
+@@@@ step 2 statement-block
+{
+    var __sw_db_insert_row = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_db_insert_row = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_db_insert_row = null;
+    async System.Threading.Tasks.Task __body_db_insert_row()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::refdb"];
+var hostVal = (string)Vars["hostname"];
+var conn = new Npgsql.NpgsqlConnection(connStr);
+await conn.OpenAsync();
+try {
+  var cmd = conn.CreateCommand();
+  try {
+    cmd.CommandText =
+      "INSERT INTO orders (hostname, status) VALUES (@h, @s);";
+    cmd.Parameters.AddWithValue("h", hostVal);
+    cmd.Parameters.AddWithValue("s", "PENDING");
+    var rows = await cmd.ExecuteNonQueryAsync();
+    if (rows != 1)
+      throw new System.Exception("Expected INSERT to affect 1 row, got " + rows + ".");
+  } finally { cmd.Dispose(); }
+} finally { await conn.DisposeAsync(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_db_insert_row();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_db_insert_row.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_db_insert_row)
+    {
+        __v_db_insert_row = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_db_insert_row = __ex_db_insert_row.Message;
+    }
+    finally
+    {
+        __sw_db_insert_row.Stop();
+    }
+    Vars["__outcome::db_insert_row"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_db_insert_row, __sw_db_insert_row.ElapsedMilliseconds, __obs_db_insert_row);
+}
+
+@@@@ step 3 of 7
+id: db-assert-rows
+type: db-assert.postgres
+provider: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresProvider
+model: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresModel
+retry: false
+timeout-ms: none
+@@@@ step 3 model
+{
+  "Target": "refdb",
+  "Query": "SELECT hostname, status FROM orders WHERE hostname = @h",
+  "Parameters": {
+    "h": "{hostname}"
+  },
+  "Expect": {
+    "RowCount": 1,
+    "Row": {
+      "status": "{expectedStatus}"
+    }
+  }
+}
+@@@@ step 3 host-resources
+[]
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Npgsql
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+DbAssertPostgres_Helpers sha256=c0df084c7cfdb76f73ba2cc3741b35b20289a3831b4340487cd39307752063fe
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 3 statement-block
+{
+    await DbAssertPostgres_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::db_assert_rows",
+        "conn::refdb",
+        "SELECT hostname, status FROM orders WHERE hostname = @h",
+        new string[] { "h" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "{hostname}") },
+        1,
+        new string[] { "status" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "{expectedStatus}") },
+        __stepCt_db_assert_rows, __stepBudgetGoverned_db_assert_rows);
+}
+
+@@@@ step 4 of 7
+id: kafka-publish-order
+type: mq-publish.kafka
+provider: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaProvider
+model: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaModel
+retry: false
+timeout-ms: none
+@@@@ step 4 model
+{
+  "Target": "events",
+  "Topic": "orders.created",
+  "Key": null,
+  "Payload": "{\"id\":\"{orderId}\",\"hostname\":\"{hostname}\"}",
+  "Headers": null,
+  "Avro": null
+}
+@@@@ step 4 host-resources
+[]
+@@@@ step 4 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Confluent.Kafka
+Vouchfx.Engine.Abstractions
+@@@@ step 4 helpers
+MqPublishKafka_Helpers sha256=f4646d77fdb0eaa101c228c0bb9ad840c0b9fc24ec0586b2c5c95c6089186e9e
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945
+@@@@ step 4 statement-block
+{
+    await MqPublishKafka_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::kafka_publish_order",
+        "conn::events",
+        "events",
+        "orders.created",
+        null,
+        "{\u0022id\u0022:\u0022{orderId}\u0022,\u0022hostname\u0022:\u0022{hostname}\u0022}",
+        new string[] { },
+        new string[] { },
+        null,
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_kafka_publish_order,
+        __stepBudgetGoverned_kafka_publish_order);
+}
+
+@@@@ step 5 of 7
+id: kafka-expect-order
+type: mq-expect.kafka
+provider: Vouchfx.Steps.MqExpect.Kafka.MqExpectKafkaProvider
+model: Vouchfx.Steps.MqExpect.Kafka.MqExpectKafkaModel
+retry: true
+timeout-ms: 30000
+@@@@ step 5 model
+{
+  "Target": "events",
+  "Topic": "orders.created",
+  "Match": {
+    "Key": null,
+    "Headers": null,
+    "PayloadContains": null,
+    "Json": {
+      "$.id": "{orderId}"
+    }
+  },
+  "Avro": null
+}
+@@@@ step 5 host-resources
+[]
+@@@@ step 5 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading
+System.Threading.Tasks
+Confluent.Kafka
+Vouchfx.Engine.Abstractions
+@@@@ step 5 helpers
+MqExpectKafka_Helpers sha256=2bed91b8263ca592b9958ddeb9bb4e4e26e69a06f6fb6460b6ac728a88b21f21
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945
+@@@@ step 5 statement-block
+{
+    await MqExpectKafka_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::kafka_expect_order",
+        "conn::events",
+        "events",
+        "orders.created",
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { "$.id" },
+        new string[] { "{orderId}" },
+        false,
+        null,
+        __stepCt_kafka_expect_order,
+        __stepBudgetGoverned_kafka_expect_order);
+}
+
+@@@@ step 6 of 7
+id: webhook-trigger
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
+retry: false
+timeout-ms: none
+@@@@ step 6 model
+{
+  "Code": "var cb = (string)Vars[\"cb\"];\nvar orderId = (string)Vars[\"orderId\"];\nvar client = new System.Net.Http.HttpClient();\ntry {\n  var body = new System.Net.Http.StringContent(\n    \"{\\\"orderId\\\":\\\"\" + orderId + \"\\\"}\",\n    System.Text.Encoding.UTF8, \"application/json\");\n  var resp = await client.PostAsync(cb + \"callbacks/\" + orderId, body);\n  if ((int)resp.StatusCode >= 400)\n    throw new System.Exception(\"Webhook POST failed: \" + (int)resp.StatusCode);\n} finally { client.Dispose(); }\n",
+  "File": null
+}
+@@@@ step 6 host-resources
+[]
+@@@@ step 6 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 6 helpers
+
+@@@@ step 6 statement-block
+{
+    var __sw_webhook_trigger = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_webhook_trigger = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_webhook_trigger = null;
+    async System.Threading.Tasks.Task __body_webhook_trigger()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var cb = (string)Vars["cb"];
+var orderId = (string)Vars["orderId"];
+var client = new System.Net.Http.HttpClient();
+try {
+  var body = new System.Net.Http.StringContent(
+    "{\"orderId\":\"" + orderId + "\"}",
+    System.Text.Encoding.UTF8, "application/json");
+  var resp = await client.PostAsync(cb + "callbacks/" + orderId, body);
+  if ((int)resp.StatusCode >= 400)
+    throw new System.Exception("Webhook POST failed: " + (int)resp.StatusCode);
+} finally { client.Dispose(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_webhook_trigger();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_webhook_trigger.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_webhook_trigger)
+    {
+        __v_webhook_trigger = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_webhook_trigger = __ex_webhook_trigger.Message;
+    }
+    finally
+    {
+        __sw_webhook_trigger.Stop();
+    }
+    Vars["__outcome::webhook_trigger"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_webhook_trigger, __sw_webhook_trigger.ElapsedMilliseconds, __obs_webhook_trigger);
+}
+
+@@@@ step 7 of 7
+id: webhook-await
+type: webhook-listen.http
+provider: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpProvider
+model: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpModel
+retry: true
+timeout-ms: 30000
+@@@@ step 7 model
+{
+  "Listener": "cb",
+  "Match": {
+    "Method": "POST",
+    "Path": "/callbacks/{orderId}",
+    "Headers": null,
+    "BodyContains": null,
+    "PeerCertificateSha256": null
+  }
+}
+@@@@ step 7 host-resources
+[
+  {
+    "Kind": "webhook-listener",
+    "VarName": "cb"
+  }
+]
+@@@@ step 7 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+Vouchfx.Engine.Abstractions.Webhooks
+@@@@ step 7 helpers
+WebhookListenHttp_Helpers sha256=b99a0c99d4690d6c8e1a24a58f0bda0435f57c4a64a2467359b770f235c7e2ca
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 7 statement-block
+{
+    await WebhookListenHttp_Helpers.AssertAsync(
+        Vars,
+        Secrets,
+        Webhooks,
+        "__outcome::webhook_await",
+        "cb",
+        "POST",
+        "/callbacks/{orderId}",
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_webhook_await);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using Npgsql;
+using Confluent.Kafka;
+using System.Threading;
+using Vouchfx.Engine.Abstractions.Webhooks;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper DbAssertPostgres_Helpers sha256=c0df084c7cfdb76f73ba2cc3741b35b20289a3831b4340487cd39307752063fe: body elided, recorded by name and hash]
+// [helper MqPublishKafka_Helpers sha256=f4646d77fdb0eaa101c228c0bb9ad840c0b9fc24ec0586b2c5c95c6089186e9e: body elided, recorded by name and hash]
+// [helper KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945: body elided, recorded by name and hash]
+// [helper MqExpectKafka_Helpers sha256=2bed91b8263ca592b9958ddeb9bb4e4e26e69a06f6fb6460b6ac728a88b21f21: body elided, recorded by name and hash]
+// [helper WebhookListenHttp_Helpers sha256=b99a0c99d4690d6c8e1a24a58f0bda0435f57c4a64a2467359b770f235c7e2ca: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_rest_get_whoami = __vouchfxRunCt;
+    _ = __stepCt_rest_get_whoami;
+    bool __stepBudgetGoverned_rest_get_whoami = false;
+    _ = __stepBudgetGoverned_rest_get_whoami;
+    StepEvents?.OnStepStarted("rest-get-whoami");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::rest_get_whoami",
+        "__capture_status::rest_get_whoami",
+        "svc::whoami",
+        "whoami",
+        "GET",
+        "/api",
+        null,
+        new string[] { "Authorization" },
+        new string[] { "Bearer ${secret:env/VOUCHFX_REF_BEARER_TOKEN}" },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { "hostname" },
+        new string[] { "$.hostname" },
+        new string[] { "json" },
+        __stepCt_rest_get_whoami,
+        __stepBudgetGoverned_rest_get_whoami);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::rest_get_whoami");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "rest-get-whoami",
+        Vars.TryGetValue("__outcome::rest_get_whoami", out var __sco_rest_get_whoami) ? __sco_rest_get_whoami as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::rest_get_whoami", out var __scs_rest_get_whoami) ? __scs_rest_get_whoami as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_db_insert_row = __vouchfxRunCt;
+    _ = __stepCt_db_insert_row;
+    bool __stepBudgetGoverned_db_insert_row = false;
+    _ = __stepBudgetGoverned_db_insert_row;
+    StepEvents?.OnStepStarted("db-insert-row");
+{
+    var __sw_db_insert_row = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_db_insert_row = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_db_insert_row = null;
+    async System.Threading.Tasks.Task __body_db_insert_row()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::refdb"];
+var hostVal = (string)Vars["hostname"];
+var conn = new Npgsql.NpgsqlConnection(connStr);
+await conn.OpenAsync();
+try {
+  var cmd = conn.CreateCommand();
+  try {
+    cmd.CommandText =
+      "INSERT INTO orders (hostname, status) VALUES (@h, @s);";
+    cmd.Parameters.AddWithValue("h", hostVal);
+    cmd.Parameters.AddWithValue("s", "PENDING");
+    var rows = await cmd.ExecuteNonQueryAsync();
+    if (rows != 1)
+      throw new System.Exception("Expected INSERT to affect 1 row, got " + rows + ".");
+  } finally { cmd.Dispose(); }
+} finally { await conn.DisposeAsync(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_db_insert_row();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_db_insert_row.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_db_insert_row)
+    {
+        __v_db_insert_row = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_db_insert_row = __ex_db_insert_row.Message;
+    }
+    finally
+    {
+        __sw_db_insert_row.Stop();
+    }
+    Vars["__outcome::db_insert_row"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_db_insert_row, __sw_db_insert_row.ElapsedMilliseconds, __obs_db_insert_row);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::db_insert_row");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "db-insert-row",
+        Vars.TryGetValue("__outcome::db_insert_row", out var __sco_db_insert_row) ? __sco_db_insert_row as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::db_insert_row", out var __scs_db_insert_row) ? __scs_db_insert_row as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_db_assert_rows = __vouchfxRunCt;
+    _ = __stepCt_db_assert_rows;
+    bool __stepBudgetGoverned_db_assert_rows = false;
+    _ = __stepBudgetGoverned_db_assert_rows;
+    StepEvents?.OnStepStarted("db-assert-rows");
+{
+    await DbAssertPostgres_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::db_assert_rows",
+        "conn::refdb",
+        "SELECT hostname, status FROM orders WHERE hostname = @h",
+        new string[] { "h" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "{hostname}") },
+        1,
+        new string[] { "status" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "{expectedStatus}") },
+        __stepCt_db_assert_rows, __stepBudgetGoverned_db_assert_rows);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::db_assert_rows");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "db-assert-rows",
+        Vars.TryGetValue("__outcome::db_assert_rows", out var __sco_db_assert_rows) ? __sco_db_assert_rows as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::db_assert_rows", out var __scs_db_assert_rows) ? __scs_db_assert_rows as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_kafka_publish_order = __vouchfxRunCt;
+    _ = __stepCt_kafka_publish_order;
+    bool __stepBudgetGoverned_kafka_publish_order = false;
+    _ = __stepBudgetGoverned_kafka_publish_order;
+    StepEvents?.OnStepStarted("kafka-publish-order");
+{
+    await MqPublishKafka_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::kafka_publish_order",
+        "conn::events",
+        "events",
+        "orders.created",
+        null,
+        "{\u0022id\u0022:\u0022{orderId}\u0022,\u0022hostname\u0022:\u0022{hostname}\u0022}",
+        new string[] { },
+        new string[] { },
+        null,
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_kafka_publish_order,
+        __stepBudgetGoverned_kafka_publish_order);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::kafka_publish_order");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "kafka-publish-order",
+        Vars.TryGetValue("__outcome::kafka_publish_order", out var __sco_kafka_publish_order) ? __sco_kafka_publish_order as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::kafka_publish_order", out var __scs_kafka_publish_order) ? __scs_kafka_publish_order as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    StepEvents?.OnStepStarted("kafka-expect-order");
+    async System.Threading.Tasks.Task<Vouchfx.Engine.Abstractions.StepOutcome> __attempt_kafka_expect_order(System.Threading.CancellationToken __ct_kafka_expect_order)
+    {
+        System.Threading.CancellationToken __stepCt_kafka_expect_order = __ct_kafka_expect_order;
+        _ = __stepCt_kafka_expect_order;
+        bool __stepBudgetGoverned_kafka_expect_order = false;
+        _ = __stepBudgetGoverned_kafka_expect_order;
+{
+    await MqExpectKafka_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::kafka_expect_order",
+        "conn::events",
+        "events",
+        "orders.created",
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { "$.id" },
+        new string[] { "{orderId}" },
+        false,
+        null,
+        __stepCt_kafka_expect_order,
+        __stepBudgetGoverned_kafka_expect_order);
+}
+        var __o_kafka_expect_order = Vars.TryGetValue("__outcome::kafka_expect_order", out var __raw_kafka_expect_order) && __raw_kafka_expect_order is Vouchfx.Engine.Abstractions.StepOutcome __so_kafka_expect_order
+            ? __so_kafka_expect_order
+            : new Vouchfx.Engine.Abstractions.StepOutcome(Vouchfx.Engine.Abstractions.Verdict.Inconclusive, 0L, null);
+        Vars.Remove("__outcome::kafka_expect_order");
+        return __o_kafka_expect_order;
+    }
+    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(
+        Vars, "__outcome::kafka_expect_order", "__attempts::kafka_expect_order", 30000L, null, __attempt_kafka_expect_order, StepEvents, "kafka-expect-order", ct: __vouchfxRunCt);
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::kafka_expect_order");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "kafka-expect-order",
+        Vars.TryGetValue("__outcome::kafka_expect_order", out var __sco_kafka_expect_order) ? __sco_kafka_expect_order as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::kafka_expect_order", out var __scs_kafka_expect_order) ? __scs_kafka_expect_order as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_webhook_trigger = __vouchfxRunCt;
+    _ = __stepCt_webhook_trigger;
+    bool __stepBudgetGoverned_webhook_trigger = false;
+    _ = __stepBudgetGoverned_webhook_trigger;
+    StepEvents?.OnStepStarted("webhook-trigger");
+{
+    var __sw_webhook_trigger = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_webhook_trigger = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_webhook_trigger = null;
+    async System.Threading.Tasks.Task __body_webhook_trigger()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var cb = (string)Vars["cb"];
+var orderId = (string)Vars["orderId"];
+var client = new System.Net.Http.HttpClient();
+try {
+  var body = new System.Net.Http.StringContent(
+    "{\"orderId\":\"" + orderId + "\"}",
+    System.Text.Encoding.UTF8, "application/json");
+  var resp = await client.PostAsync(cb + "callbacks/" + orderId, body);
+  if ((int)resp.StatusCode >= 400)
+    throw new System.Exception("Webhook POST failed: " + (int)resp.StatusCode);
+} finally { client.Dispose(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_webhook_trigger();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_webhook_trigger.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_webhook_trigger)
+    {
+        __v_webhook_trigger = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_webhook_trigger = __ex_webhook_trigger.Message;
+    }
+    finally
+    {
+        __sw_webhook_trigger.Stop();
+    }
+    Vars["__outcome::webhook_trigger"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_webhook_trigger, __sw_webhook_trigger.ElapsedMilliseconds, __obs_webhook_trigger);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::webhook_trigger");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "webhook-trigger",
+        Vars.TryGetValue("__outcome::webhook_trigger", out var __sco_webhook_trigger) ? __sco_webhook_trigger as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::webhook_trigger", out var __scs_webhook_trigger) ? __scs_webhook_trigger as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    StepEvents?.OnStepStarted("webhook-await");
+    async System.Threading.Tasks.Task<Vouchfx.Engine.Abstractions.StepOutcome> __attempt_webhook_await(System.Threading.CancellationToken __ct_webhook_await)
+    {
+        System.Threading.CancellationToken __stepCt_webhook_await = __ct_webhook_await;
+        _ = __stepCt_webhook_await;
+        bool __stepBudgetGoverned_webhook_await = false;
+        _ = __stepBudgetGoverned_webhook_await;
+{
+    await WebhookListenHttp_Helpers.AssertAsync(
+        Vars,
+        Secrets,
+        Webhooks,
+        "__outcome::webhook_await",
+        "cb",
+        "POST",
+        "/callbacks/{orderId}",
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_webhook_await);
+}
+        var __o_webhook_await = Vars.TryGetValue("__outcome::webhook_await", out var __raw_webhook_await) && __raw_webhook_await is Vouchfx.Engine.Abstractions.StepOutcome __so_webhook_await
+            ? __so_webhook_await
+            : new Vouchfx.Engine.Abstractions.StepOutcome(Vouchfx.Engine.Abstractions.Verdict.Inconclusive, 0L, null);
+        Vars.Remove("__outcome::webhook_await");
+        return __o_webhook_await;
+    }
+    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(
+        Vars, "__outcome::webhook_await", "__attempts::webhook_await", 30000L, null, __attempt_webhook_await, StepEvents, "webhook-await", ct: __vouchfxRunCt);
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::webhook_await");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "webhook-await",
+        Vars.TryGetValue("__outcome::webhook_await", out var __sco_webhook_await) ? __sco_webhook_await as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::webhook_await", out var __scs_webhook_await) ? __scs_webhook_await as string : null);
+}
+@@@@ end

@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/service-httpport-on-project-form.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic 1 of 1
+/environment/services/app/httpPort	(line 17) Property 'httpPort' is not valid on the 'project'-form service 'app' - a project's endpoints are discovered from its own launch profile, and 'httpPort' names a container port rather than a listener. Remove the line; to choose WHICH discovered endpoint this service is addressed on, use 'endpoint' (DSL section 3.2)
+@@@@ end

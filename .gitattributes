@@ -85,6 +85,10 @@
 .gitignore     text eol=lf
 .gitmodules    text eol=lf
 
+# ── Emitted-code baseline goldens ────────────────────────────────────────────
+# Compared byte for byte, so they are LF on every platform whatever core.autocrlf says.
+tests/Vouchfx.Engine.Runtime.Tests/Golden/EmittedCode/** text eol=lf
+
 # ── Binaries — never diff or merge ───────────────────────────────────────────
 *.dll       binary
 *.exe       binary

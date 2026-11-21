@@ -1,0 +1,9 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/vocabulary/unknown-kind/suite.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic 1 of 2
+/steps	(line 6) Value should have at least 1 items
+@@@@ diagnostic 2 of 2
+/environment/dependencies/legacy-cache/type	(line 4) Value 'cassandra' is not one of the accepted values for 'type': postgres, sqlserver, mysql, mongodb, redis, elasticsearch, rabbitmq, nats, ... and 6 more
+@@@@ end

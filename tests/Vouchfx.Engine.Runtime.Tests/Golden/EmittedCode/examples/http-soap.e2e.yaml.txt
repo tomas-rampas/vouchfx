@@ -1,0 +1,115 @@
+vouchfx emitted-code baseline v2
+suite: examples/http-soap.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 1
+
+@@@@ step 1 of 1
+id: get-user
+type: http.soap
+provider: Vouchfx.Steps.Http.Soap.HttpSoapProvider
+model: Vouchfx.Steps.Http.Soap.HttpSoapModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Path": "/soap/users",
+  "Action": "http://example.com/GetUser",
+  "Envelope": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <GetUser xmlns=\"http://example.com/users\">\n      <UserId>{userId}</UserId>\n    </GetUser>\n  </soap:Body>\n</soap:Envelope>\n",
+  "Expect": {
+    "Status": 200,
+    "Fault": null,
+    "Xpath": null
+  }
+}
+@@@@ step 1 host-resources
+[]
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpSoap_Helpers sha256=96cd73cfc9790619876f55d2b23f55fcd041ed4f46a23adfbcd30ca22701fee7
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpSoap_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::get_user",
+        "__capture_status::get_user",
+        "svc::app",
+        "app",
+        "/soap/users",
+        "http://example.com/GetUser",
+        "\u003C?xml version=\u00221.0\u0022 encoding=\u0022utf-8\u0022?\u003E\n\u003Csoap:Envelope xmlns:soap=\u0022http://schemas.xmlsoap.org/soap/envelope/\u0022\u003E\n  \u003Csoap:Body\u003E\n    \u003CGetUser xmlns=\u0022http://example.com/users\u0022\u003E\n      \u003CUserId\u003E{userId}\u003C/UserId\u003E\n    \u003C/GetUser\u003E\n  \u003C/soap:Body\u003E\n\u003C/soap:Envelope\u003E\n",
+        200,
+        false,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_get_user,
+        __stepBudgetGoverned_get_user);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+
+// [helper HttpSoap_Helpers sha256=96cd73cfc9790619876f55d2b23f55fcd041ed4f46a23adfbcd30ca22701fee7: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_get_user = __vouchfxRunCt;
+    _ = __stepCt_get_user;
+    bool __stepBudgetGoverned_get_user = false;
+    _ = __stepBudgetGoverned_get_user;
+    StepEvents?.OnStepStarted("get-user");
+{
+    await HttpSoap_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::get_user",
+        "__capture_status::get_user",
+        "svc::app",
+        "app",
+        "/soap/users",
+        "http://example.com/GetUser",
+        "\u003C?xml version=\u00221.0\u0022 encoding=\u0022utf-8\u0022?\u003E\n\u003Csoap:Envelope xmlns:soap=\u0022http://schemas.xmlsoap.org/soap/envelope/\u0022\u003E\n  \u003Csoap:Body\u003E\n    \u003CGetUser xmlns=\u0022http://example.com/users\u0022\u003E\n      \u003CUserId\u003E{userId}\u003C/UserId\u003E\n    \u003C/GetUser\u003E\n  \u003C/soap:Body\u003E\n\u003C/soap:Envelope\u003E\n",
+        200,
+        false,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_get_user,
+        __stepBudgetGoverned_get_user);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::get_user");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "get-user",
+        Vars.TryGetValue("__outcome::get_user", out var __sco_get_user) ? __sco_get_user as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::get_user", out var __scs_get_user) ? __scs_get_user as string : null);
+}
+@@@@ end

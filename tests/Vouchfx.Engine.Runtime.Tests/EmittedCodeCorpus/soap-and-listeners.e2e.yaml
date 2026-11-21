@@ -1,0 +1,76 @@
+# Emitted-code baseline corpus: http.soap expectations and the inbound listeners.
+#
+# Pins the fields the repository's other suites leave unset: http.soap expect.fault
+# and the expect.xpath sequence (the sequence binder a node-type migration has to
+# reproduce), trace-expect.otlp match.attributes, and webhook-listen.http
+# match.headers and match.bodyContains. XPath and attribute values appear in plain
+# and quoted form.
+#
+# match.peerCertificateSha256 on a trace-expect.otlp step is pinned by otlp-peer-certificate, a suite
+# the security preflight refuses by design. The webhook-listen.http form is pinned by the compilation
+# corpus's inbound-listener-mtls-fingerprint.
+#
+# Used only by EmittedCodeBaselineTests; no topology is started.
+metadata:
+  name: emitted-code-corpus-soap-and-listeners
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+steps:
+  - id: soap-fault
+    type: http.soap
+    target: app
+    path: /soap/users
+    action: "http://example.com/GetUser"
+    envelope: |
+      <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body><GetUser xmlns="http://example.com/users"><UserId>missing</UserId></GetUser></soap:Body>
+      </soap:Envelope>
+    expect:
+      status: 500
+      fault: true
+
+  - id: soap-xpath
+    type: http.soap
+    target: app
+    path: /soap/users
+    envelope: >-
+      <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body/></soap:Envelope>
+    expect:
+      status: "200"
+      fault: false
+      xpath:
+        - path: //*[local-name()='Status']
+          value: OK
+        - path: //*[local-name()='Count']
+          value: 007
+        - path: //*[local-name()='QuotedCount']
+          value: "007"
+        - path: //*[local-name()='Active']
+          value: true
+
+  - id: await-callback
+    type: webhook-listen.http
+    listener: callbacks
+    match:
+      method: POST
+      path: /hooks/orders
+      headers:
+        X-Signature: abc123
+        X-Attempt: 1
+        X-Quoted-Attempt: "1"
+      bodyContains: ord-1
+
+  - id: await-span
+    type: trace-expect.otlp
+    receiver: traces
+    match:
+      traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+      service: app
+      spanName: POST /orders
+      attributes:
+        http.method: POST
+        http.status_code: 200
+        retry.count: "0"
+        cache.hit: false

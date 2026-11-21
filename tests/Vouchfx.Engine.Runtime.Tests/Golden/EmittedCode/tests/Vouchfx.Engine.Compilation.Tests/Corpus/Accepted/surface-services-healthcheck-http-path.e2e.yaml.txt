@@ -1,0 +1,23 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/surface-services-healthcheck-http-path.e2e.yaml
+outcome: refused
+stage: pipeline
+steps: 1
+@@@@ diagnostic 1 of 1
+-	Service 'web' sets 'image: traefik/whoami' with no tag or digest. This would silently float on ':latest', defeating the section 4 determinism invariant. Embed a tag or a 'sha256:' digest in 'image:'. (Parameter 'env')
+
+@@@@ step 1 of 1
+id: noop
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Code": "// Filler step: this fixture exercises environment.services.healthCheck surface only.",
+  "File": null
+}
+@@@@ step 1 host-resources
+[]
+@@@@ end

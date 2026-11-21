@@ -1,0 +1,114 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/vocabulary/two-suites-same-dependency-name/suite-a-uncovered.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 1
+
+@@@@ step 1 of 1
+id: unrelated-step
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Code": "// does not target 'cache' or 'web' at all",
+  "File": null
+}
+@@@@ step 1 host-resources
+[]
+@@@@ step 1 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+
+@@@@ step 1 statement-block
+{
+    var __sw_unrelated_step = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_unrelated_step = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_unrelated_step = null;
+    async System.Threading.Tasks.Task __body_unrelated_step()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+// does not target 'cache' or 'web' at all
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_unrelated_step();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_unrelated_step.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_unrelated_step)
+    {
+        __v_unrelated_step = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_unrelated_step = __ex_unrelated_step.Message;
+    }
+    finally
+    {
+        __sw_unrelated_step.Stop();
+    }
+    Vars["__outcome::unrelated_step"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_unrelated_step, __sw_unrelated_step.ElapsedMilliseconds, __obs_unrelated_step);
+}
+@@@@ assembled-script
+using System;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_unrelated_step = __vouchfxRunCt;
+    _ = __stepCt_unrelated_step;
+    bool __stepBudgetGoverned_unrelated_step = false;
+    _ = __stepBudgetGoverned_unrelated_step;
+    StepEvents?.OnStepStarted("unrelated-step");
+{
+    var __sw_unrelated_step = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_unrelated_step = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_unrelated_step = null;
+    async System.Threading.Tasks.Task __body_unrelated_step()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+// does not target 'cache' or 'web' at all
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_unrelated_step();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_unrelated_step.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_unrelated_step)
+    {
+        __v_unrelated_step = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_unrelated_step = __ex_unrelated_step.Message;
+    }
+    finally
+    {
+        __sw_unrelated_step.Stop();
+    }
+    Vars["__outcome::unrelated_step"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_unrelated_step, __sw_unrelated_step.ElapsedMilliseconds, __obs_unrelated_step);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::unrelated_step");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "unrelated-step",
+        Vars.TryGetValue("__outcome::unrelated_step", out var __sco_unrelated_step) ? __sco_unrelated_step as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::unrelated_step", out var __scs_unrelated_step) ? __scs_unrelated_step as string : null);
+}
+@@@@ end

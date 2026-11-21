@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/capture-both-jsonpath-and-xpath.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic 1 of 1
+/steps/0/capture/ambiguous/xpath	(line 16) Property 'xpath' cannot be combined with 'jsonpath' on capture entry 'ambiguous' - exactly one of the two is required (DSL section 6.1)
+@@@@ end

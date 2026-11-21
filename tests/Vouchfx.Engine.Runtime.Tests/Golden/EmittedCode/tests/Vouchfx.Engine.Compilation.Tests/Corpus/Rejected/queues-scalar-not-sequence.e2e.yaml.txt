@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/queues-scalar-not-sequence.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic 1 of 1
+/environment/dependencies/asb/queues	(line 14) Value is "string" but should be "array, null"
+@@@@ end

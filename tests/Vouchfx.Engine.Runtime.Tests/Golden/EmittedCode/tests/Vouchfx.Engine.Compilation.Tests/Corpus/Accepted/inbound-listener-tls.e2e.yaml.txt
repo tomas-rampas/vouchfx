@@ -1,0 +1,34 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/inbound-listener-tls.e2e.yaml
+outcome: refused
+stage: pipeline
+steps: 1
+@@@@ diagnostic 1 of 1
+security-preflight	listeners.callbacks.security.serverCert: declared file 'certs/server.pem' is missing or unreadable.
+
+@@@@ step 1 of 1
+id: callback
+type: webhook-listen.http
+provider: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpProvider
+model: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Listener": "callbacks",
+  "Match": {
+    "Method": null,
+    "Path": "/event",
+    "Headers": null,
+    "BodyContains": null,
+    "PeerCertificateSha256": null
+  }
+}
+@@@@ step 1 host-resources
+[
+  {
+    "Kind": "webhook-listener",
+    "VarName": "callbacks"
+  }
+]
+@@@@ end

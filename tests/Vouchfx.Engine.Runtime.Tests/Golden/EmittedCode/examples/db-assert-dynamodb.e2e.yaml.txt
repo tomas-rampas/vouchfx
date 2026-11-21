@@ -1,0 +1,533 @@
+vouchfx emitted-code baseline v2
+suite: examples/db-assert-dynamodb.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 4
+
+@@@@ step 1 of 4
+id: trigger-order
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/orders",
+  "Headers": null,
+  "Body": "{\"orderId\":\"1001\",\"customerId\":\"cust-1\",\"amount\":49.99}",
+  "Expect": {
+    "Status": 200,
+    "Json": null,
+    "BodyContains": null
+  },
+  "BodyRefusal": null
+}
+@@@@ step 1 host-resources
+[]
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::trigger_order",
+        "__capture_status::trigger_order",
+        "svc::app",
+        "app",
+        "POST",
+        "/orders",
+        "{\u0022orderId\u0022:\u00221001\u0022,\u0022customerId\u0022:\u0022cust-1\u0022,\u0022amount\u0022:49.99}",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_trigger_order,
+        __stepBudgetGoverned_trigger_order);
+}
+
+@@@@ step 2 of 4
+id: simulate-order-write
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Code": "var connStr = (string)Vars[\"conn::orders-db\"];\nstring serviceUrl = string.Empty, accessKey = string.Empty, secretKey = string.Empty;\nforeach (var part in connStr.Split(';', StringSplitOptions.RemoveEmptyEntries))\n{\n  var eq = part.IndexOf('=');\n  if (eq <= 0) continue;\n  var k = part.Substring(0, eq).Trim();\n  var v = part.Substring(eq + 1).Trim();\n  if (string.Equals(k, \"ServiceURL\", StringComparison.OrdinalIgnoreCase)) serviceUrl = v;\n  else if (string.Equals(k, \"AccessKey\", StringComparison.OrdinalIgnoreCase)) accessKey = v;\n  else if (string.Equals(k, \"SecretKey\", StringComparison.OrdinalIgnoreCase)) secretKey = v;\n}\n\nAmazon.DynamoDBv2.AmazonDynamoDBClient client = null;\ntry\n{\n  client = new Amazon.DynamoDBv2.AmazonDynamoDBClient(\n    new Amazon.Runtime.BasicAWSCredentials(accessKey, secretKey),\n    new Amazon.DynamoDBv2.AmazonDynamoDBConfig\n    {\n      ServiceURL = serviceUrl,\n      MaxErrorRetry = 0,\n      Timeout = TimeSpan.FromSeconds(5),\n      ConnectTimeout = TimeSpan.FromSeconds(5),\n    });\n\n  try\n  {\n    await client.CreateTableAsync(new Amazon.DynamoDBv2.Model.CreateTableRequest\n    {\n      TableName = \"Orders\",\n      AttributeDefinitions = new System.Collections.Generic.List<Amazon.DynamoDBv2.Model.AttributeDefinition>\n      {\n        new Amazon.DynamoDBv2.Model.AttributeDefinition(\"orderId\", Amazon.DynamoDBv2.ScalarAttributeType.S),\n      },\n      KeySchema = new System.Collections.Generic.List<Amazon.DynamoDBv2.Model.KeySchemaElement>\n      {\n        new Amazon.DynamoDBv2.Model.KeySchemaElement(\"orderId\", Amazon.DynamoDBv2.KeyType.HASH),\n      },\n      BillingMode = Amazon.DynamoDBv2.BillingMode.PAY_PER_REQUEST,\n    });\n  }\n  catch (Amazon.DynamoDBv2.Model.ResourceInUseException)\n  {\n    // Table already exists from a prior scenario run against the same container.\n  }\n\n  for (var i = 0; i < 20; i++)\n  {\n    var describe = await client.DescribeTableAsync(\"Orders\");\n    if (describe.Table.TableStatus == Amazon.DynamoDBv2.TableStatus.ACTIVE) break;\n    await Task.Delay(TimeSpan.FromMilliseconds(250));\n  }\n\n  var orderId = (string)Vars[\"orderId\"];\n  await client.PutItemAsync(new Amazon.DynamoDBv2.Model.PutItemRequest\n  {\n    TableName = \"Orders\",\n    Item = new System.Collections.Generic.Dictionary<string, Amazon.DynamoDBv2.Model.AttributeValue>\n    {\n      [\"orderId\"] = new Amazon.DynamoDBv2.Model.AttributeValue { S = orderId },\n      [\"status\"] = new Amazon.DynamoDBv2.Model.AttributeValue { S = \"SHIPPED\" },\n    },\n  });\n}\nfinally\n{\n  client?.Dispose();\n}\n",
+  "File": null
+}
+@@@@ step 2 host-resources
+[]
+@@@@ step 2 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+
+@@@@ step 2 statement-block
+{
+    var __sw_simulate_order_write = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_simulate_order_write = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_simulate_order_write = null;
+    async System.Threading.Tasks.Task __body_simulate_order_write()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::orders-db"];
+string serviceUrl = string.Empty, accessKey = string.Empty, secretKey = string.Empty;
+foreach (var part in connStr.Split(';', StringSplitOptions.RemoveEmptyEntries))
+{
+  var eq = part.IndexOf('=');
+  if (eq <= 0) continue;
+  var k = part.Substring(0, eq).Trim();
+  var v = part.Substring(eq + 1).Trim();
+  if (string.Equals(k, "ServiceURL", StringComparison.OrdinalIgnoreCase)) serviceUrl = v;
+  else if (string.Equals(k, "AccessKey", StringComparison.OrdinalIgnoreCase)) accessKey = v;
+  else if (string.Equals(k, "SecretKey", StringComparison.OrdinalIgnoreCase)) secretKey = v;
+}
+
+Amazon.DynamoDBv2.AmazonDynamoDBClient client = null;
+try
+{
+  client = new Amazon.DynamoDBv2.AmazonDynamoDBClient(
+    new Amazon.Runtime.BasicAWSCredentials(accessKey, secretKey),
+    new Amazon.DynamoDBv2.AmazonDynamoDBConfig
+    {
+      ServiceURL = serviceUrl,
+      MaxErrorRetry = 0,
+      Timeout = TimeSpan.FromSeconds(5),
+      ConnectTimeout = TimeSpan.FromSeconds(5),
+    });
+
+  try
+  {
+    await client.CreateTableAsync(new Amazon.DynamoDBv2.Model.CreateTableRequest
+    {
+      TableName = "Orders",
+      AttributeDefinitions = new System.Collections.Generic.List<Amazon.DynamoDBv2.Model.AttributeDefinition>
+      {
+        new Amazon.DynamoDBv2.Model.AttributeDefinition("orderId", Amazon.DynamoDBv2.ScalarAttributeType.S),
+      },
+      KeySchema = new System.Collections.Generic.List<Amazon.DynamoDBv2.Model.KeySchemaElement>
+      {
+        new Amazon.DynamoDBv2.Model.KeySchemaElement("orderId", Amazon.DynamoDBv2.KeyType.HASH),
+      },
+      BillingMode = Amazon.DynamoDBv2.BillingMode.PAY_PER_REQUEST,
+    });
+  }
+  catch (Amazon.DynamoDBv2.Model.ResourceInUseException)
+  {
+    // Table already exists from a prior scenario run against the same container.
+  }
+
+  for (var i = 0; i < 20; i++)
+  {
+    var describe = await client.DescribeTableAsync("Orders");
+    if (describe.Table.TableStatus == Amazon.DynamoDBv2.TableStatus.ACTIVE) break;
+    await Task.Delay(TimeSpan.FromMilliseconds(250));
+  }
+
+  var orderId = (string)Vars["orderId"];
+  await client.PutItemAsync(new Amazon.DynamoDBv2.Model.PutItemRequest
+  {
+    TableName = "Orders",
+    Item = new System.Collections.Generic.Dictionary<string, Amazon.DynamoDBv2.Model.AttributeValue>
+    {
+      ["orderId"] = new Amazon.DynamoDBv2.Model.AttributeValue { S = orderId },
+      ["status"] = new Amazon.DynamoDBv2.Model.AttributeValue { S = "SHIPPED" },
+    },
+  });
+}
+finally
+{
+  client?.Dispose();
+}
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_simulate_order_write();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_simulate_order_write.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_simulate_order_write)
+    {
+        __v_simulate_order_write = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_simulate_order_write = __ex_simulate_order_write.Message;
+    }
+    finally
+    {
+        __sw_simulate_order_write.Stop();
+    }
+    Vars["__outcome::simulate_order_write"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_simulate_order_write, __sw_simulate_order_write.ElapsedMilliseconds, __obs_simulate_order_write);
+}
+
+@@@@ step 3 of 4
+id: assert-order-written
+type: db-assert.dynamodb
+provider: Vouchfx.Steps.DbAssert.Dynamodb.DbAssertDynamodbProvider
+model: Vouchfx.Steps.DbAssert.Dynamodb.DbAssertDynamodbModel
+retry: true
+timeout-ms: 15000
+@@@@ step 3 model
+{
+  "Target": "orders-db",
+  "Table": "Orders",
+  "Key": "{\"orderId\":\"{orderId}\"}",
+  "Expect": {
+    "Exists": true,
+    "Item": {
+      "status": "SHIPPED"
+    }
+  }
+}
+@@@@ step 3 host-resources
+[]
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Amazon.DynamoDBv2
+Amazon.DynamoDBv2.Model
+Amazon.Runtime
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+DbAssertDynamodb_Helpers sha256=ac46205054b59da5b37fd120df8761165f6af67e9310b0780ffc3daa180b53c4
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 3 statement-block
+{
+    await DbAssertDynamodb_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_order_written",
+        "conn::orders-db",
+        Substitute_Helpers.Resolve(Vars, "Orders"),
+        "{\u0022orderId\u0022:\u0022{orderId}\u0022}",
+        true,
+        new string[] { "status" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "SHIPPED") },
+        __stepCt_assert_order_written,
+        __stepBudgetGoverned_assert_order_written);
+}
+
+@@@@ step 4 of 4
+id: assert-cancelled-order-absent
+type: db-assert.dynamodb
+provider: Vouchfx.Steps.DbAssert.Dynamodb.DbAssertDynamodbProvider
+model: Vouchfx.Steps.DbAssert.Dynamodb.DbAssertDynamodbModel
+retry: false
+timeout-ms: none
+@@@@ step 4 model
+{
+  "Target": "orders-db",
+  "Table": "Orders",
+  "Key": "{\"orderId\":\"cancelled-999\"}",
+  "Expect": {
+    "Exists": false,
+    "Item": null
+  }
+}
+@@@@ step 4 host-resources
+[]
+@@@@ step 4 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Amazon.DynamoDBv2
+Amazon.DynamoDBv2.Model
+Amazon.Runtime
+Vouchfx.Engine.Abstractions
+@@@@ step 4 helpers
+DbAssertDynamodb_Helpers sha256=ac46205054b59da5b37fd120df8761165f6af67e9310b0780ffc3daa180b53c4
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 4 statement-block
+{
+    await DbAssertDynamodb_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_cancelled_order_absent",
+        "conn::orders-db",
+        Substitute_Helpers.Resolve(Vars, "Orders"),
+        "{\u0022orderId\u0022:\u0022cancelled-999\u0022}",
+        false,
+        new string[] { },
+        new string[] { },
+        __stepCt_assert_cancelled_order_absent,
+        __stepBudgetGoverned_assert_cancelled_order_absent);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.Model;
+using Amazon.Runtime;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper DbAssertDynamodb_Helpers sha256=ac46205054b59da5b37fd120df8761165f6af67e9310b0780ffc3daa180b53c4: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_trigger_order = __vouchfxRunCt;
+    _ = __stepCt_trigger_order;
+    bool __stepBudgetGoverned_trigger_order = false;
+    _ = __stepBudgetGoverned_trigger_order;
+    StepEvents?.OnStepStarted("trigger-order");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::trigger_order",
+        "__capture_status::trigger_order",
+        "svc::app",
+        "app",
+        "POST",
+        "/orders",
+        "{\u0022orderId\u0022:\u00221001\u0022,\u0022customerId\u0022:\u0022cust-1\u0022,\u0022amount\u0022:49.99}",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_trigger_order,
+        __stepBudgetGoverned_trigger_order);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::trigger_order");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "trigger-order",
+        Vars.TryGetValue("__outcome::trigger_order", out var __sco_trigger_order) ? __sco_trigger_order as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::trigger_order", out var __scs_trigger_order) ? __scs_trigger_order as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_simulate_order_write = __vouchfxRunCt;
+    _ = __stepCt_simulate_order_write;
+    bool __stepBudgetGoverned_simulate_order_write = false;
+    _ = __stepBudgetGoverned_simulate_order_write;
+    StepEvents?.OnStepStarted("simulate-order-write");
+{
+    var __sw_simulate_order_write = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_simulate_order_write = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_simulate_order_write = null;
+    async System.Threading.Tasks.Task __body_simulate_order_write()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::orders-db"];
+string serviceUrl = string.Empty, accessKey = string.Empty, secretKey = string.Empty;
+foreach (var part in connStr.Split(';', StringSplitOptions.RemoveEmptyEntries))
+{
+  var eq = part.IndexOf('=');
+  if (eq <= 0) continue;
+  var k = part.Substring(0, eq).Trim();
+  var v = part.Substring(eq + 1).Trim();
+  if (string.Equals(k, "ServiceURL", StringComparison.OrdinalIgnoreCase)) serviceUrl = v;
+  else if (string.Equals(k, "AccessKey", StringComparison.OrdinalIgnoreCase)) accessKey = v;
+  else if (string.Equals(k, "SecretKey", StringComparison.OrdinalIgnoreCase)) secretKey = v;
+}
+
+Amazon.DynamoDBv2.AmazonDynamoDBClient client = null;
+try
+{
+  client = new Amazon.DynamoDBv2.AmazonDynamoDBClient(
+    new Amazon.Runtime.BasicAWSCredentials(accessKey, secretKey),
+    new Amazon.DynamoDBv2.AmazonDynamoDBConfig
+    {
+      ServiceURL = serviceUrl,
+      MaxErrorRetry = 0,
+      Timeout = TimeSpan.FromSeconds(5),
+      ConnectTimeout = TimeSpan.FromSeconds(5),
+    });
+
+  try
+  {
+    await client.CreateTableAsync(new Amazon.DynamoDBv2.Model.CreateTableRequest
+    {
+      TableName = "Orders",
+      AttributeDefinitions = new System.Collections.Generic.List<Amazon.DynamoDBv2.Model.AttributeDefinition>
+      {
+        new Amazon.DynamoDBv2.Model.AttributeDefinition("orderId", Amazon.DynamoDBv2.ScalarAttributeType.S),
+      },
+      KeySchema = new System.Collections.Generic.List<Amazon.DynamoDBv2.Model.KeySchemaElement>
+      {
+        new Amazon.DynamoDBv2.Model.KeySchemaElement("orderId", Amazon.DynamoDBv2.KeyType.HASH),
+      },
+      BillingMode = Amazon.DynamoDBv2.BillingMode.PAY_PER_REQUEST,
+    });
+  }
+  catch (Amazon.DynamoDBv2.Model.ResourceInUseException)
+  {
+    // Table already exists from a prior scenario run against the same container.
+  }
+
+  for (var i = 0; i < 20; i++)
+  {
+    var describe = await client.DescribeTableAsync("Orders");
+    if (describe.Table.TableStatus == Amazon.DynamoDBv2.TableStatus.ACTIVE) break;
+    await Task.Delay(TimeSpan.FromMilliseconds(250));
+  }
+
+  var orderId = (string)Vars["orderId"];
+  await client.PutItemAsync(new Amazon.DynamoDBv2.Model.PutItemRequest
+  {
+    TableName = "Orders",
+    Item = new System.Collections.Generic.Dictionary<string, Amazon.DynamoDBv2.Model.AttributeValue>
+    {
+      ["orderId"] = new Amazon.DynamoDBv2.Model.AttributeValue { S = orderId },
+      ["status"] = new Amazon.DynamoDBv2.Model.AttributeValue { S = "SHIPPED" },
+    },
+  });
+}
+finally
+{
+  client?.Dispose();
+}
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_simulate_order_write();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_simulate_order_write.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_simulate_order_write)
+    {
+        __v_simulate_order_write = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_simulate_order_write = __ex_simulate_order_write.Message;
+    }
+    finally
+    {
+        __sw_simulate_order_write.Stop();
+    }
+    Vars["__outcome::simulate_order_write"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_simulate_order_write, __sw_simulate_order_write.ElapsedMilliseconds, __obs_simulate_order_write);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::simulate_order_write");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "simulate-order-write",
+        Vars.TryGetValue("__outcome::simulate_order_write", out var __sco_simulate_order_write) ? __sco_simulate_order_write as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::simulate_order_write", out var __scs_simulate_order_write) ? __scs_simulate_order_write as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    StepEvents?.OnStepStarted("assert-order-written");
+    async System.Threading.Tasks.Task<Vouchfx.Engine.Abstractions.StepOutcome> __attempt_assert_order_written(System.Threading.CancellationToken __ct_assert_order_written)
+    {
+        System.Threading.CancellationToken __stepCt_assert_order_written = __ct_assert_order_written;
+        _ = __stepCt_assert_order_written;
+        bool __stepBudgetGoverned_assert_order_written = false;
+        _ = __stepBudgetGoverned_assert_order_written;
+{
+    await DbAssertDynamodb_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_order_written",
+        "conn::orders-db",
+        Substitute_Helpers.Resolve(Vars, "Orders"),
+        "{\u0022orderId\u0022:\u0022{orderId}\u0022}",
+        true,
+        new string[] { "status" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "SHIPPED") },
+        __stepCt_assert_order_written,
+        __stepBudgetGoverned_assert_order_written);
+}
+        var __o_assert_order_written = Vars.TryGetValue("__outcome::assert_order_written", out var __raw_assert_order_written) && __raw_assert_order_written is Vouchfx.Engine.Abstractions.StepOutcome __so_assert_order_written
+            ? __so_assert_order_written
+            : new Vouchfx.Engine.Abstractions.StepOutcome(Vouchfx.Engine.Abstractions.Verdict.Inconclusive, 0L, null);
+        Vars.Remove("__outcome::assert_order_written");
+        return __o_assert_order_written;
+    }
+    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(
+        Vars, "__outcome::assert_order_written", "__attempts::assert_order_written", 15000L, null, __attempt_assert_order_written, StepEvents, "assert-order-written", ct: __vouchfxRunCt);
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_order_written");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-order-written",
+        Vars.TryGetValue("__outcome::assert_order_written", out var __sco_assert_order_written) ? __sco_assert_order_written as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_order_written", out var __scs_assert_order_written) ? __scs_assert_order_written as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_assert_cancelled_order_absent = __vouchfxRunCt;
+    _ = __stepCt_assert_cancelled_order_absent;
+    bool __stepBudgetGoverned_assert_cancelled_order_absent = false;
+    _ = __stepBudgetGoverned_assert_cancelled_order_absent;
+    StepEvents?.OnStepStarted("assert-cancelled-order-absent");
+{
+    await DbAssertDynamodb_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_cancelled_order_absent",
+        "conn::orders-db",
+        Substitute_Helpers.Resolve(Vars, "Orders"),
+        "{\u0022orderId\u0022:\u0022cancelled-999\u0022}",
+        false,
+        new string[] { },
+        new string[] { },
+        __stepCt_assert_cancelled_order_absent,
+        __stepBudgetGoverned_assert_cancelled_order_absent);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_cancelled_order_absent");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-cancelled-order-absent",
+        Vars.TryGetValue("__outcome::assert_cancelled_order_absent", out var __sco_assert_cancelled_order_absent) ? __sco_assert_cancelled_order_absent as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_cancelled_order_absent", out var __scs_assert_cancelled_order_absent) ? __scs_assert_cancelled_order_absent as string : null);
+}
+@@@@ end

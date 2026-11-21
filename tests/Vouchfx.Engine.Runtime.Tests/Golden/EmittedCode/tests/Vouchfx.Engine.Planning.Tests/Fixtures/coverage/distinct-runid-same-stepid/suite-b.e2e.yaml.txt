@@ -1,0 +1,28 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/coverage/distinct-runid-same-stepid/suite-b.e2e.yaml
+outcome: refused
+stage: pipeline
+steps: 1
+@@@@ diagnostic 1 of 1
+-	Step 'common-step' model validation failed: http.rest: 'target' 'api' names neither a declared service in environment.services nor a declared dependency in environment.dependencies. Declared dependencies: (none). Declared services: (none).
+
+@@@@ step 1 of 1
+id: common-step
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "api",
+  "Method": "GET",
+  "Path": "/health",
+  "Headers": null,
+  "Body": null,
+  "Expect": null,
+  "BodyRefusal": null
+}
+@@@@ step 1 host-resources
+[]
+@@@@ end

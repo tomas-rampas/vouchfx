@@ -1,0 +1,105 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/inbound-listener-plaintext-omitted.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 1
+
+@@@@ step 1 of 1
+id: callback
+type: webhook-listen.http
+provider: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpProvider
+model: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Listener": "callbacks",
+  "Match": {
+    "Method": null,
+    "Path": "/event",
+    "Headers": null,
+    "BodyContains": null,
+    "PeerCertificateSha256": null
+  }
+}
+@@@@ step 1 host-resources
+[
+  {
+    "Kind": "webhook-listener",
+    "VarName": "callbacks"
+  }
+]
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+Vouchfx.Engine.Abstractions.Webhooks
+@@@@ step 1 helpers
+WebhookListenHttp_Helpers sha256=b99a0c99d4690d6c8e1a24a58f0bda0435f57c4a64a2467359b770f235c7e2ca
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 1 statement-block
+{
+    await WebhookListenHttp_Helpers.AssertAsync(
+        Vars,
+        Secrets,
+        Webhooks,
+        "__outcome::callback",
+        "callbacks",
+        null,
+        "/event",
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_callback);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Abstractions.Webhooks;
+
+// [helper WebhookListenHttp_Helpers sha256=b99a0c99d4690d6c8e1a24a58f0bda0435f57c4a64a2467359b770f235c7e2ca: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_callback = __vouchfxRunCt;
+    _ = __stepCt_callback;
+    bool __stepBudgetGoverned_callback = false;
+    _ = __stepBudgetGoverned_callback;
+    StepEvents?.OnStepStarted("callback");
+{
+    await WebhookListenHttp_Helpers.AssertAsync(
+        Vars,
+        Secrets,
+        Webhooks,
+        "__outcome::callback",
+        "callbacks",
+        null,
+        "/event",
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_callback);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::callback");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "callback",
+        Vars.TryGetValue("__outcome::callback", out var __sco_callback) ? __sco_callback as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::callback", out var __scs_callback) ? __scs_callback as string : null);
+}
+@@@@ end

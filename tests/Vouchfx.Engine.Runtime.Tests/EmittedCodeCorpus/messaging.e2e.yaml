@@ -1,0 +1,103 @@
+# Emitted-code baseline corpus: the message-queue binders.
+#
+# Pins every optional field of the Kafka, NATS and RabbitMQ publish and expect steps
+# that the repository's other suites leave unset: Kafka keys, headers and
+# payloadContains, the whole avro block on both sides (schemaRegistry, subject,
+# schema and record), the NATS JetStream stream, and the RabbitMQ exchange. Typed
+# scalars appear in plain and quoted form (a numeric topic, keys, header values and
+# Avro record values), because these binders keep the raw text either way.
+#
+# Used only by EmittedCodeBaselineTests; no topology is started.
+metadata:
+  name: emitted-code-corpus-messaging
+environment:
+  dependencies:
+    events:
+      type: kafka
+      schemaRegistry: true
+    nats-broker:
+      type: nats
+    orders-mq:
+      type: rabbitmq
+steps:
+  - id: kafka-publish-keyed
+    type: mq-publish.kafka
+    target: events
+    topic: orders
+    key: 42
+    payload: '{"orderId":"ord-1","amount":49.50}'
+    headers:
+      x-count: 007
+      x-quoted-count: "007"
+      x-flag: true
+      x-quoted-flag: "true"
+      x-text: order-created
+
+  - id: kafka-publish-avro
+    type: mq-publish.kafka
+    target: events
+    topic: 2024
+    key: "42"
+    payload: avro-encoded
+    avro:
+      schemaRegistry: events
+      subject: orders-value
+      schema: |
+        {"type": "record", "name": "Order", "fields": [
+          {"name": "orderId", "type": "string"},
+          {"name": "amount", "type": "double"},
+          {"name": "paid", "type": "boolean"}]}
+      record:
+        orderId: ord-1
+        amount: 49.50
+        paid: true
+
+  - id: kafka-expect-keyed
+    type: mq-expect.kafka
+    target: events
+    topic: orders
+    match:
+      key: 42
+      headers:
+        x-count: "007"
+        x-flag: true
+      payloadContains: ord-1
+      json:
+        "$.amount": 49.50
+
+  - id: kafka-expect-avro
+    type: mq-expect.kafka
+    target: events
+    topic: "2024"
+    match:
+      key: "42"
+      json:
+        "$.paid": true
+    avro:
+      schemaRegistry: events
+      subject: orders-value
+      schema: '{"type": "record", "name": "Order", "fields": [{"name": "orderId", "type": "string"}]}'
+
+  - id: nats-publish-stream
+    type: mq-publish.nats
+    target: nats-broker
+    subject: orders.created
+    stream: ORDERS
+    payload: '{"orderId":"ord-1"}'
+
+  - id: nats-expect-stream
+    type: mq-expect.nats
+    target: nats-broker
+    subject: orders.created
+    stream: ORDERS
+    match:
+      payloadContains: ord-1
+
+  - id: rabbitmq-publish-exchange
+    type: mq-publish.rabbitmq
+    target: orders-mq
+    exchange: orders.topic
+    routingKey: orders.created
+    payload: 123
+    headers:
+      x-retry: 0

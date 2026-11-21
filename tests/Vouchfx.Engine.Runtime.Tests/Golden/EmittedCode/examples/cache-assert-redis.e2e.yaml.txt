@@ -1,0 +1,732 @@
+vouchfx emitted-code baseline v2
+suite: examples/cache-assert-redis.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 8
+
+@@@@ step 1 of 8
+id: prime-cache
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/sessions",
+  "Headers": null,
+  "Body": "{\"userId\":\"42\",\"status\":\"active\"}",
+  "Expect": {
+    "Status": 200,
+    "Json": null,
+    "BodyContains": null
+  },
+  "BodyRefusal": null
+}
+@@@@ step 1 host-resources
+[]
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::prime_cache",
+        "__capture_status::prime_cache",
+        "svc::app",
+        "app",
+        "POST",
+        "/sessions",
+        "{\u0022userId\u0022:\u002242\u0022,\u0022status\u0022:\u0022active\u0022}",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_prime_cache,
+        __stepBudgetGoverned_prime_cache);
+}
+
+@@@@ step 2 of 8
+id: simulate-session-write
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Code": "var connStr = (string)Vars[\"conn::cache\"];\nvar userId = (string)Vars[\"userId\"];\nvar muxer = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(connStr);\ntry\n{\n    var db = muxer.GetDatabase();\n    await db.StringSetAsync(\"user:\" + userId, \"active\", TimeSpan.FromMinutes(5));\n    await db.HashSetAsync(\n        \"user:\" + userId + \":profile\",\n        new StackExchange.Redis.HashEntry[]\n        {\n            new StackExchange.Redis.HashEntry(\"status\", \"verified\"),\n        });\n    var queueKey = \"user:\" + userId + \":queue\";\n    await db.KeyDeleteAsync(queueKey);\n    await db.ListRightPushAsync(\n        queueKey,\n        new StackExchange.Redis.RedisValue[] { \"job-1\", \"job-2\", \"job-3\" });\n    var tagsKey = \"user:\" + userId + \":tags\";\n    await db.KeyDeleteAsync(tagsKey);\n    await db.SetAddAsync(\n        tagsKey,\n        new StackExchange.Redis.RedisValue[] { \"beta\", \"early-adopter\" });\n}\nfinally { muxer.Dispose(); }\n",
+  "File": null
+}
+@@@@ step 2 host-resources
+[]
+@@@@ step 2 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+
+@@@@ step 2 statement-block
+{
+    var __sw_simulate_session_write = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_simulate_session_write = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_simulate_session_write = null;
+    async System.Threading.Tasks.Task __body_simulate_session_write()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::cache"];
+var userId = (string)Vars["userId"];
+var muxer = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(connStr);
+try
+{
+    var db = muxer.GetDatabase();
+    await db.StringSetAsync("user:" + userId, "active", TimeSpan.FromMinutes(5));
+    await db.HashSetAsync(
+        "user:" + userId + ":profile",
+        new StackExchange.Redis.HashEntry[]
+        {
+            new StackExchange.Redis.HashEntry("status", "verified"),
+        });
+    var queueKey = "user:" + userId + ":queue";
+    await db.KeyDeleteAsync(queueKey);
+    await db.ListRightPushAsync(
+        queueKey,
+        new StackExchange.Redis.RedisValue[] { "job-1", "job-2", "job-3" });
+    var tagsKey = "user:" + userId + ":tags";
+    await db.KeyDeleteAsync(tagsKey);
+    await db.SetAddAsync(
+        tagsKey,
+        new StackExchange.Redis.RedisValue[] { "beta", "early-adopter" });
+}
+finally { muxer.Dispose(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_simulate_session_write();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_simulate_session_write.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_simulate_session_write)
+    {
+        __v_simulate_session_write = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_simulate_session_write = __ex_simulate_session_write.Message;
+    }
+    finally
+    {
+        __sw_simulate_session_write.Stop();
+    }
+    Vars["__outcome::simulate_session_write"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_simulate_session_write, __sw_simulate_session_write.ElapsedMilliseconds, __obs_simulate_session_write);
+}
+
+@@@@ step 3 of 8
+id: assert-session-value
+type: cache-assert.redis
+provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
+retry: true
+timeout-ms: 10000
+@@@@ step 3 model
+{
+  "Target": "cache",
+  "Key": "user:{userId}",
+  "Operation": "Get",
+  "Field": null,
+  "Expect": {
+    "Value": "active",
+    "Exists": null,
+    "Length": null
+  }
+}
+@@@@ step 3 host-resources
+[]
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+CacheAssertRedis_Helpers sha256=91f37ccc243fcbe6d1fd151a60bf61422161dbc11490ed6f98df45aee0b31160
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 3 statement-block
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_session_value",
+        "conn::cache",
+        "get",
+        "user:{userId}",
+        null,
+        "active",
+        null,
+        null,
+        __stepCt_assert_session_value);
+}
+
+@@@@ step 4 of 8
+id: assert-session-present
+type: cache-assert.redis
+provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
+retry: false
+timeout-ms: none
+@@@@ step 4 model
+{
+  "Target": "cache",
+  "Key": "user:{userId}",
+  "Operation": "Exists",
+  "Field": null,
+  "Expect": {
+    "Value": null,
+    "Exists": true,
+    "Length": null
+  }
+}
+@@@@ step 4 host-resources
+[]
+@@@@ step 4 usings
+System
+System.Collections.Generic
+System.Diagnostics
+Vouchfx.Engine.Abstractions
+@@@@ step 4 helpers
+CacheAssertRedis_Helpers sha256=91f37ccc243fcbe6d1fd151a60bf61422161dbc11490ed6f98df45aee0b31160
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 4 statement-block
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_session_present",
+        "conn::cache",
+        "exists",
+        "user:{userId}",
+        null,
+        null,
+        true,
+        null,
+        __stepCt_assert_session_present);
+}
+
+@@@@ step 5 of 8
+id: assert-session-has-ttl
+type: cache-assert.redis
+provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
+retry: false
+timeout-ms: none
+@@@@ step 5 model
+{
+  "Target": "cache",
+  "Key": "user:{userId}",
+  "Operation": "Ttl",
+  "Field": null,
+  "Expect": {
+    "Value": null,
+    "Exists": true,
+    "Length": null
+  }
+}
+@@@@ step 5 host-resources
+[]
+@@@@ step 5 usings
+System
+System.Collections.Generic
+System.Diagnostics
+Vouchfx.Engine.Abstractions
+@@@@ step 5 helpers
+CacheAssertRedis_Helpers sha256=91f37ccc243fcbe6d1fd151a60bf61422161dbc11490ed6f98df45aee0b31160
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 5 statement-block
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_session_has_ttl",
+        "conn::cache",
+        "ttl",
+        "user:{userId}",
+        null,
+        null,
+        true,
+        null,
+        __stepCt_assert_session_has_ttl);
+}
+
+@@@@ step 6 of 8
+id: assert-profile-status
+type: cache-assert.redis
+provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
+retry: false
+timeout-ms: none
+@@@@ step 6 model
+{
+  "Target": "cache",
+  "Key": "user:{userId}:profile",
+  "Operation": "HGet",
+  "Field": "status",
+  "Expect": {
+    "Value": "verified",
+    "Exists": null,
+    "Length": null
+  }
+}
+@@@@ step 6 host-resources
+[]
+@@@@ step 6 usings
+System
+System.Collections.Generic
+System.Diagnostics
+Vouchfx.Engine.Abstractions
+@@@@ step 6 helpers
+CacheAssertRedis_Helpers sha256=91f37ccc243fcbe6d1fd151a60bf61422161dbc11490ed6f98df45aee0b31160
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 6 statement-block
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_profile_status",
+        "conn::cache",
+        "hget",
+        "user:{userId}:profile",
+        "status",
+        "verified",
+        null,
+        null,
+        __stepCt_assert_profile_status);
+}
+
+@@@@ step 7 of 8
+id: assert-queue-length
+type: cache-assert.redis
+provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
+retry: false
+timeout-ms: none
+@@@@ step 7 model
+{
+  "Target": "cache",
+  "Key": "user:{userId}:queue",
+  "Operation": "LLen",
+  "Field": null,
+  "Expect": {
+    "Value": null,
+    "Exists": null,
+    "Length": 3
+  }
+}
+@@@@ step 7 host-resources
+[]
+@@@@ step 7 usings
+System
+System.Collections.Generic
+System.Diagnostics
+Vouchfx.Engine.Abstractions
+@@@@ step 7 helpers
+CacheAssertRedis_Helpers sha256=91f37ccc243fcbe6d1fd151a60bf61422161dbc11490ed6f98df45aee0b31160
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 7 statement-block
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_queue_length",
+        "conn::cache",
+        "llen",
+        "user:{userId}:queue",
+        null,
+        null,
+        null,
+        3L,
+        __stepCt_assert_queue_length);
+}
+
+@@@@ step 8 of 8
+id: assert-tag-count
+type: cache-assert.redis
+provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
+retry: false
+timeout-ms: none
+@@@@ step 8 model
+{
+  "Target": "cache",
+  "Key": "user:{userId}:tags",
+  "Operation": "SCard",
+  "Field": null,
+  "Expect": {
+    "Value": null,
+    "Exists": null,
+    "Length": 2
+  }
+}
+@@@@ step 8 host-resources
+[]
+@@@@ step 8 usings
+System
+System.Collections.Generic
+System.Diagnostics
+Vouchfx.Engine.Abstractions
+@@@@ step 8 helpers
+CacheAssertRedis_Helpers sha256=91f37ccc243fcbe6d1fd151a60bf61422161dbc11490ed6f98df45aee0b31160
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 8 statement-block
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_tag_count",
+        "conn::cache",
+        "scard",
+        "user:{userId}:tags",
+        null,
+        null,
+        null,
+        2L,
+        __stepCt_assert_tag_count);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper CacheAssertRedis_Helpers sha256=91f37ccc243fcbe6d1fd151a60bf61422161dbc11490ed6f98df45aee0b31160: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_prime_cache = __vouchfxRunCt;
+    _ = __stepCt_prime_cache;
+    bool __stepBudgetGoverned_prime_cache = false;
+    _ = __stepBudgetGoverned_prime_cache;
+    StepEvents?.OnStepStarted("prime-cache");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::prime_cache",
+        "__capture_status::prime_cache",
+        "svc::app",
+        "app",
+        "POST",
+        "/sessions",
+        "{\u0022userId\u0022:\u002242\u0022,\u0022status\u0022:\u0022active\u0022}",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_prime_cache,
+        __stepBudgetGoverned_prime_cache);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::prime_cache");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "prime-cache",
+        Vars.TryGetValue("__outcome::prime_cache", out var __sco_prime_cache) ? __sco_prime_cache as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::prime_cache", out var __scs_prime_cache) ? __scs_prime_cache as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_simulate_session_write = __vouchfxRunCt;
+    _ = __stepCt_simulate_session_write;
+    bool __stepBudgetGoverned_simulate_session_write = false;
+    _ = __stepBudgetGoverned_simulate_session_write;
+    StepEvents?.OnStepStarted("simulate-session-write");
+{
+    var __sw_simulate_session_write = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_simulate_session_write = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_simulate_session_write = null;
+    async System.Threading.Tasks.Task __body_simulate_session_write()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::cache"];
+var userId = (string)Vars["userId"];
+var muxer = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(connStr);
+try
+{
+    var db = muxer.GetDatabase();
+    await db.StringSetAsync("user:" + userId, "active", TimeSpan.FromMinutes(5));
+    await db.HashSetAsync(
+        "user:" + userId + ":profile",
+        new StackExchange.Redis.HashEntry[]
+        {
+            new StackExchange.Redis.HashEntry("status", "verified"),
+        });
+    var queueKey = "user:" + userId + ":queue";
+    await db.KeyDeleteAsync(queueKey);
+    await db.ListRightPushAsync(
+        queueKey,
+        new StackExchange.Redis.RedisValue[] { "job-1", "job-2", "job-3" });
+    var tagsKey = "user:" + userId + ":tags";
+    await db.KeyDeleteAsync(tagsKey);
+    await db.SetAddAsync(
+        tagsKey,
+        new StackExchange.Redis.RedisValue[] { "beta", "early-adopter" });
+}
+finally { muxer.Dispose(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_simulate_session_write();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_simulate_session_write.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_simulate_session_write)
+    {
+        __v_simulate_session_write = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_simulate_session_write = __ex_simulate_session_write.Message;
+    }
+    finally
+    {
+        __sw_simulate_session_write.Stop();
+    }
+    Vars["__outcome::simulate_session_write"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_simulate_session_write, __sw_simulate_session_write.ElapsedMilliseconds, __obs_simulate_session_write);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::simulate_session_write");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "simulate-session-write",
+        Vars.TryGetValue("__outcome::simulate_session_write", out var __sco_simulate_session_write) ? __sco_simulate_session_write as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::simulate_session_write", out var __scs_simulate_session_write) ? __scs_simulate_session_write as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    StepEvents?.OnStepStarted("assert-session-value");
+    async System.Threading.Tasks.Task<Vouchfx.Engine.Abstractions.StepOutcome> __attempt_assert_session_value(System.Threading.CancellationToken __ct_assert_session_value)
+    {
+        System.Threading.CancellationToken __stepCt_assert_session_value = __ct_assert_session_value;
+        _ = __stepCt_assert_session_value;
+        bool __stepBudgetGoverned_assert_session_value = false;
+        _ = __stepBudgetGoverned_assert_session_value;
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_session_value",
+        "conn::cache",
+        "get",
+        "user:{userId}",
+        null,
+        "active",
+        null,
+        null,
+        __stepCt_assert_session_value);
+}
+        var __o_assert_session_value = Vars.TryGetValue("__outcome::assert_session_value", out var __raw_assert_session_value) && __raw_assert_session_value is Vouchfx.Engine.Abstractions.StepOutcome __so_assert_session_value
+            ? __so_assert_session_value
+            : new Vouchfx.Engine.Abstractions.StepOutcome(Vouchfx.Engine.Abstractions.Verdict.Inconclusive, 0L, null);
+        Vars.Remove("__outcome::assert_session_value");
+        return __o_assert_session_value;
+    }
+    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(
+        Vars, "__outcome::assert_session_value", "__attempts::assert_session_value", 10000L, null, __attempt_assert_session_value, StepEvents, "assert-session-value", ct: __vouchfxRunCt);
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_session_value");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-session-value",
+        Vars.TryGetValue("__outcome::assert_session_value", out var __sco_assert_session_value) ? __sco_assert_session_value as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_session_value", out var __scs_assert_session_value) ? __scs_assert_session_value as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_assert_session_present = __vouchfxRunCt;
+    _ = __stepCt_assert_session_present;
+    bool __stepBudgetGoverned_assert_session_present = false;
+    _ = __stepBudgetGoverned_assert_session_present;
+    StepEvents?.OnStepStarted("assert-session-present");
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_session_present",
+        "conn::cache",
+        "exists",
+        "user:{userId}",
+        null,
+        null,
+        true,
+        null,
+        __stepCt_assert_session_present);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_session_present");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-session-present",
+        Vars.TryGetValue("__outcome::assert_session_present", out var __sco_assert_session_present) ? __sco_assert_session_present as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_session_present", out var __scs_assert_session_present) ? __scs_assert_session_present as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_assert_session_has_ttl = __vouchfxRunCt;
+    _ = __stepCt_assert_session_has_ttl;
+    bool __stepBudgetGoverned_assert_session_has_ttl = false;
+    _ = __stepBudgetGoverned_assert_session_has_ttl;
+    StepEvents?.OnStepStarted("assert-session-has-ttl");
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_session_has_ttl",
+        "conn::cache",
+        "ttl",
+        "user:{userId}",
+        null,
+        null,
+        true,
+        null,
+        __stepCt_assert_session_has_ttl);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_session_has_ttl");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-session-has-ttl",
+        Vars.TryGetValue("__outcome::assert_session_has_ttl", out var __sco_assert_session_has_ttl) ? __sco_assert_session_has_ttl as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_session_has_ttl", out var __scs_assert_session_has_ttl) ? __scs_assert_session_has_ttl as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_assert_profile_status = __vouchfxRunCt;
+    _ = __stepCt_assert_profile_status;
+    bool __stepBudgetGoverned_assert_profile_status = false;
+    _ = __stepBudgetGoverned_assert_profile_status;
+    StepEvents?.OnStepStarted("assert-profile-status");
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_profile_status",
+        "conn::cache",
+        "hget",
+        "user:{userId}:profile",
+        "status",
+        "verified",
+        null,
+        null,
+        __stepCt_assert_profile_status);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_profile_status");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-profile-status",
+        Vars.TryGetValue("__outcome::assert_profile_status", out var __sco_assert_profile_status) ? __sco_assert_profile_status as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_profile_status", out var __scs_assert_profile_status) ? __scs_assert_profile_status as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_assert_queue_length = __vouchfxRunCt;
+    _ = __stepCt_assert_queue_length;
+    bool __stepBudgetGoverned_assert_queue_length = false;
+    _ = __stepBudgetGoverned_assert_queue_length;
+    StepEvents?.OnStepStarted("assert-queue-length");
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_queue_length",
+        "conn::cache",
+        "llen",
+        "user:{userId}:queue",
+        null,
+        null,
+        null,
+        3L,
+        __stepCt_assert_queue_length);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_queue_length");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-queue-length",
+        Vars.TryGetValue("__outcome::assert_queue_length", out var __sco_assert_queue_length) ? __sco_assert_queue_length as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_queue_length", out var __scs_assert_queue_length) ? __scs_assert_queue_length as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_assert_tag_count = __vouchfxRunCt;
+    _ = __stepCt_assert_tag_count;
+    bool __stepBudgetGoverned_assert_tag_count = false;
+    _ = __stepBudgetGoverned_assert_tag_count;
+    StepEvents?.OnStepStarted("assert-tag-count");
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_tag_count",
+        "conn::cache",
+        "scard",
+        "user:{userId}:tags",
+        null,
+        null,
+        null,
+        2L,
+        __stepCt_assert_tag_count);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_tag_count");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-tag-count",
+        Vars.TryGetValue("__outcome::assert_tag_count", out var __sco_assert_tag_count) ? __sco_assert_tag_count as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_tag_count", out var __scs_assert_tag_count) ? __scs_assert_tag_count as string : null);
+}
+@@@@ end

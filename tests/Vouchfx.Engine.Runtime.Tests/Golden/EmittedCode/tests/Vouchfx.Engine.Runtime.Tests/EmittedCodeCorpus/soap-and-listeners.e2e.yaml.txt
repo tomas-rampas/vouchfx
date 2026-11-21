@@ -1,0 +1,418 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Runtime.Tests/EmittedCodeCorpus/soap-and-listeners.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 4
+
+@@@@ step 1 of 4
+id: soap-fault
+type: http.soap
+provider: Vouchfx.Steps.Http.Soap.HttpSoapProvider
+model: Vouchfx.Steps.Http.Soap.HttpSoapModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Path": "/soap/users",
+  "Action": "http://example.com/GetUser",
+  "Envelope": "<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body><GetUser xmlns=\"http://example.com/users\"><UserId>missing</UserId></GetUser></soap:Body>\n</soap:Envelope>\n",
+  "Expect": {
+    "Status": 500,
+    "Fault": true,
+    "Xpath": null
+  }
+}
+@@@@ step 1 host-resources
+[]
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpSoap_Helpers sha256=96cd73cfc9790619876f55d2b23f55fcd041ed4f46a23adfbcd30ca22701fee7
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpSoap_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::soap_fault",
+        "__capture_status::soap_fault",
+        "svc::app",
+        "app",
+        "/soap/users",
+        "http://example.com/GetUser",
+        "\u003Csoap:Envelope xmlns:soap=\u0022http://schemas.xmlsoap.org/soap/envelope/\u0022\u003E\n  \u003Csoap:Body\u003E\u003CGetUser xmlns=\u0022http://example.com/users\u0022\u003E\u003CUserId\u003Emissing\u003C/UserId\u003E\u003C/GetUser\u003E\u003C/soap:Body\u003E\n\u003C/soap:Envelope\u003E\n",
+        500,
+        true,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_soap_fault,
+        __stepBudgetGoverned_soap_fault);
+}
+
+@@@@ step 2 of 4
+id: soap-xpath
+type: http.soap
+provider: Vouchfx.Steps.Http.Soap.HttpSoapProvider
+model: Vouchfx.Steps.Http.Soap.HttpSoapModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "app",
+  "Path": "/soap/users",
+  "Action": null,
+  "Envelope": "<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body/></soap:Envelope>",
+  "Expect": {
+    "Status": 200,
+    "Fault": false,
+    "Xpath": [
+      {
+        "Path": "//*[local-name()='Status']",
+        "Value": "OK"
+      },
+      {
+        "Path": "//*[local-name()='Count']",
+        "Value": "007"
+      },
+      {
+        "Path": "//*[local-name()='QuotedCount']",
+        "Value": "007"
+      },
+      {
+        "Path": "//*[local-name()='Active']",
+        "Value": "true"
+      }
+    ]
+  }
+}
+@@@@ step 2 host-resources
+[]
+@@@@ step 2 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+HttpSoap_Helpers sha256=96cd73cfc9790619876f55d2b23f55fcd041ed4f46a23adfbcd30ca22701fee7
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 2 statement-block
+{
+    await HttpSoap_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::soap_xpath",
+        "__capture_status::soap_xpath",
+        "svc::app",
+        "app",
+        "/soap/users",
+        null,
+        "\u003Csoap:Envelope xmlns:soap=\u0022http://schemas.xmlsoap.org/soap/envelope/\u0022\u003E\u003Csoap:Body/\u003E\u003C/soap:Envelope\u003E",
+        200,
+        false,
+        new string[] { "//*[local-name()=\u0027Status\u0027]", "//*[local-name()=\u0027Count\u0027]", "//*[local-name()=\u0027QuotedCount\u0027]", "//*[local-name()=\u0027Active\u0027]" },
+        new string[] { "OK", "007", "007", "true" },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_soap_xpath,
+        __stepBudgetGoverned_soap_xpath);
+}
+
+@@@@ step 3 of 4
+id: await-callback
+type: webhook-listen.http
+provider: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpProvider
+model: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpModel
+retry: false
+timeout-ms: none
+@@@@ step 3 model
+{
+  "Listener": "callbacks",
+  "Match": {
+    "Method": "POST",
+    "Path": "/hooks/orders",
+    "Headers": {
+      "X-Signature": "abc123",
+      "X-Attempt": "1",
+      "X-Quoted-Attempt": "1"
+    },
+    "BodyContains": "ord-1",
+    "PeerCertificateSha256": null
+  }
+}
+@@@@ step 3 host-resources
+[
+  {
+    "Kind": "webhook-listener",
+    "VarName": "callbacks"
+  }
+]
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+Vouchfx.Engine.Abstractions.Webhooks
+@@@@ step 3 helpers
+WebhookListenHttp_Helpers sha256=b99a0c99d4690d6c8e1a24a58f0bda0435f57c4a64a2467359b770f235c7e2ca
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 3 statement-block
+{
+    await WebhookListenHttp_Helpers.AssertAsync(
+        Vars,
+        Secrets,
+        Webhooks,
+        "__outcome::await_callback",
+        "callbacks",
+        "POST",
+        "/hooks/orders",
+        "ord-1",
+        null,
+        new string[] { "X-Signature", "X-Attempt", "X-Quoted-Attempt" },
+        new string[] { "abc123", "1", "1" },
+        __stepCt_await_callback);
+}
+
+@@@@ step 4 of 4
+id: await-span
+type: trace-expect.otlp
+provider: Vouchfx.Steps.TraceExpect.Otlp.TraceExpectOtlpProvider
+model: Vouchfx.Steps.TraceExpect.Otlp.TraceExpectOtlpModel
+retry: false
+timeout-ms: none
+@@@@ step 4 model
+{
+  "Receiver": "traces",
+  "Match": {
+    "TraceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+    "Service": "app",
+    "SpanName": "POST /orders",
+    "Attributes": {
+      "http.method": "POST",
+      "http.status_code": "200",
+      "retry.count": "0",
+      "cache.hit": "false"
+    },
+    "PeerCertificateSha256": null
+  }
+}
+@@@@ step 4 host-resources
+[
+  {
+    "Kind": "otlp-receiver",
+    "VarName": "traces"
+  }
+]
+@@@@ step 4 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+Vouchfx.Engine.Abstractions.Traces
+@@@@ step 4 helpers
+TraceExpectOtlp_Helpers sha256=5bb74a577e0ace792b39ee47cbefe7b39f99fce4c5e2942c5af8b7d463f866c4
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 4 statement-block
+{
+    await TraceExpectOtlp_Helpers.AssertAsync(
+        Vars,
+        Secrets,
+        Traces,
+        "__outcome::await_span",
+        "__capture_status::await_span",
+        "traces",
+        "4bf92f3577b34da6a3ce929d0e0e4736",
+        "app",
+        "POST /orders",
+        null,
+        new string[] { "http.method", "http.status_code", "retry.count", "cache.hit" },
+        new string[] { "POST", "200", "0", "false" },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_await_span);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Abstractions.Webhooks;
+using Vouchfx.Engine.Abstractions.Traces;
+
+// [helper HttpSoap_Helpers sha256=96cd73cfc9790619876f55d2b23f55fcd041ed4f46a23adfbcd30ca22701fee7: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper WebhookListenHttp_Helpers sha256=b99a0c99d4690d6c8e1a24a58f0bda0435f57c4a64a2467359b770f235c7e2ca: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper TraceExpectOtlp_Helpers sha256=5bb74a577e0ace792b39ee47cbefe7b39f99fce4c5e2942c5af8b7d463f866c4: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_soap_fault = __vouchfxRunCt;
+    _ = __stepCt_soap_fault;
+    bool __stepBudgetGoverned_soap_fault = false;
+    _ = __stepBudgetGoverned_soap_fault;
+    StepEvents?.OnStepStarted("soap-fault");
+{
+    await HttpSoap_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::soap_fault",
+        "__capture_status::soap_fault",
+        "svc::app",
+        "app",
+        "/soap/users",
+        "http://example.com/GetUser",
+        "\u003Csoap:Envelope xmlns:soap=\u0022http://schemas.xmlsoap.org/soap/envelope/\u0022\u003E\n  \u003Csoap:Body\u003E\u003CGetUser xmlns=\u0022http://example.com/users\u0022\u003E\u003CUserId\u003Emissing\u003C/UserId\u003E\u003C/GetUser\u003E\u003C/soap:Body\u003E\n\u003C/soap:Envelope\u003E\n",
+        500,
+        true,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_soap_fault,
+        __stepBudgetGoverned_soap_fault);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::soap_fault");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "soap-fault",
+        Vars.TryGetValue("__outcome::soap_fault", out var __sco_soap_fault) ? __sco_soap_fault as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::soap_fault", out var __scs_soap_fault) ? __scs_soap_fault as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_soap_xpath = __vouchfxRunCt;
+    _ = __stepCt_soap_xpath;
+    bool __stepBudgetGoverned_soap_xpath = false;
+    _ = __stepBudgetGoverned_soap_xpath;
+    StepEvents?.OnStepStarted("soap-xpath");
+{
+    await HttpSoap_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::soap_xpath",
+        "__capture_status::soap_xpath",
+        "svc::app",
+        "app",
+        "/soap/users",
+        null,
+        "\u003Csoap:Envelope xmlns:soap=\u0022http://schemas.xmlsoap.org/soap/envelope/\u0022\u003E\u003Csoap:Body/\u003E\u003C/soap:Envelope\u003E",
+        200,
+        false,
+        new string[] { "//*[local-name()=\u0027Status\u0027]", "//*[local-name()=\u0027Count\u0027]", "//*[local-name()=\u0027QuotedCount\u0027]", "//*[local-name()=\u0027Active\u0027]" },
+        new string[] { "OK", "007", "007", "true" },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_soap_xpath,
+        __stepBudgetGoverned_soap_xpath);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::soap_xpath");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "soap-xpath",
+        Vars.TryGetValue("__outcome::soap_xpath", out var __sco_soap_xpath) ? __sco_soap_xpath as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::soap_xpath", out var __scs_soap_xpath) ? __scs_soap_xpath as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_await_callback = __vouchfxRunCt;
+    _ = __stepCt_await_callback;
+    bool __stepBudgetGoverned_await_callback = false;
+    _ = __stepBudgetGoverned_await_callback;
+    StepEvents?.OnStepStarted("await-callback");
+{
+    await WebhookListenHttp_Helpers.AssertAsync(
+        Vars,
+        Secrets,
+        Webhooks,
+        "__outcome::await_callback",
+        "callbacks",
+        "POST",
+        "/hooks/orders",
+        "ord-1",
+        null,
+        new string[] { "X-Signature", "X-Attempt", "X-Quoted-Attempt" },
+        new string[] { "abc123", "1", "1" },
+        __stepCt_await_callback);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::await_callback");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "await-callback",
+        Vars.TryGetValue("__outcome::await_callback", out var __sco_await_callback) ? __sco_await_callback as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::await_callback", out var __scs_await_callback) ? __scs_await_callback as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_await_span = __vouchfxRunCt;
+    _ = __stepCt_await_span;
+    bool __stepBudgetGoverned_await_span = false;
+    _ = __stepBudgetGoverned_await_span;
+    StepEvents?.OnStepStarted("await-span");
+{
+    await TraceExpectOtlp_Helpers.AssertAsync(
+        Vars,
+        Secrets,
+        Traces,
+        "__outcome::await_span",
+        "__capture_status::await_span",
+        "traces",
+        "4bf92f3577b34da6a3ce929d0e0e4736",
+        "app",
+        "POST /orders",
+        null,
+        new string[] { "http.method", "http.status_code", "retry.count", "cache.hit" },
+        new string[] { "POST", "200", "0", "false" },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_await_span);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::await_span");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "await-span",
+        Vars.TryGetValue("__outcome::await_span", out var __sco_await_span) ? __sco_await_span as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::await_span", out var __scs_await_span) ? __scs_await_span as string : null);
+}
+@@@@ end

@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/security-mtls-missing-clientcert.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic 1 of 1
+/environment/dependencies/orders-mq/security	(line 18) Required properties ["clientCert"] are not present on dependency 'orders-mq'
+@@@@ end

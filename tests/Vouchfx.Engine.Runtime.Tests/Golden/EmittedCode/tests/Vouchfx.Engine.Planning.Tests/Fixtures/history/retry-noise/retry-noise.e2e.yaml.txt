@@ -1,0 +1,133 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/history/retry-noise/retry-noise.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 1
+
+@@@@ step 1 of 1
+id: retry-step
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: true
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "api",
+  "Method": "GET",
+  "Path": "/health",
+  "Headers": null,
+  "Body": null,
+  "Expect": null,
+  "BodyRefusal": null
+}
+@@@@ step 1 host-resources
+[]
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::retry_step",
+        "__capture_status::retry_step",
+        "svc::api",
+        "api",
+        "GET",
+        "/health",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_retry_step,
+        __stepBudgetGoverned_retry_step);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    StepEvents?.OnStepStarted("retry-step");
+    async System.Threading.Tasks.Task<Vouchfx.Engine.Abstractions.StepOutcome> __attempt_retry_step(System.Threading.CancellationToken __ct_retry_step)
+    {
+        System.Threading.CancellationToken __stepCt_retry_step = __ct_retry_step;
+        _ = __stepCt_retry_step;
+        bool __stepBudgetGoverned_retry_step = false;
+        _ = __stepBudgetGoverned_retry_step;
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::retry_step",
+        "__capture_status::retry_step",
+        "svc::api",
+        "api",
+        "GET",
+        "/health",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_retry_step,
+        __stepBudgetGoverned_retry_step);
+}
+        var __o_retry_step = Vars.TryGetValue("__outcome::retry_step", out var __raw_retry_step) && __raw_retry_step is Vouchfx.Engine.Abstractions.StepOutcome __so_retry_step
+            ? __so_retry_step
+            : new Vouchfx.Engine.Abstractions.StepOutcome(Vouchfx.Engine.Abstractions.Verdict.Inconclusive, 0L, null);
+        Vars.Remove("__outcome::retry_step");
+        return __o_retry_step;
+    }
+    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(
+        Vars, "__outcome::retry_step", "__attempts::retry_step", null, null, __attempt_retry_step, StepEvents, "retry-step", ct: __vouchfxRunCt);
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::retry_step");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "retry-step",
+        Vars.TryGetValue("__outcome::retry_step", out var __sco_retry_step) ? __sco_retry_step as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::retry_step", out var __scs_retry_step) ? __scs_retry_step as string : null);
+}
+@@@@ end

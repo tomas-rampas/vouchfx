@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/expect-json-key-without-root-http-rest.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic 1 of 1
+/steps/0/expect/json/id	(line 18) Property name 'id' begins with an engine-reserved bookkeeping prefix - see this field's own description for the reserved prefix list.
+@@@@ end

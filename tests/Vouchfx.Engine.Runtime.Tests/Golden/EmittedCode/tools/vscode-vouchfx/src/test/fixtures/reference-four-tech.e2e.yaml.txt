@@ -1,0 +1,157 @@
+vouchfx emitted-code baseline v2
+suite: tools/vscode-vouchfx/src/test/fixtures/reference-four-tech.e2e.yaml
+outcome: refused
+stage: pipeline
+steps: 7
+@@@@ diagnostic 1 of 1
+-	Service 'whoami' sets 'image: traefik/whoami' with no tag or digest. This would silently float on ':latest', defeating the section 4 determinism invariant. Embed a tag or a 'sha256:' digest in 'image:'. (Parameter 'env')
+
+@@@@ step 1 of 7
+id: rest-get-whoami
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "whoami",
+  "Method": "GET",
+  "Path": "/api",
+  "Headers": {
+    "Authorization": "Bearer ${secret:env/VOUCHFX_REF_BEARER_TOKEN}"
+  },
+  "Body": null,
+  "Expect": {
+    "Status": 200,
+    "Json": null,
+    "BodyContains": null
+  },
+  "BodyRefusal": null
+}
+@@@@ step 1 host-resources
+[]
+
+@@@@ step 2 of 7
+id: db-insert-row
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Code": "var connStr = (string)Vars[\"conn::refdb\"];\nvar hostVal = (string)Vars[\"hostname\"];\nvar conn = new Npgsql.NpgsqlConnection(connStr);\nawait conn.OpenAsync();\ntry {\n  var cmd = conn.CreateCommand();\n  try {\n    cmd.CommandText =\n      \"INSERT INTO orders (hostname, status) VALUES (@h, @s);\";\n    cmd.Parameters.AddWithValue(\"h\", hostVal);\n    cmd.Parameters.AddWithValue(\"s\", \"PENDING\");\n    var rows = await cmd.ExecuteNonQueryAsync();\n    if (rows != 1)\n      throw new System.Exception(\"Expected INSERT to affect 1 row.\");\n  } finally { cmd.Dispose(); }\n} finally { await conn.DisposeAsync(); }\n",
+  "File": null
+}
+@@@@ step 2 host-resources
+[]
+
+@@@@ step 3 of 7
+id: db-assert-rows
+type: db-assert.postgres
+provider: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresProvider
+model: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresModel
+retry: false
+timeout-ms: none
+@@@@ step 3 model
+{
+  "Target": "refdb",
+  "Query": "SELECT hostname, status FROM orders WHERE hostname = @h",
+  "Parameters": {
+    "h": "{hostname}"
+  },
+  "Expect": {
+    "RowCount": 1,
+    "Row": {
+      "status": "{expectedStatus}"
+    }
+  }
+}
+@@@@ step 3 host-resources
+[]
+
+@@@@ step 4 of 7
+id: kafka-publish-order
+type: mq-publish.kafka
+provider: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaProvider
+model: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaModel
+retry: false
+timeout-ms: none
+@@@@ step 4 model
+{
+  "Target": "events",
+  "Topic": "orders.created",
+  "Key": null,
+  "Payload": "{\"id\":\"{orderId}\",\"hostname\":\"{hostname}\"}",
+  "Headers": null,
+  "Avro": null
+}
+@@@@ step 4 host-resources
+[]
+
+@@@@ step 5 of 7
+id: kafka-expect-order
+type: mq-expect.kafka
+provider: Vouchfx.Steps.MqExpect.Kafka.MqExpectKafkaProvider
+model: Vouchfx.Steps.MqExpect.Kafka.MqExpectKafkaModel
+retry: true
+timeout-ms: 30000
+@@@@ step 5 model
+{
+  "Target": "events",
+  "Topic": "orders.created",
+  "Match": {
+    "Key": null,
+    "Headers": null,
+    "PayloadContains": null,
+    "Json": {
+      "$.id": "{orderId}"
+    }
+  },
+  "Avro": null
+}
+@@@@ step 5 host-resources
+[]
+
+@@@@ step 6 of 7
+id: webhook-trigger
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
+retry: false
+timeout-ms: none
+@@@@ step 6 model
+{
+  "Code": "var cb = (string)Vars[\"cb\"];\nvar orderId = (string)Vars[\"orderId\"];\nvar client = new System.Net.Http.HttpClient();\ntry {\n  var body = new System.Net.Http.StringContent(\n    \"{\\\"orderId\\\":\\\"\" + orderId + \"\\\"}\",\n    System.Text.Encoding.UTF8, \"application/json\");\n  var resp = await client.PostAsync(cb + \"callbacks/\" + orderId, body);\n  if ((int)resp.StatusCode >= 400)\n    throw new System.Exception(\"Webhook POST failed: \" + (int)resp.StatusCode);\n} finally { client.Dispose(); }\n",
+  "File": null
+}
+@@@@ step 6 host-resources
+[]
+
+@@@@ step 7 of 7
+id: webhook-await
+type: webhook-listen.http
+provider: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpProvider
+model: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpModel
+retry: true
+timeout-ms: 30000
+@@@@ step 7 model
+{
+  "Listener": "cb",
+  "Match": {
+    "Method": "POST",
+    "Path": "/callbacks/{orderId}",
+    "Headers": null,
+    "BodyContains": null,
+    "PeerCertificateSha256": null
+  }
+}
+@@@@ step 7 host-resources
+[
+  {
+    "Kind": "webhook-listener",
+    "VarName": "cb"
+  }
+]
+@@@@ end

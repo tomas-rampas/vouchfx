@@ -1,0 +1,550 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/surface-timeout-duration-forms.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 4
+
+@@@@ step 1 of 4
+id: milliseconds-form
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: 500
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "GET",
+  "Path": "/api",
+  "Headers": null,
+  "Body": null,
+  "Expect": null,
+  "BodyRefusal": null
+}
+@@@@ step 1 host-resources
+[]
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::milliseconds_form",
+        "__capture_status::milliseconds_form",
+        "svc::app",
+        "app",
+        "GET",
+        "/api",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_milliseconds_form,
+        __stepBudgetGoverned_milliseconds_form);
+}
+
+@@@@ step 2 of 4
+id: seconds-form
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: 30000
+@@@@ step 2 model
+{
+  "Target": "app",
+  "Method": "GET",
+  "Path": "/api",
+  "Headers": null,
+  "Body": null,
+  "Expect": null,
+  "BodyRefusal": null
+}
+@@@@ step 2 host-resources
+[]
+@@@@ step 2 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 2 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::seconds_form",
+        "__capture_status::seconds_form",
+        "svc::app",
+        "app",
+        "GET",
+        "/api",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_seconds_form,
+        __stepBudgetGoverned_seconds_form);
+}
+
+@@@@ step 3 of 4
+id: minutes-form
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: 120000
+@@@@ step 3 model
+{
+  "Target": "app",
+  "Method": "GET",
+  "Path": "/api",
+  "Headers": null,
+  "Body": null,
+  "Expect": null,
+  "BodyRefusal": null
+}
+@@@@ step 3 host-resources
+[]
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 3 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::minutes_form",
+        "__capture_status::minutes_form",
+        "svc::app",
+        "app",
+        "GET",
+        "/api",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_minutes_form,
+        __stepBudgetGoverned_minutes_form);
+}
+
+@@@@ step 4 of 4
+id: bare-integer-form
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: 45000
+@@@@ step 4 model
+{
+  "Target": "app",
+  "Method": "GET",
+  "Path": "/api",
+  "Headers": null,
+  "Body": null,
+  "Expect": null,
+  "BodyRefusal": null
+}
+@@@@ step 4 host-resources
+[]
+@@@@ step 4 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 4 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 4 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::bare_integer_form",
+        "__capture_status::bare_integer_form",
+        "svc::app",
+        "app",
+        "GET",
+        "/api",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_bare_integer_form,
+        __stepBudgetGoverned_bare_integer_form);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    var __stepSw_milliseconds_form = System.Diagnostics.Stopwatch.StartNew();
+    var __stepCts_milliseconds_form = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(__vouchfxRunCt);
+    __stepCts_milliseconds_form.CancelAfter(System.TimeSpan.FromMilliseconds(500L));
+    System.Threading.CancellationToken __stepCt_milliseconds_form = __stepCts_milliseconds_form.Token;
+    _ = __stepCt_milliseconds_form;
+    bool __stepBudgetGoverned_milliseconds_form = true;
+    _ = __stepBudgetGoverned_milliseconds_form;
+    StepEvents?.OnStepStarted("milliseconds-form");
+    var __stepTimedOut_milliseconds_form = false;
+    try
+    {
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::milliseconds_form",
+        "__capture_status::milliseconds_form",
+        "svc::app",
+        "app",
+        "GET",
+        "/api",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_milliseconds_form,
+        __stepBudgetGoverned_milliseconds_form);
+}
+    }
+    catch (System.OperationCanceledException) when (__stepCts_milliseconds_form.IsCancellationRequested && !__vouchfxRunCt.IsCancellationRequested)
+    {
+        // Early cooperative cut: the body observed the step token (section 4, #232).
+        __stepTimedOut_milliseconds_form = true;
+        Vars["__outcome::milliseconds_form"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_milliseconds_form.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:500}");
+    }
+    finally
+    {
+        __stepSw_milliseconds_form.Stop();
+        __stepCts_milliseconds_form.Dispose();
+    }
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::milliseconds_form");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    if (!__stepTimedOut_milliseconds_form && __stepSw_milliseconds_form.ElapsedMilliseconds > 500L)
+    {
+        var __prior_milliseconds_form = Vars.TryGetValue("__outcome::milliseconds_form", out var __praw_milliseconds_form) && __praw_milliseconds_form is Vouchfx.Engine.Abstractions.StepOutcome __pso_milliseconds_form
+            ? __pso_milliseconds_form.Verdict.ToString()
+            : "(none)";
+        Vars["__outcome::milliseconds_form"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_milliseconds_form.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:500,\u0022supersededVerdict\u0022:\u0022" + __prior_milliseconds_form + "\u0022}");
+    }
+    StepEvents?.OnStepCompleted(
+        "milliseconds-form",
+        Vars.TryGetValue("__outcome::milliseconds_form", out var __sco_milliseconds_form) ? __sco_milliseconds_form as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::milliseconds_form", out var __scs_milliseconds_form) ? __scs_milliseconds_form as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    var __stepSw_seconds_form = System.Diagnostics.Stopwatch.StartNew();
+    var __stepCts_seconds_form = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(__vouchfxRunCt);
+    __stepCts_seconds_form.CancelAfter(System.TimeSpan.FromMilliseconds(30000L));
+    System.Threading.CancellationToken __stepCt_seconds_form = __stepCts_seconds_form.Token;
+    _ = __stepCt_seconds_form;
+    bool __stepBudgetGoverned_seconds_form = true;
+    _ = __stepBudgetGoverned_seconds_form;
+    StepEvents?.OnStepStarted("seconds-form");
+    var __stepTimedOut_seconds_form = false;
+    try
+    {
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::seconds_form",
+        "__capture_status::seconds_form",
+        "svc::app",
+        "app",
+        "GET",
+        "/api",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_seconds_form,
+        __stepBudgetGoverned_seconds_form);
+}
+    }
+    catch (System.OperationCanceledException) when (__stepCts_seconds_form.IsCancellationRequested && !__vouchfxRunCt.IsCancellationRequested)
+    {
+        // Early cooperative cut: the body observed the step token (section 4, #232).
+        __stepTimedOut_seconds_form = true;
+        Vars["__outcome::seconds_form"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_seconds_form.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:30000}");
+    }
+    finally
+    {
+        __stepSw_seconds_form.Stop();
+        __stepCts_seconds_form.Dispose();
+    }
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::seconds_form");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    if (!__stepTimedOut_seconds_form && __stepSw_seconds_form.ElapsedMilliseconds > 30000L)
+    {
+        var __prior_seconds_form = Vars.TryGetValue("__outcome::seconds_form", out var __praw_seconds_form) && __praw_seconds_form is Vouchfx.Engine.Abstractions.StepOutcome __pso_seconds_form
+            ? __pso_seconds_form.Verdict.ToString()
+            : "(none)";
+        Vars["__outcome::seconds_form"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_seconds_form.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:30000,\u0022supersededVerdict\u0022:\u0022" + __prior_seconds_form + "\u0022}");
+    }
+    StepEvents?.OnStepCompleted(
+        "seconds-form",
+        Vars.TryGetValue("__outcome::seconds_form", out var __sco_seconds_form) ? __sco_seconds_form as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::seconds_form", out var __scs_seconds_form) ? __scs_seconds_form as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    var __stepSw_minutes_form = System.Diagnostics.Stopwatch.StartNew();
+    var __stepCts_minutes_form = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(__vouchfxRunCt);
+    __stepCts_minutes_form.CancelAfter(System.TimeSpan.FromMilliseconds(120000L));
+    System.Threading.CancellationToken __stepCt_minutes_form = __stepCts_minutes_form.Token;
+    _ = __stepCt_minutes_form;
+    bool __stepBudgetGoverned_minutes_form = true;
+    _ = __stepBudgetGoverned_minutes_form;
+    StepEvents?.OnStepStarted("minutes-form");
+    var __stepTimedOut_minutes_form = false;
+    try
+    {
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::minutes_form",
+        "__capture_status::minutes_form",
+        "svc::app",
+        "app",
+        "GET",
+        "/api",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_minutes_form,
+        __stepBudgetGoverned_minutes_form);
+}
+    }
+    catch (System.OperationCanceledException) when (__stepCts_minutes_form.IsCancellationRequested && !__vouchfxRunCt.IsCancellationRequested)
+    {
+        // Early cooperative cut: the body observed the step token (section 4, #232).
+        __stepTimedOut_minutes_form = true;
+        Vars["__outcome::minutes_form"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_minutes_form.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:120000}");
+    }
+    finally
+    {
+        __stepSw_minutes_form.Stop();
+        __stepCts_minutes_form.Dispose();
+    }
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::minutes_form");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    if (!__stepTimedOut_minutes_form && __stepSw_minutes_form.ElapsedMilliseconds > 120000L)
+    {
+        var __prior_minutes_form = Vars.TryGetValue("__outcome::minutes_form", out var __praw_minutes_form) && __praw_minutes_form is Vouchfx.Engine.Abstractions.StepOutcome __pso_minutes_form
+            ? __pso_minutes_form.Verdict.ToString()
+            : "(none)";
+        Vars["__outcome::minutes_form"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_minutes_form.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:120000,\u0022supersededVerdict\u0022:\u0022" + __prior_minutes_form + "\u0022}");
+    }
+    StepEvents?.OnStepCompleted(
+        "minutes-form",
+        Vars.TryGetValue("__outcome::minutes_form", out var __sco_minutes_form) ? __sco_minutes_form as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::minutes_form", out var __scs_minutes_form) ? __scs_minutes_form as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    var __stepSw_bare_integer_form = System.Diagnostics.Stopwatch.StartNew();
+    var __stepCts_bare_integer_form = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(__vouchfxRunCt);
+    __stepCts_bare_integer_form.CancelAfter(System.TimeSpan.FromMilliseconds(45000L));
+    System.Threading.CancellationToken __stepCt_bare_integer_form = __stepCts_bare_integer_form.Token;
+    _ = __stepCt_bare_integer_form;
+    bool __stepBudgetGoverned_bare_integer_form = true;
+    _ = __stepBudgetGoverned_bare_integer_form;
+    StepEvents?.OnStepStarted("bare-integer-form");
+    var __stepTimedOut_bare_integer_form = false;
+    try
+    {
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::bare_integer_form",
+        "__capture_status::bare_integer_form",
+        "svc::app",
+        "app",
+        "GET",
+        "/api",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_bare_integer_form,
+        __stepBudgetGoverned_bare_integer_form);
+}
+    }
+    catch (System.OperationCanceledException) when (__stepCts_bare_integer_form.IsCancellationRequested && !__vouchfxRunCt.IsCancellationRequested)
+    {
+        // Early cooperative cut: the body observed the step token (section 4, #232).
+        __stepTimedOut_bare_integer_form = true;
+        Vars["__outcome::bare_integer_form"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_bare_integer_form.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:45000}");
+    }
+    finally
+    {
+        __stepSw_bare_integer_form.Stop();
+        __stepCts_bare_integer_form.Dispose();
+    }
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::bare_integer_form");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    if (!__stepTimedOut_bare_integer_form && __stepSw_bare_integer_form.ElapsedMilliseconds > 45000L)
+    {
+        var __prior_bare_integer_form = Vars.TryGetValue("__outcome::bare_integer_form", out var __praw_bare_integer_form) && __praw_bare_integer_form is Vouchfx.Engine.Abstractions.StepOutcome __pso_bare_integer_form
+            ? __pso_bare_integer_form.Verdict.ToString()
+            : "(none)";
+        Vars["__outcome::bare_integer_form"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_bare_integer_form.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:45000,\u0022supersededVerdict\u0022:\u0022" + __prior_bare_integer_form + "\u0022}");
+    }
+    StepEvents?.OnStepCompleted(
+        "bare-integer-form",
+        Vars.TryGetValue("__outcome::bare_integer_form", out var __sco_bare_integer_form) ? __sco_bare_integer_form as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::bare_integer_form", out var __scs_bare_integer_form) ? __scs_bare_integer_form as string : null);
+}
+@@@@ end

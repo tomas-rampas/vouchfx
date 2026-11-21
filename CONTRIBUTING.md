@@ -264,6 +264,32 @@ The Docker integration suites no longer run on pull requests or pushes; they run
 
 All contributions must honour the hard invariants in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
 
+### The emitted-code baseline
+
+`EmittedCodeBaselineTests` (in `tests/Vouchfx.Engine.Runtime.Tests`) pins what each step binds to and the C# the engine emits for every `.e2e.yaml` file in the repository: `examples/`, the test fixtures and corpora, the editor-extension samples, and the gate's own binder-coverage corpus. It runs the front end up to emitted text, so it starts no topology, container or network and never compiles or runs the script. Each suite has a golden under `tests/Vouchfx.Engine.Runtime.Tests/Golden/EmittedCode/`, mirroring its repository-relative path with a `.txt` suffix.
+
+A golden is split into named sections, each starting with a line that begins `@@@@ `, and no two sections share a name:
+
+- The preamble, before the first marker, holds the format version, the suite, the outcome, then the refusal stage or the namespace, and the step count.
+- A refusal has one section per diagnostic, numbered `diagnostic 1 of 2`, `diagnostic 2 of 2` and so on.
+- Every suite that builds an AST has, for each step, a header section `step N of M` (id, type, provider, model type, retry, timeout), then `step N model`, the bound model as indented JSON, and `step N host-resources`, its host-resource requirements. This holds even when the pipeline refuses the suite later, for example at the security preflight, because the gate binds the steps itself. A step whose `Bind` fails has a `step N bind-failure` section instead, and no later step is bound.
+- A suite that emits also has `step N usings`, `step N helpers` (helper class names with SHA-256) and `step N statement-block` for each step, and ends with `assembled-script`, the whole script with helper bodies reduced to name and hash.
+
+A model is written with `System.Text.Json` alone: properties in declaration order, `null` written, enums as names, maps in the order the binder built them. A model member of a type with no library-independent rendering (a YAML node, a delegate, a `Regex`, a `TimeSpan`) fails the gate until `EmittedCodeBaselineModels` gives it one. A failure names the suite, the section, and for a step section the step id and provider.
+
+`tests/Vouchfx.Engine.Runtime.Tests/EmittedCodeCorpus/` holds suites that exist only for this gate. Between them they set the step fields of the 25 Core providers that no other suite binds, and the YAML forms a change to the binder input type has to reproduce: plain and quoted numbers, booleans and null words, `~` and empty values, leading zeros, literal and folded block scalars, flow collections, anchors, quoted and plain scalars reached through aliases, explicit tags and `<<` merge keys. The gate records a step's bound model for every suite that builds an AST, including a suite the pipeline later refuses, so a corpus suite must pass schema validation and build an AST but need not reach emitted code; `otlp-peer-certificate.e2e.yaml` is refused at the security preflight by design and still pins its step's model. Measured by a script that checks each schema field of the 25 Core step types against the steps that have a recorded model, every one of the 195 fields is set by at least one such step (0 never bound); that check looks at the field's presence in the YAML, not at whether each value form is covered, so the forms listed above are what the corpus pins. Their goldens record today's behaviour, not intended behaviour. No other test or tool reads that directory. Add to it when a provider gains a step field.
+
+The gate fails when a bound model or emitted code changes, when a discovered suite has no golden, and when a golden outlives its suite. A new suite therefore needs its golden in the same change. Discovery searches the whole checkout, `.github/` included. It skips build output (`bin`, `obj`, `node_modules`, `TestResults`), named tool and editor state folders, nested checkouts and symbolic links.
+
+Regenerating is legitimate when the change to a bound model or to emitted code is the intended product of your work: a provider's model or generated statements, a helper body, the assembler, or a suite you added or edited. It is not legitimate to regenerate in order to make a refactor pass. A change that is meant to leave binding and emitted code alone, such as changing how a provider reads its YAML, must leave every golden byte-identical, and a diff there is a defect to fix. To regenerate deliberately, run
+
+```bash
+VOUCHFX_REGEN_EMITTED_CODE=1 dotnet test tests/Vouchfx.Engine.Runtime.Tests \
+  --filter "FullyQualifiedName~EmittedCodeBaselineTests"
+```
+
+then review the golden diff and commit it with the change that caused it. Regeneration is refused when `CI` or `GITHUB_ACTIONS` is set, like the other golden gates. The gate runs a suite's `<name>.setup.(sh|ps1)` script first when it has one, as `ExamplesCompileTests` does, so the files that suite declares exist.
+
 Fixed diagnostic formatting, Core provider diff separators and public schema descriptions use ASCII. Diff tables use `|`, `-` and `+`; a literal pipe in a cell is shown as `\u007c`. Preserve Unicode in authored or observed values. Generated CSX comments and frozen SDK `Source` constants retain their existing bytes.
 
 ## Licence

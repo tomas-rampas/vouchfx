@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/service-healthcheck-http-without-http-endpoint.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic 1 of 1
+/environment/services/kafka-broker/healthCheck/type	(line 16) Service 'kafka-broker' declares 'healthCheck: { type: http }', but its 'ports' declaration has no sibling 'httpPort' - no HTTP endpoint exists there for anything but a 'tcp' probe to target. Add 'httpPort:' to expose one, or write 'healthCheck: { type: tcp }'.
+@@@@ end

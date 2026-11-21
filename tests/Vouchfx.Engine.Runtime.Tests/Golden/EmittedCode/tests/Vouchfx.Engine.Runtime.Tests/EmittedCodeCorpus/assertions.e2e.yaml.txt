@@ -1,0 +1,684 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Runtime.Tests/EmittedCodeCorpus/assertions.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 7
+
+@@@@ step 1 of 7
+id: es-min-count
+type: cache-assert.elasticsearch
+provider: Vouchfx.Steps.CacheAssert.Elasticsearch.CacheAssertElasticsearchProvider
+model: Vouchfx.Steps.CacheAssert.Elasticsearch.CacheAssertElasticsearchModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "search",
+  "Index": "2024",
+  "Query": null,
+  "Expect": {
+    "Count": null,
+    "MinCount": 2,
+    "Fields": null
+  }
+}
+@@@@ step 1 host-resources
+[]
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Globalization
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+CacheAssertElasticsearch_Helpers sha256=51b14810b82e2a97b65683d05dc222f76fc703c8dc5dd8a59099d23c5f98011a
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 1 statement-block
+{
+    await CacheAssertElasticsearch_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        "__outcome::es_min_count",
+        "conn::search",
+        "2024",
+        "{\u0022query\u0022:{\u0022match_all\u0022:{}}}",
+        2,
+        null,
+        null,
+        null,
+        __stepCt_es_min_count,
+        __stepBudgetGoverned_es_min_count);
+}
+
+@@@@ step 2 of 7
+id: es-quoted-min-count
+type: cache-assert.elasticsearch
+provider: Vouchfx.Steps.CacheAssert.Elasticsearch.CacheAssertElasticsearchProvider
+model: Vouchfx.Steps.CacheAssert.Elasticsearch.CacheAssertElasticsearchModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "search",
+  "Index": "2024",
+  "Query": "{\"query\": {\"term\": {\"status\": \"paid\"}}}",
+  "Expect": {
+    "Count": null,
+    "MinCount": 7,
+    "Fields": [
+      {
+        "Field": "status",
+        "Value": "paid"
+      },
+      {
+        "Field": "total",
+        "Value": "49.50"
+      }
+    ]
+  }
+}
+@@@@ step 2 host-resources
+[]
+@@@@ step 2 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Globalization
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+CacheAssertElasticsearch_Helpers sha256=51b14810b82e2a97b65683d05dc222f76fc703c8dc5dd8a59099d23c5f98011a
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 2 statement-block
+{
+    await CacheAssertElasticsearch_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        "__outcome::es_quoted_min_count",
+        "conn::search",
+        "2024",
+        "{\u0022query\u0022: {\u0022term\u0022: {\u0022status\u0022: \u0022paid\u0022}}}",
+        7,
+        null,
+        new string[]{ "status", "total" },
+        new string[]{ "paid", "49.50" },
+        __stepCt_es_quoted_min_count,
+        __stepBudgetGoverned_es_quoted_min_count);
+}
+
+@@@@ step 3 of 7
+id: sqlserver-parameters
+type: db-assert.sqlserver
+provider: Vouchfx.Steps.DbAssert.SqlServer.DbAssertSqlServerProvider
+model: Vouchfx.Steps.DbAssert.SqlServer.DbAssertSqlServerModel
+retry: false
+timeout-ms: none
+@@@@ step 3 model
+{
+  "Target": "ledger",
+  "Query": "SELECT COUNT(*) AS n FROM Orders WHERE Id = @id AND Code = @code AND Paid = @paid",
+  "Parameters": {
+    "id": "007",
+    "code": "007",
+    "paid": "true",
+    "note": "true"
+  },
+  "Expect": {
+    "RowCount": 1,
+    "Row": {
+      "n": "1"
+    }
+  }
+}
+@@@@ step 3 host-resources
+[]
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Microsoft.Data.SqlClient
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+DbAssertSqlServer_Helpers sha256=ccefbb44ee09e1ba9a5a40772b38ba52dc08bfcf52ce7bb59e9dcfc4fa370fc5
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 3 statement-block
+{
+    await DbAssertSqlServer_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::sqlserver_parameters",
+        "conn::ledger",
+        "SELECT COUNT(*) AS n FROM Orders WHERE Id = @id AND Code = @code AND Paid = @paid",
+        new string[] { "id", "code", "paid", "note" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "007"), Substitute_Helpers.Resolve(Vars, "007"), Substitute_Helpers.Resolve(Vars, "true"), Substitute_Helpers.Resolve(Vars, "true") },
+        1,
+        new string[] { "n" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "1") },
+        __stepCt_sqlserver_parameters, __stepBudgetGoverned_sqlserver_parameters);
+}
+
+@@@@ step 4 of 7
+id: prometheus-labels-value
+type: metrics-assert.prometheus
+provider: Vouchfx.Steps.MetricsAssert.Prometheus.MetricsAssertPrometheusProvider
+model: Vouchfx.Steps.MetricsAssert.Prometheus.MetricsAssertPrometheusModel
+retry: false
+timeout-ms: none
+@@@@ step 4 model
+{
+  "Target": "app",
+  "Path": "/metrics",
+  "Metric": "http_requests_total",
+  "Labels": {
+    "method": "POST",
+    "code": "200",
+    "quotedCode": "200",
+    "tls": "false"
+  },
+  "Expect": {
+    "Value": "1.50",
+    "Min": null,
+    "Max": null
+  }
+}
+@@@@ step 4 host-resources
+[]
+@@@@ step 4 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Net.Http
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 4 helpers
+MetricsAssertPrometheus_Helpers sha256=7dbd8362a40b7636d93636d25873efc226fd5482485f3c2894bf2d3483b30f3d
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 4 statement-block
+{
+    await MetricsAssertPrometheus_Helpers.ScrapeAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::prometheus_labels_value",
+        "__capture_status::prometheus_labels_value",
+        "svc::app",
+        "app",
+        "/metrics",
+        "http_requests_total",
+        new string[] { "method", "code", "quotedCode", "tls" },
+        new string[] { "POST", "200", "200", "false" },
+        "1.50",
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_prometheus_labels_value,
+        __stepBudgetGoverned_prometheus_labels_value);
+}
+
+@@@@ step 5 of 7
+id: prometheus-max
+type: metrics-assert.prometheus
+provider: Vouchfx.Steps.MetricsAssert.Prometheus.MetricsAssertPrometheusProvider
+model: Vouchfx.Steps.MetricsAssert.Prometheus.MetricsAssertPrometheusModel
+retry: false
+timeout-ms: none
+@@@@ step 5 model
+{
+  "Target": "app",
+  "Path": "/metrics",
+  "Metric": "node_exporter_build_info",
+  "Labels": null,
+  "Expect": {
+    "Value": null,
+    "Min": "1",
+    "Max": "2.5"
+  }
+}
+@@@@ step 5 host-resources
+[]
+@@@@ step 5 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Net.Http
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 5 helpers
+MetricsAssertPrometheus_Helpers sha256=7dbd8362a40b7636d93636d25873efc226fd5482485f3c2894bf2d3483b30f3d
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 5 statement-block
+{
+    await MetricsAssertPrometheus_Helpers.ScrapeAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::prometheus_max",
+        "__capture_status::prometheus_max",
+        "svc::app",
+        "app",
+        "/metrics",
+        "node_exporter_build_info",
+        new string[] { },
+        new string[] { },
+        null,
+        "1",
+        "2.5",
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_prometheus_max,
+        __stepBudgetGoverned_prometheus_max);
+}
+
+@@@@ step 6 of 7
+id: s3-content-and-metadata
+type: storage-assert.s3
+provider: Vouchfx.Steps.StorageAssert.S3.StorageAssertS3Provider
+model: Vouchfx.Steps.StorageAssert.S3.StorageAssertS3Model
+retry: false
+timeout-ms: none
+@@@@ step 6 model
+{
+  "Target": "reports",
+  "Bucket": "reports",
+  "Key": "exports/2024/orders.csv",
+  "Expect": {
+    "Exists": true,
+    "Size": "1024",
+    "MinSize": null,
+    "Sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "ContentContains": "orderId",
+    "ContentType": "text/csv",
+    "Metadata": {
+      "owner": "finance",
+      "version": "007",
+      "quotedVersion": "007"
+    }
+  }
+}
+@@@@ step 6 host-resources
+[]
+@@@@ step 6 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Amazon.S3
+Amazon.S3.Model
+Amazon.Runtime
+Vouchfx.Engine.Abstractions
+@@@@ step 6 helpers
+StorageAssertS3_Helpers sha256=9cdc79f9c81453b4d02d22a4cdcd910a54f97c8cb780394b2deb8d2c97c9ce87
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 6 statement-block
+{
+    await StorageAssertS3_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        "__outcome::s3_content_and_metadata",
+        "__capture_status::s3_content_and_metadata",
+        "conn::reports",
+        "reports",
+        "exports/2024/orders.csv",
+        true,
+        "1024",
+        null,
+        "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "orderId",
+        "text/csv",
+        new string[] { "owner", "version", "quotedVersion" },
+        new string[] { "finance", "007", "007" },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_s3_content_and_metadata,
+        __stepBudgetGoverned_s3_content_and_metadata);
+}
+
+@@@@ step 7 of 7
+id: s3-quoted-size
+type: storage-assert.s3
+provider: Vouchfx.Steps.StorageAssert.S3.StorageAssertS3Provider
+model: Vouchfx.Steps.StorageAssert.S3.StorageAssertS3Model
+retry: false
+timeout-ms: none
+@@@@ step 7 model
+{
+  "Target": "reports",
+  "Bucket": "reports",
+  "Key": "exports/2024/empty.csv",
+  "Expect": {
+    "Exists": null,
+    "Size": "0",
+    "MinSize": null,
+    "Sha256": null,
+    "ContentContains": "123",
+    "ContentType": null,
+    "Metadata": null
+  }
+}
+@@@@ step 7 host-resources
+[]
+@@@@ step 7 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Amazon.S3
+Amazon.S3.Model
+Amazon.Runtime
+Vouchfx.Engine.Abstractions
+@@@@ step 7 helpers
+StorageAssertS3_Helpers sha256=9cdc79f9c81453b4d02d22a4cdcd910a54f97c8cb780394b2deb8d2c97c9ce87
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 7 statement-block
+{
+    await StorageAssertS3_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        "__outcome::s3_quoted_size",
+        "__capture_status::s3_quoted_size",
+        "conn::reports",
+        "reports",
+        "exports/2024/empty.csv",
+        true,
+        "0",
+        null,
+        null,
+        "123",
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_s3_quoted_size,
+        __stepBudgetGoverned_s3_quoted_size);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using Microsoft.Data.SqlClient;
+using System.Net.Http;
+using Amazon.S3;
+using Amazon.S3.Model;
+using Amazon.Runtime;
+
+// [helper CacheAssertElasticsearch_Helpers sha256=51b14810b82e2a97b65683d05dc222f76fc703c8dc5dd8a59099d23c5f98011a: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper DbAssertSqlServer_Helpers sha256=ccefbb44ee09e1ba9a5a40772b38ba52dc08bfcf52ce7bb59e9dcfc4fa370fc5: body elided, recorded by name and hash]
+// [helper MetricsAssertPrometheus_Helpers sha256=7dbd8362a40b7636d93636d25873efc226fd5482485f3c2894bf2d3483b30f3d: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper StorageAssertS3_Helpers sha256=9cdc79f9c81453b4d02d22a4cdcd910a54f97c8cb780394b2deb8d2c97c9ce87: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_es_min_count = __vouchfxRunCt;
+    _ = __stepCt_es_min_count;
+    bool __stepBudgetGoverned_es_min_count = false;
+    _ = __stepBudgetGoverned_es_min_count;
+    StepEvents?.OnStepStarted("es-min-count");
+{
+    await CacheAssertElasticsearch_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        "__outcome::es_min_count",
+        "conn::search",
+        "2024",
+        "{\u0022query\u0022:{\u0022match_all\u0022:{}}}",
+        2,
+        null,
+        null,
+        null,
+        __stepCt_es_min_count,
+        __stepBudgetGoverned_es_min_count);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::es_min_count");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "es-min-count",
+        Vars.TryGetValue("__outcome::es_min_count", out var __sco_es_min_count) ? __sco_es_min_count as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::es_min_count", out var __scs_es_min_count) ? __scs_es_min_count as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_es_quoted_min_count = __vouchfxRunCt;
+    _ = __stepCt_es_quoted_min_count;
+    bool __stepBudgetGoverned_es_quoted_min_count = false;
+    _ = __stepBudgetGoverned_es_quoted_min_count;
+    StepEvents?.OnStepStarted("es-quoted-min-count");
+{
+    await CacheAssertElasticsearch_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        "__outcome::es_quoted_min_count",
+        "conn::search",
+        "2024",
+        "{\u0022query\u0022: {\u0022term\u0022: {\u0022status\u0022: \u0022paid\u0022}}}",
+        7,
+        null,
+        new string[]{ "status", "total" },
+        new string[]{ "paid", "49.50" },
+        __stepCt_es_quoted_min_count,
+        __stepBudgetGoverned_es_quoted_min_count);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::es_quoted_min_count");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "es-quoted-min-count",
+        Vars.TryGetValue("__outcome::es_quoted_min_count", out var __sco_es_quoted_min_count) ? __sco_es_quoted_min_count as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::es_quoted_min_count", out var __scs_es_quoted_min_count) ? __scs_es_quoted_min_count as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_sqlserver_parameters = __vouchfxRunCt;
+    _ = __stepCt_sqlserver_parameters;
+    bool __stepBudgetGoverned_sqlserver_parameters = false;
+    _ = __stepBudgetGoverned_sqlserver_parameters;
+    StepEvents?.OnStepStarted("sqlserver-parameters");
+{
+    await DbAssertSqlServer_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::sqlserver_parameters",
+        "conn::ledger",
+        "SELECT COUNT(*) AS n FROM Orders WHERE Id = @id AND Code = @code AND Paid = @paid",
+        new string[] { "id", "code", "paid", "note" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "007"), Substitute_Helpers.Resolve(Vars, "007"), Substitute_Helpers.Resolve(Vars, "true"), Substitute_Helpers.Resolve(Vars, "true") },
+        1,
+        new string[] { "n" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "1") },
+        __stepCt_sqlserver_parameters, __stepBudgetGoverned_sqlserver_parameters);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::sqlserver_parameters");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "sqlserver-parameters",
+        Vars.TryGetValue("__outcome::sqlserver_parameters", out var __sco_sqlserver_parameters) ? __sco_sqlserver_parameters as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::sqlserver_parameters", out var __scs_sqlserver_parameters) ? __scs_sqlserver_parameters as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_prometheus_labels_value = __vouchfxRunCt;
+    _ = __stepCt_prometheus_labels_value;
+    bool __stepBudgetGoverned_prometheus_labels_value = false;
+    _ = __stepBudgetGoverned_prometheus_labels_value;
+    StepEvents?.OnStepStarted("prometheus-labels-value");
+{
+    await MetricsAssertPrometheus_Helpers.ScrapeAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::prometheus_labels_value",
+        "__capture_status::prometheus_labels_value",
+        "svc::app",
+        "app",
+        "/metrics",
+        "http_requests_total",
+        new string[] { "method", "code", "quotedCode", "tls" },
+        new string[] { "POST", "200", "200", "false" },
+        "1.50",
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_prometheus_labels_value,
+        __stepBudgetGoverned_prometheus_labels_value);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::prometheus_labels_value");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "prometheus-labels-value",
+        Vars.TryGetValue("__outcome::prometheus_labels_value", out var __sco_prometheus_labels_value) ? __sco_prometheus_labels_value as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::prometheus_labels_value", out var __scs_prometheus_labels_value) ? __scs_prometheus_labels_value as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_prometheus_max = __vouchfxRunCt;
+    _ = __stepCt_prometheus_max;
+    bool __stepBudgetGoverned_prometheus_max = false;
+    _ = __stepBudgetGoverned_prometheus_max;
+    StepEvents?.OnStepStarted("prometheus-max");
+{
+    await MetricsAssertPrometheus_Helpers.ScrapeAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::prometheus_max",
+        "__capture_status::prometheus_max",
+        "svc::app",
+        "app",
+        "/metrics",
+        "node_exporter_build_info",
+        new string[] { },
+        new string[] { },
+        null,
+        "1",
+        "2.5",
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_prometheus_max,
+        __stepBudgetGoverned_prometheus_max);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::prometheus_max");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "prometheus-max",
+        Vars.TryGetValue("__outcome::prometheus_max", out var __sco_prometheus_max) ? __sco_prometheus_max as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::prometheus_max", out var __scs_prometheus_max) ? __scs_prometheus_max as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_s3_content_and_metadata = __vouchfxRunCt;
+    _ = __stepCt_s3_content_and_metadata;
+    bool __stepBudgetGoverned_s3_content_and_metadata = false;
+    _ = __stepBudgetGoverned_s3_content_and_metadata;
+    StepEvents?.OnStepStarted("s3-content-and-metadata");
+{
+    await StorageAssertS3_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        "__outcome::s3_content_and_metadata",
+        "__capture_status::s3_content_and_metadata",
+        "conn::reports",
+        "reports",
+        "exports/2024/orders.csv",
+        true,
+        "1024",
+        null,
+        "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "orderId",
+        "text/csv",
+        new string[] { "owner", "version", "quotedVersion" },
+        new string[] { "finance", "007", "007" },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_s3_content_and_metadata,
+        __stepBudgetGoverned_s3_content_and_metadata);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::s3_content_and_metadata");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "s3-content-and-metadata",
+        Vars.TryGetValue("__outcome::s3_content_and_metadata", out var __sco_s3_content_and_metadata) ? __sco_s3_content_and_metadata as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::s3_content_and_metadata", out var __scs_s3_content_and_metadata) ? __scs_s3_content_and_metadata as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_s3_quoted_size = __vouchfxRunCt;
+    _ = __stepCt_s3_quoted_size;
+    bool __stepBudgetGoverned_s3_quoted_size = false;
+    _ = __stepBudgetGoverned_s3_quoted_size;
+    StepEvents?.OnStepStarted("s3-quoted-size");
+{
+    await StorageAssertS3_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        "__outcome::s3_quoted_size",
+        "__capture_status::s3_quoted_size",
+        "conn::reports",
+        "reports",
+        "exports/2024/empty.csv",
+        true,
+        "0",
+        null,
+        null,
+        "123",
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_s3_quoted_size,
+        __stepBudgetGoverned_s3_quoted_size);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::s3_quoted_size");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "s3-quoted-size",
+        Vars.TryGetValue("__outcome::s3_quoted_size", out var __sco_s3_quoted_size) ? __sco_s3_quoted_size as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::s3_quoted_size", out var __scs_s3_quoted_size) ? __scs_s3_quoted_size as string : null);
+}
+@@@@ end

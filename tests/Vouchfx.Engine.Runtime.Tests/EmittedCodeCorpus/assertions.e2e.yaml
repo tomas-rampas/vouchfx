@@ -1,0 +1,104 @@
+# Emitted-code baseline corpus: the data, metrics and storage assertion binders.
+#
+# Pins the fields the repository's other suites leave unset: Elasticsearch
+# expect.min-count, SQL Server query parameters, Prometheus labels and
+# expect.value / expect.max, and the S3 content, metadata, SHA-256 and size
+# expectations. Fields that accept a number or a string appear in plain and quoted
+# form (a numeric index, counts, parameter, label and metadata values, sizes),
+# because these binders keep the raw text either way.
+#
+# Used only by EmittedCodeBaselineTests; no topology is started.
+metadata:
+  name: emitted-code-corpus-assertions
+environment:
+  services:
+    app:
+      image: quay.io/prometheus/node-exporter:v1.8.2
+      httpPort: 9100
+  dependencies:
+    search:
+      type: elasticsearch
+    ledger:
+      type: sqlserver
+    reports:
+      type: s3
+steps:
+  - id: es-min-count
+    type: cache-assert.elasticsearch
+    target: search
+    index: 2024
+    expect:
+      min-count: 2
+
+  - id: es-quoted-min-count
+    type: cache-assert.elasticsearch
+    target: search
+    index: "2024"
+    query: '{"query": {"term": {"status": "paid"}}}'
+    expect:
+      min-count: "007"
+      fields:
+        - field: status
+          value: paid
+        - field: total
+          value: 49.50
+
+  - id: sqlserver-parameters
+    type: db-assert.sqlserver
+    target: ledger
+    query: SELECT COUNT(*) AS n FROM Orders WHERE Id = @id AND Code = @code AND Paid = @paid
+    parameters:
+      id: 007
+      code: "007"
+      paid: true
+      note: "true"
+    expect:
+      rowCount: 1
+      row:
+        n: 1
+
+  - id: prometheus-labels-value
+    type: metrics-assert.prometheus
+    target: app
+    metric: http_requests_total
+    labels:
+      method: POST
+      code: 200
+      quotedCode: "200"
+      tls: false
+    expect:
+      value: 1.50
+
+  - id: prometheus-max
+    type: metrics-assert.prometheus
+    target: app
+    path: /metrics
+    metric: node_exporter_build_info
+    expect:
+      min: 1
+      max: "2.5"
+
+  - id: s3-content-and-metadata
+    type: storage-assert.s3
+    target: reports
+    bucket: reports
+    key: exports/2024/orders.csv
+    expect:
+      exists: true
+      size: 1024
+      sha256: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+      contentContains: orderId
+      contentType: text/csv
+      metadata:
+        owner: finance
+        version: 007
+        quotedVersion: "007"
+
+  - id: s3-quoted-size
+    type: storage-assert.s3
+    target: reports
+    bucket: reports
+    key: exports/2024/empty.csv
+    expect:
+      size: "0"
+      contentContains: 123

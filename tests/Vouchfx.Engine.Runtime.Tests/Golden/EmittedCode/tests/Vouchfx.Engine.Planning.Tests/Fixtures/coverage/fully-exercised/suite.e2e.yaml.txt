@@ -1,0 +1,199 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/coverage/fully-exercised/suite.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 2
+
+@@@@ step 1 of 2
+id: create-order
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "api",
+  "Method": "GET",
+  "Path": "/health",
+  "Headers": null,
+  "Body": null,
+  "Expect": null,
+  "BodyRefusal": null
+}
+@@@@ step 1 host-resources
+[]
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::create_order",
+        "__capture_status::create_order",
+        "svc::api",
+        "api",
+        "GET",
+        "/health",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_create_order,
+        __stepBudgetGoverned_create_order);
+}
+
+@@@@ step 2 of 2
+id: assert-order-row
+type: db-assert.postgres
+provider: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresProvider
+model: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "orders-db",
+  "Query": "SELECT 1",
+  "Parameters": null,
+  "Expect": {
+    "RowCount": 1,
+    "Row": null
+  }
+}
+@@@@ step 2 host-resources
+[]
+@@@@ step 2 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Npgsql
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+DbAssertPostgres_Helpers sha256=c0df084c7cfdb76f73ba2cc3741b35b20289a3831b4340487cd39307752063fe
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 2 statement-block
+{
+    await DbAssertPostgres_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_order_row",
+        "conn::orders-db",
+        "SELECT 1",
+        new string[] { },
+        new string[] { },
+        1,
+        new string[] { },
+        new string[] { },
+        __stepCt_assert_order_row, __stepBudgetGoverned_assert_order_row);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using Npgsql;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper DbAssertPostgres_Helpers sha256=c0df084c7cfdb76f73ba2cc3741b35b20289a3831b4340487cd39307752063fe: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_create_order = __vouchfxRunCt;
+    _ = __stepCt_create_order;
+    bool __stepBudgetGoverned_create_order = false;
+    _ = __stepBudgetGoverned_create_order;
+    StepEvents?.OnStepStarted("create-order");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::create_order",
+        "__capture_status::create_order",
+        "svc::api",
+        "api",
+        "GET",
+        "/health",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_create_order,
+        __stepBudgetGoverned_create_order);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::create_order");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "create-order",
+        Vars.TryGetValue("__outcome::create_order", out var __sco_create_order) ? __sco_create_order as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::create_order", out var __scs_create_order) ? __scs_create_order as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_assert_order_row = __vouchfxRunCt;
+    _ = __stepCt_assert_order_row;
+    bool __stepBudgetGoverned_assert_order_row = false;
+    _ = __stepBudgetGoverned_assert_order_row;
+    StepEvents?.OnStepStarted("assert-order-row");
+{
+    await DbAssertPostgres_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_order_row",
+        "conn::orders-db",
+        "SELECT 1",
+        new string[] { },
+        new string[] { },
+        1,
+        new string[] { },
+        new string[] { },
+        __stepCt_assert_order_row, __stepBudgetGoverned_assert_order_row);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_order_row");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-order-row",
+        Vars.TryGetValue("__outcome::assert_order_row", out var __sco_assert_order_row) ? __sco_assert_order_row as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_order_row", out var __scs_assert_order_row) ? __scs_assert_order_row as string : null);
+}
+@@@@ end

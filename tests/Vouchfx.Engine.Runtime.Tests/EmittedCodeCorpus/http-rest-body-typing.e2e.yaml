@@ -1,0 +1,196 @@
+# Emitted-code baseline corpus: how http.rest turns YAML into a JSON body.
+#
+# Pins, through the bound model's Body (the JSON text the binder produces) and the
+# emitted statement block, how the binder types each kind of YAML scalar: plain
+# against single- and double-quoted numbers, booleans and null words, YAML 1.1
+# spellings (True, FALSE, yes, .inf), the null tokens (null, ~, an empty value),
+# leading and trailing zeros, signs, exponents and hex, and literal and folded block
+# scalars. It also pins nested
+# and flow-style collections, a top-level sequence body, a string body, an anchor
+# reused through aliases (inside a body and across steps), `<<` merge keys, a quoted
+# and a plain scalar reached through an alias, and explicit core tags (`!!str 123`,
+# `!!int "5"`, `!!float`, `!!bool`, `!!timestamp`, which win over quoting).
+# The last step, zeb-67-body-rules, pins one value per ZEB-67 rule: merge keys applied,
+# block scalars always strings, a plain empty value null, core tags honoured, and 1e400
+# sent as a string. Not pinned here because schema validation refuses the whole document
+# before the binder runs: the plain words NaN, Infinity, -Infinity and INFINITY, a tag of
+# `!!null` (unresolved tag) and an `!!int 0o17` octal; the binder rules for those are
+# reachable only by binding without validating, as the HttpRest unit rows do.
+#
+# The golden records whatever the engine does today; nothing here is a statement of
+# what it should do. Used only by EmittedCodeBaselineTests; no topology is started.
+metadata:
+  name: emitted-code-corpus-http-rest-body-typing
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+steps:
+  - id: typed-scalars
+    type: http.rest
+    target: app
+    method: POST
+    path: /typing
+    body:
+      plainInt: 123
+      doubleQuotedInt: "123"
+      singleQuotedInt: '123'
+      plainDecimal: 1.5
+      quotedDecimal: "1.5"
+      leadingZero: 007
+      leadingZeroTen: 010
+      quotedLeadingZero: "007"
+      trailingZeroDecimal: 1.50
+      yamlInfinity: .inf
+      negative: -42
+      plusSign: +5
+      exponent: 1e3
+      hex: 0x1F
+      plainTrue: true
+      titleCaseTrue: True
+      upperCaseFalse: FALSE
+      doubleQuotedTrue: "true"
+      singleQuotedFalse: 'false'
+      yamlOneOneYes: yes
+      plainNull: null
+      tilde: ~
+      quotedNull: "null"
+      quotedTilde: "~"
+      emptyValue:
+      quotedEmpty: ""
+      placeholder: "{orderId}"
+      literal: |
+        line one
+        line two
+      literalNumber: |
+        123
+      literalStrip: |-
+        true
+      folded: >
+        folded
+        text
+      foldedNumber: >-
+        1.5
+    expect:
+      status: 200
+
+  - id: collections-anchors-merge
+    type: http.rest
+    target: app
+    method: PUT
+    path: /collections
+    headers: &commonHeaders
+      X-Tenant: acme
+      X-Count: 007
+      X-Flag: true
+    body:
+      nested:
+        level1:
+          level2:
+            level3: deep
+      list:
+        - a
+        - 2
+        - "2"
+        - nested: { k: v, n: 3 }
+        - [x, "y", 1.0]
+      flowMap: { a: 1, b: "1", c: , d: ~ }
+      flowSeq: [1.5, "1.5", null, '', true]
+      emptyFlowMap: {}
+      emptyFlowSeq: []
+      base: &base
+        currency: EUR
+        amount: 10
+      aliasCopy: *base
+      quotedAnchor: &q "123"
+      fromAlias: *q
+      plainAnchor: &p 123
+      plainFromAlias: *p
+      taggedString: !!str 123
+      taggedInt: !!int "5"
+      merged:
+        <<: *base
+        amount: 20
+      mergedList:
+        <<: [*base, { extra: true }]
+    expect:
+      status: 200
+
+  - id: aliased-headers-and-json-assertions
+    type: http.rest
+    target: app
+    method: GET
+    path: /aliased
+    headers: *commonHeaders
+    expect:
+      status: 200
+      bodyContains: "007"
+      json:
+        "$.plain": 007
+        "$.quoted": "007"
+        "$.flag": true
+        "$.quotedFlag": "true"
+        "$.nothing": "null"
+        "$.present": { exists: true }
+        "$.absent": { exists: false }
+
+  - id: sequence-body
+    type: http.rest
+    target: app
+    method: POST
+    path: /sequence
+    body:
+      - 1
+      - "1"
+      - ~
+      - { id: compose-order-1 }
+
+  - id: string-body
+    type: http.rest
+    target: app
+    method: POST
+    path: /string
+    body: '{"amount": 007, "quoted": "007"}'
+
+  # ZEB-67 rules, one value per rule, so a change to any of them moves this step's golden.
+  - id: zeb-67-body-rules
+    type: http.rest
+    target: app
+    method: POST
+    path: /zeb-67
+    body:
+      # An overflowing number stays a string.
+      overflow: 1e400
+      negativeOverflow: -1e400
+      # Block scalars are always strings; chomping decides the trailing newlines.
+      keepLiteral: |+
+        kept
+
+      stripFolded: >-
+        true
+      literalNull: |
+        null
+      # A plain empty value is null; a quoted one is the empty string.
+      emptyPlain:
+      emptyQuoted: ''
+      # Core tags: the tag wins over the style and the content is typed by it.
+      tagStr: !!str true
+      tagStrEmpty: !!str
+      tagInt: !!int 010
+      tagIntHex: !!int 0x1F
+      tagIntQuoted: !!int "-7"
+      tagFloat: !!float 1.50
+      tagFloatInt: !!float "2"
+      tagBool: !!bool True
+      tagBoolQuoted: !!bool "false"
+      tagTimestamp: !!timestamp 2026-11-17
+      # Merge keys: explicit keys win, earlier sources win over later ones.
+      defaults: &zebDefaults
+        retries: 3
+        region: eu
+      override:
+        <<: *zebDefaults
+        retries: 5
+      layered:
+        <<: [{ region: us, tier: gold }, *zebDefaults]
+        tier: silver

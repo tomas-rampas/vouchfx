@@ -1,0 +1,43 @@
+vouchfx emitted-code baseline v2
+suite: tools/vscode-vouchfx/examples/script-csharp-external-file.e2e.yaml
+outcome: refused
+stage: pipeline
+steps: 2
+@@@@ diagnostic 1 of 1
+-	Step 'assert-shape' model validation failed: db-assert.postgres: 'target' 'appdb' is not a postgres dependency declared in environment.dependencies.
+
+@@@@ step 1 of 2
+id: compute
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Code": null,
+  "File": "scripts/compute.csx"
+}
+@@@@ step 1 host-resources
+[]
+
+@@@@ step 2 of 2
+id: assert-shape
+type: db-assert.postgres
+provider: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresProvider
+model: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "appdb",
+  "Query": "SELECT 1",
+  "Parameters": null,
+  "Expect": {
+    "RowCount": 1,
+    "Row": null
+  }
+}
+@@@@ step 2 host-resources
+[]
+@@@@ end

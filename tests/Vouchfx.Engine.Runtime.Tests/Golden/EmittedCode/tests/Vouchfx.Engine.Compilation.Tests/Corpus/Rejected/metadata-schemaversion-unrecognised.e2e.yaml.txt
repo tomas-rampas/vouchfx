@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/metadata-schemaversion-unrecognised.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic 1 of 1
+/metadata/schemaVersion	(line 7) 'v3' is not a language schema version this engine recognises - write 'v1', or omit the field.
+@@@@ end
