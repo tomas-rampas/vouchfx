@@ -595,8 +595,9 @@ public static class RoslynScriptCompiler
     /// <para>
     /// A platform file is read once per process. Any other file with an entry is hashed on every call;
     /// the cached reference is returned while the SHA-256 matches, and otherwise a new reference is
-    /// built from the bytes just read and replaces the entry for that path. A path with no entry is read once. No file stays open
-    /// or locked.
+    /// built from the bytes just read and replaces the entry for that path. A path with no entry is
+    /// read without a prior hash, once by each caller that reaches it first at the same time. No
+    /// file stays open or locked.
     /// </para>
     /// <para>
     /// A missing or unreadable file throws as <c>MetadataReference.CreateFromFile</c> always did,
@@ -637,8 +638,8 @@ public static class RoslynScriptCompiler
             BeforeExternalBuildForTest?.Invoke(path);
 
             // One gate for every path: cold misses of different paths are serialised, which is
-            // acceptable because each path misses once per process (plus once per replacement)
-            // and the work is one read of a provider assembly.
+            // acceptable because a path misses rarely (on first use and on replacement) and the
+            // work is one read of a provider assembly.
             lock (ExternalBuildGate)
             {
                 // A caller that waited here may find another thread already stored the content it
