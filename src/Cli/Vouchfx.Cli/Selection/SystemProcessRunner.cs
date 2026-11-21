@@ -127,6 +127,9 @@ internal sealed class SystemProcessRunner : IProcessRunner
 
     private readonly TimeSpan _budget;
 
+    // Null in production. Read only on the cancel path; see CancelStageRecorder.
+    private readonly CancelStageRecorder? _recorder;
+
     /// <summary>
     /// Initialises a runner with an explicit budget.
     /// </summary>
@@ -136,6 +139,19 @@ internal sealed class SystemProcessRunner : IProcessRunner
     /// whole type is internal to Vouchfx.Cli and nothing outside it can construct a runner at all.
     /// </remarks>
     internal SystemProcessRunner(TimeSpan budget)
+        : this(budget, recorder: null)
+    {
+    }
+
+    /// <summary>
+    /// Initialises a runner with an explicit budget and a recorder for the stages of a cancelled run.
+    /// </summary>
+    /// <param name="budget">The ceiling on a single <see cref="Run"/>; must be positive.</param>
+    /// <param name="recorder">
+    /// Receives a timestamp per stage of the cancel path, or <see langword="null"/> to record
+    /// nothing. Observation only: it changes neither what <see cref="Run"/> returns nor what it throws.
+    /// </param>
+    internal SystemProcessRunner(TimeSpan budget, CancelStageRecorder? recorder)
     {
         if (budget <= TimeSpan.Zero)
         {
@@ -146,6 +162,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
         }
 
         _budget = budget;
+        _recorder = recorder;
     }
 
     /// <summary>A shared, stateless instance carrying <see cref="DefaultBudget"/>.</summary>
@@ -335,6 +352,9 @@ internal sealed class SystemProcessRunner : IProcessRunner
             string? exceeded = null;
             var cancelled = false;
 
+            // Held only so the cancel path can stamp when the readers settle (CancelStageRecorder).
+            Task? readsForRecorder = null;
+
             // NULL, NOT 0, and that is the whole point of it. Every path that reaches the return
             // below either assigns a real exit code or throws first, so zero would be correct
             // today — but GitChangeSet.RunGit treats `ExitCode != 0` as THE failure signal, so a
@@ -362,6 +382,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 standardOutput = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
                 standardError = process.StandardError.ReadToEndAsync(CancellationToken.None);
                 var reads = Task.WhenAll(standardOutput, standardError);
+                readsForRecorder = reads;
 
                 // The WhenAll promise is a task in its own right and needs its OWN observer:
                 // observing the two children below does not mark it observed, so if both of them
@@ -394,6 +415,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
                     // `finally`, exactly as the timeout does, so the tree-kill has been ISSUED
                     // before it.
                     cancelled = true;
+                    _recorder?.Mark(CancelStage.Observed);
                 }
                 else if (!settled)
                 {
@@ -448,6 +470,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
                     if (cancellationToken.IsCancellationRequested)
                     {
                         cancelled = true;
+                        _recorder?.Mark(CancelStage.Observed);
                     }
                     else if (exit.IsCompletedSuccessfully)
                     {
@@ -480,7 +503,18 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 // The kill runs on the SUCCESS path too. It is a no-op there (the child has
                 // exited, so HasExited short-circuits) and it is what makes "every path issues the
                 // kill" true by construction rather than by inspection.
-                KillTreeQuietly(process);
+                //
+                // The recorder is consulted only when this run was cancelled, so an uncancelled run
+                // pays one boolean test here and nothing else.
+                var recorder = cancelled ? _recorder : null;
+                if (recorder is not null)
+                {
+                    recorder.Mark(CancelStage.KillIssued);
+                    WatchForSettling(process, readsForRecorder, recorder);
+                }
+
+                KillTreeQuietly(process, recorder);
+                recorder?.Mark(CancelStage.KillReturned);
 
                 // Then THIS PROCESS'S OWN ends of the two pipes, which `using (process)` does not
                 // release: Process.Close() closes the captured streams only while their read mode
@@ -489,6 +523,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 // caller's job. Without this the StreamReader/FileStream pairs and their pipe
                 // handles survive until finalisation.
                 DisposeCapturedStreams(process);
+                recorder?.Mark(CancelStage.StreamsDisposed);
 
                 // Then the losing delay, so no timer outlives the call.
                 timers.Cancel();
@@ -507,6 +542,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 // identically today. The token is carried for a debugger and for a future consumer,
                 // not for a mechanism that exists. What DOES matter here: GitChangeSet.RunGit maps
                 // none of its three catches over this type, so it propagates untouched.
+                _recorder?.Mark(CancelStage.Thrown);
                 throw new OperationCanceledException(cancellationToken);
             }
 
@@ -725,7 +761,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
     ///   </description></item>
     /// </list>
     /// </remarks>
-    internal static void KillTreeQuietly(Process process)
+    internal static void KillTreeQuietly(Process process, CancelStageRecorder? recorder = null)
     {
         try
         {
@@ -740,6 +776,46 @@ internal sealed class SystemProcessRunner : IProcessRunner
                                        or AggregateException)
         {
             // Terminating, partially killed, remote, or no longer associated — see the remarks.
+            // Still swallowed; the recorder, when one is attached, learns only the exception's TYPE.
+            recorder?.NoteKillSwallowed(ex);
+        }
+    }
+
+    /// <summary>
+    /// Cancel path with a recorder attached only: stamps when the child exits and when the readers
+    /// settle, each on whichever thread completes it. Observation, never a wait.
+    /// </summary>
+    /// <remarks>
+    /// Called BEFORE the kill so a child that dies the instant it is killed is still seen. Guarded
+    /// like every other teardown step here, because it runs in a <c>finally</c>.
+    /// </remarks>
+    private static void WatchForSettling(Process process, Task? reads, CancelStageRecorder recorder)
+    {
+        reads?.ContinueWith(
+            static (_, state) => ((CancelStageRecorder)state!).Mark(CancelStage.ReadersDrained),
+            recorder,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+        try
+        {
+            process.WaitForExitAsync().ContinueWith(
+                static (settled, state) =>
+                {
+                    if (settled.IsCompletedSuccessfully)
+                    {
+                        ((CancelStageRecorder)state!).Mark(CancelStage.ChildExited);
+                    }
+                },
+                recorder,
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // No longer associated with a process; the stage simply stays unreached.
         }
     }
 }

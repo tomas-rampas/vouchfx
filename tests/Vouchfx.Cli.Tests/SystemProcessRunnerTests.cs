@@ -1223,15 +1223,30 @@ public sealed class SystemProcessRunnerTests
         var directory = CreateScratchDirectory();
         var pidFile = Path.Combine(directory, PidFileName);
         var shape = NeverExitingChild();
-        var runner = new SystemProcessRunner(UnreachableBudget);
+
+        // Stage timestamps for the unwind, read only by the two failure messages below: a slow
+        // cancel is reported with WHICH stage was slow rather than as a bare "too slow". The
+        // recorder observes; the runner behaves identically with or without it.
+        var stages = new CancelStageRecorder();
+        var runner = new SystemProcessRunner(UnreachableBudget, stages);
         using var cancellation = new CancellationTokenSource();
 
         var work = Task.Run(
-            () => runner.Run(
-                shape.FileName,
-                shape.Arguments,
-                directory,
-                cancellationToken: cancellation.Token));
+            () =>
+            {
+                try
+                {
+                    return runner.Run(
+                        shape.FileName,
+                        shape.Arguments,
+                        directory,
+                        cancellationToken: cancellation.Token);
+                }
+                finally
+                {
+                    stages.Mark(CancelStage.RunReturned);
+                }
+            });
         int? pid = null;
 
         // Whether the body's late look below RAN TO COMPLETION, so the `finally` does not repeat it
@@ -1361,7 +1376,12 @@ public sealed class SystemProcessRunnerTests
                 FormattableString.Invariant(
                     $"The never-exiting child did not write '{PidFileName}' into its working directory within {UnracedPidCeiling.TotalSeconds:F0}s, so this row could not establish that a child was ever running. The run had not finished and nothing was racing to kill that child — the injected budget is {UnreachableBudget.TotalMinutes:F0} minutes — so this is a host that did not start a shell inside {UnracedPidCeiling.TotalSeconds:F0}s. That is a defect in the row's environment, not in SystemProcessRunner. A further {LateReadWindow.TotalSeconds:F0}s look, for teardown's sake rather than for this verdict, found {lateLook}."));
 
+            // Cancel() runs the token's callbacks on THIS thread, and the runner's continuation can
+            // be one of them, so the unwind may be spent inside this call. The slack below is
+            // timed from after it returns; the two stamps are what tell the two spans apart.
+            stages.Mark(CancelStage.Signalled);
             cancellation.Cancel();
+            stages.Mark(CancelStage.SignalReturned);
 
             using var delayCts = new CancellationTokenSource();
             var finished = await Task.WhenAny(work, Task.Delay(RunUnwindSlack, delayCts.Token)) == work;
@@ -1369,7 +1389,7 @@ public sealed class SystemProcessRunnerTests
             Assert.True(
                 finished,
                 FormattableString.Invariant(
-                    $"SystemProcessRunner.Run did not return within {RunUnwindSlack.TotalSeconds:F0}s of its cancellation token being signalled, against a child that never exits and a {UnreachableBudget.TotalMinutes:F0}-minute budget it cannot have reached. The token is not being raced against the budget, so a Ctrl+C reaches this runner's cleanup only after the process is force-killed — which is to say, never."));
+                    $"SystemProcessRunner.Run did not return within {RunUnwindSlack.TotalSeconds:F0}s of its cancellation token being signalled, against a child that never exits and a {UnreachableBudget.TotalMinutes:F0}-minute budget it cannot have reached. The token is not being raced against the budget, so a Ctrl+C reaches this runner's cleanup only after the process is force-killed — which is to say, never. {(finished ? string.Empty : stages.Describe())}"));
 
             // ThrowsAny rather than Throws: TaskCanceledException derives from
             // OperationCanceledException, and the property under test is that cancellation
@@ -1381,7 +1401,7 @@ public sealed class SystemProcessRunnerTests
             Assert.True(
                 dead,
                 FormattableString.Invariant(
-                    $"SystemProcessRunner.Run returned on cancellation but child pid {pid} was still alive {DeathWindow.TotalSeconds:F0}s later. Cancellation must reach the same tree-kill the timeout path does; a cancelled call that abandons its child is the orphan #481 exists to prevent. The window is there because the kill is asynchronous, not because a live child is tolerable."));
+                    $"SystemProcessRunner.Run returned on cancellation but child pid {pid} was still alive {DeathWindow.TotalSeconds:F0}s later. Cancellation must reach the same tree-kill the timeout path does; a cancelled call that abandons its child is the orphan #481 exists to prevent. The window is there because the kill is asynchronous, not because a live child is tolerable. {(dead ? string.Empty : stages.Describe())}"));
         }
         finally
         {
@@ -1401,6 +1421,136 @@ public sealed class SystemProcessRunnerTests
             await DrainAsync(work);
             TryDeleteDirectory(directory);
         }
+    }
+
+    /// <summary>
+    /// The cancel-path recorder stamps every stage of a real cancellation, in order. This pins the
+    /// instrument the cancellation row's failure message reads, so a stage that stopped being
+    /// stamped is a red test here rather than a blank in a message nobody reads until CI is red.
+    /// </summary>
+    /// <remarks>
+    /// Asserts ORDER only, never a duration. The stages the runner's own thread stamps are totally
+    /// ordered. <see cref="CancelStage.ChildExited"/> and <see cref="CancelStage.ReadersDrained"/>
+    /// are stamped by whichever thread completes them, and the kill call can return after either,
+    /// so they are pinned only as following <see cref="CancelStage.KillIssued"/>. They are awaited
+    /// for <see cref="RunUnwindSlack"/>, the bound the cancellation row already uses.
+    /// </remarks>
+    [Fact]
+    public async Task Run_WhenTheCallerCancels_RecordsEachCancelStageInOrder()
+    {
+        var directory = CreateScratchDirectory();
+        var pidFile = Path.Combine(directory, PidFileName);
+        var shape = NeverExitingChild();
+        var stages = new CancelStageRecorder();
+        var runner = new SystemProcessRunner(UnreachableBudget, stages);
+        using var cancellation = new CancellationTokenSource();
+        var startedUtc = DateTime.UtcNow;
+
+        var work = Task.Run(
+            () =>
+            {
+                try
+                {
+                    return runner.Run(
+                        shape.FileName,
+                        shape.Arguments,
+                        directory,
+                        cancellationToken: cancellation.Token);
+                }
+                finally
+                {
+                    stages.Mark(CancelStage.RunReturned);
+                }
+            });
+        int? pid = null;
+        try
+        {
+            pid = await Task.Run(() => WaitForPid(pidFile, work, PidSettleWindow, UnracedPidCeiling));
+            Assert.False(work.IsCompleted, "Run finished before this row cancelled anything.");
+            Assert.NotNull(pid);
+
+            stages.Mark(CancelStage.Signalled);
+            cancellation.Cancel();
+            stages.Mark(CancelStage.SignalReturned);
+
+            using var delayCts = new CancellationTokenSource();
+            var finished = await Task.WhenAny(work, Task.Delay(RunUnwindSlack, delayCts.Token)) == work;
+            delayCts.Cancel();
+            Assert.True(finished, stages.Describe());
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => work);
+
+            var deadline = DateTime.UtcNow + RunUnwindSlack;
+            while ((!stages.Reached(CancelStage.ChildExited) || !stages.Reached(CancelStage.ReadersDrained))
+                   && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(10));
+            }
+
+            var runnerThread = new[]
+            {
+                CancelStage.Signalled,
+                CancelStage.Observed,
+                CancelStage.KillIssued,
+                CancelStage.KillReturned,
+                CancelStage.StreamsDisposed,
+                CancelStage.Thrown,
+                CancelStage.RunReturned,
+            };
+            var missing = Enum.GetValues<CancelStage>().Where(stage => !stages.Reached(stage)).ToArray();
+            Assert.True(missing.Length == 0, $"Stages never stamped: {string.Join(", ", missing)}. {stages.Describe()}");
+
+            for (var index = 1; index < runnerThread.Length; index++)
+            {
+                Assert.True(
+                    stages.TimestampOf(runnerThread[index - 1])!.Value <= stages.TimestampOf(runnerThread[index])!.Value,
+                    $"{runnerThread[index - 1]} was stamped after {runnerThread[index]}. {stages.Describe()}");
+            }
+
+            Assert.True(
+                stages.TimestampOf(CancelStage.SignalReturned)!.Value >= stages.TimestampOf(CancelStage.Signalled)!.Value,
+                stages.Describe());
+            foreach (var late in new[] { CancelStage.ChildExited, CancelStage.ReadersDrained })
+            {
+                Assert.True(
+                    stages.TimestampOf(late)!.Value >= stages.TimestampOf(CancelStage.KillIssued)!.Value,
+                    $"{late} was stamped before the kill was issued. {stages.Describe()}");
+            }
+
+            Assert.Null(stages.KillSwallowedType);
+        }
+        finally
+        {
+            if (pid is null)
+            {
+                pid = await ReclaimPidForTeardownQuietlyAsync(pidFile, work);
+            }
+
+            KillTreeQuietly(pid, startedUtc, pidFile);
+            await DrainAsync(work);
+            TryDeleteDirectory(directory);
+        }
+    }
+
+    /// <summary>
+    /// A report taken while the run is still outstanding names the stages it has not reached, and
+    /// carries only a type name for a swallowed kill failure.
+    /// </summary>
+    [Fact]
+    public void CancelStageRecorder_Describe_NamesUnreachedStagesAndKillFailureTypeOnly()
+    {
+        var stages = new CancelStageRecorder();
+        stages.Mark(CancelStage.Signalled);
+        stages.Mark(CancelStage.Observed);
+        stages.NoteKillSwallowed(new AggregateException("a secret-looking message must not appear"));
+
+        var text = stages.Describe();
+
+        Assert.Contains("Signalled", text, StringComparison.Ordinal);
+        Assert.Contains("NOT REACHED", text, StringComparison.Ordinal);
+        Assert.Contains("KillIssued", text, StringComparison.Ordinal);
+        Assert.Contains("ReadersDrained", text, StringComparison.Ordinal);
+        Assert.Contains("kill swallowed: System.AggregateException", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret-looking", text, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -3047,8 +3197,8 @@ public sealed class SystemProcessRunnerTests
         const string KillMethod = "KillTreeQuietly";
         const string ReclaimMethod = "ReclaimPidForTeardownQuietlyAsync";
         const string FlagName = "lateLookTaken";
-        const int ExpectedKillingFinallies = 5;
-        const int ExpectedPidKills = 5;
+        const int ExpectedKillingFinallies = 6;
+        const int ExpectedPidKills = 6;
         const int ExpectedHandleKills = 2;
 
         var killing = SelfSource()
@@ -3060,7 +3210,7 @@ public sealed class SystemProcessRunnerTests
         Assert.True(
             killing.Count == ExpectedKillingFinallies,
             FormattableString.Invariant(
-                $"This file holds {killing.Count} `finally` block(s) calling `{KillMethod}` in either form (a bareword pid kill or a `ChildProcess.{KillMethod}` handle kill), not the {ExpectedKillingFinallies} this census covers (rows 1, 2 and 5, and the two rows that launch a shape directly — the writer-contract theory #541 added and the guard-anchor row #529 added). A new PID kill needs the same guarded `{ReclaimMethod}` ahead of it — see #539 — a handle kill does not (#549, see below); either way, one that has gone means a teardown path was removed. Re-aim this count rather than deleting it."));
+                $"This file holds {killing.Count} `finally` block(s) calling `{KillMethod}` in either form (a bareword pid kill or a `ChildProcess.{KillMethod}` handle kill), not the {ExpectedKillingFinallies} this census covers (rows 1, 2 and 5, the cancel-stage ordering row that launches its own never-exiting child, and the two rows that launch a shape directly — the writer-contract theory #541 added and the guard-anchor row #529 added). A new PID kill needs the same guarded `{ReclaimMethod}` ahead of it — see #539 — a handle kill does not (#549, see below); either way, one that has gone means a teardown path was removed. Re-aim this count rather than deleting it."));
 
         // #549: split by receiver shape rather than counting every `KillMethod` invocation as one
         // undifferentiated kind. Only a PID kill needs the guarded reclaim ahead of it — a HANDLE
