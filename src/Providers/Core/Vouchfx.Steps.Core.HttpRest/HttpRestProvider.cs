@@ -214,7 +214,8 @@ public sealed class HttpRestProvider
         "        string[] captureExprs,\n" +
         "        string[] captureKinds,\n" +
         "        System.Threading.CancellationToken ct,\n" +
-        "        bool budgetGoverned)\n" +
+        "        bool budgetGoverned,\n" +
+        "        string[]? bodyParts = null)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        // Response-body assertions (#558): an expected value naming a {placeholder} that\n" +
@@ -318,9 +319,15 @@ public sealed class HttpRestProvider
         "                // the request is disposed by the 'using' block above (a using-declaration\n" +
         "                // is prohibited in a CSX body, §13.3.1).\n" +
         "                // MVP content type: application/json.\n" +
-        "                if (bodyTemplate != null)\n" +
+        "                // A structured body that has anything to resolve arrives as bodyParts (and\n" +
+        "                // bodyTemplate is null): only its JSON strings are resolved, each on its own\n" +
+        "                // and with the same single pass, and each is written back as an escaped JSON\n" +
+        "                // string — see ResolveBodyParts.\n" +
+        "                if (bodyTemplate != null || bodyParts != null)\n" +
         "                {\n" +
-        "                    var body = Secret_Helpers.ResolveTemplate(secrets, vars, bodyTemplate);\n" +
+        "                    var body = bodyParts != null\n" +
+        "                        ? ResolveBodyParts(secrets, vars, bodyParts)\n" +
+        "                        : Secret_Helpers.ResolveTemplate(secrets, vars, bodyTemplate);\n" +
         "                    req.Content = new System.Net.Http.StringContent(\n" +
         "                        body, System.Text.Encoding.UTF8, \"application/json\");\n" +
         "                }\n" +
@@ -612,6 +619,32 @@ public sealed class HttpRestProvider
         "        }\n" +
         "        vars[outcomeKey] = new Vouchfx.Engine.Abstractions.StepOutcome(\n" +
         "            verdict, sw.ElapsedMilliseconds, observation);\n" +
+        "    }\n" +
+        "\n" +
+        "    /// <summary>\n" +
+        "    /// Builds a structured body from its parts: an even index is JSON text written at\n" +
+        "    /// compile time and sent as it is (it is never resolved, so no reference can span two\n" +
+        "    /// strings); an odd index is the unescaped text of one JSON string, resolved on its\n" +
+        "    /// own by ResolveTemplate and written as an escaped JSON string, so a resolved value\n" +
+        "    /// holding a quote, a backslash or a control character cannot change the body's\n" +
+        "    /// structure. Called inside ExecuteAsync's guarded region, so a missing secret is the\n" +
+        "    /// step's EnvironmentError; the revealed text feeds the content sink only (§17).\n" +
+        "    /// </summary>\n" +
+        "    private static string ResolveBodyParts(\n" +
+        "        Vouchfx.Engine.Abstractions.Secrets.ISecretAccessor secrets,\n" +
+        "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
+        "        string[] bodyParts)\n" +
+        "    {\n" +
+        "        var sb = new System.Text.StringBuilder();\n" +
+        "        for (int pi = 0; pi < bodyParts.Length; pi++)\n" +
+        "        {\n" +
+        "            if (pi % 2 == 0)\n" +
+        "                sb.Append(bodyParts[pi]);\n" +
+        "            else\n" +
+        "                sb.Append(System.Text.Json.JsonSerializer.Serialize(\n" +
+        "                    Secret_Helpers.ResolveTemplate(secrets, vars, bodyParts[pi])));\n" +
+        "        }\n" +
+        "        return sb.ToString();\n" +
         "    }\n" +
         "}",
         """
@@ -1047,13 +1080,19 @@ public sealed class HttpRestProvider
         // got wrong: a body that cannot be converted binds with no Body and with the refusal
         // in BodyRefusal, which Validate reports by name, so it is an authoring refusal and
         // never a provider fault. The step mapping is passed only to name the step.
+        //
+        // A structured body holding a reference also binds BodyParts: the references are
+        // resolved per JSON string, never over the serialised text (see the conversion's
+        // header), so Emit sends the parts rather than the text.
         string? body = null;
         string? bodyRefusal = null;
+        IReadOnlyList<string>? bodyParts = null;
         if (mapping.Children.TryGetValue(new YamlScalarNode("body"), out var bodyNode))
         {
             var converted = HttpRestBodyConversion.ToTemplate(bodyNode, mapping);
             body = converted.Text;
             bodyRefusal = converted.Refusal;
+            bodyParts = converted.Parts;
         }
 
         HttpExpect? expect = null;
@@ -1097,7 +1136,8 @@ public sealed class HttpRestProvider
             Headers: headers,
             Body: body,
             Expect: expect,
-            BodyRefusal: bodyRefusal);
+            BodyRefusal: bodyRefusal,
+            BodyParts: bodyParts);
     }
 
     // ── IStepValidator<HttpRestModel> ─────────────────────────────────────────
@@ -1379,9 +1419,18 @@ public sealed class HttpRestProvider
         // inside the guarded region, so a missing secret in the body is a step-scoped
         // EnvironmentError and substitution reads runtime Vars.  No secret value is ever
         // baked into the emitted IL — only the reference token text is.
-        var bodyTemplateLiteral = model.Body is null
+        //
+        // A structured body that binds BodyParts is the exception (one holding a reference, or
+        // one whose JSON text reads as a reference across two strings): its references are
+        // resolved per JSON string, so it is emitted as the bound parts (a trailing named
+        // bodyParts argument) and the body template is the bare literal null. Every other
+        // body, and a step with no body at all, emits exactly the call it always has.
+        var bodyTemplateLiteral = model.Body is null || model.BodyParts is not null
             ? "null"
             : JsonSerializer.Serialize(model.Body);
+        var bodyPartsArgument = model.BodyParts is { } bodyParts
+            ? ",\n        bodyParts: " + BuildStringArrayLiteral(bodyParts.ToArray())
+            : string.Empty;
 
         // S05-B-02: expand the headers map into parallel name/value-template arrays.
         // Values are emitted as RAW templates; ExecuteAsync substitutes then secret-
@@ -1503,7 +1552,7 @@ public sealed class HttpRestProvider
                     {{captureExprsLiteral}},
                     {{captureKindsLiteral}},
                     __stepCt_{{safeId}},
-                    __stepBudgetGoverned_{{safeId}});
+                    __stepBudgetGoverned_{{safeId}}{{bodyPartsArgument}});
             }
             """;
 

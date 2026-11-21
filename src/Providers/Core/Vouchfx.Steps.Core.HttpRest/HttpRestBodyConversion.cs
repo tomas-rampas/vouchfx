@@ -14,9 +14,20 @@
 //
 // It never resolves a secret and never reads one: a `${secret:source/path}` token is text
 // here, and stays inside a JSON string for execution-time resolution (§17).
+//
+// REFERENCES ARE PER JSON STRING. A structured body's references are found in each JSON
+// string (key or value) on its own, before serialisation, and are never searched for in the
+// serialised text: that text carries JSON escapes (a `+` is written as a six-character escape)
+// and the JSON between two strings could complete a reference that neither string holds.
+// ToTemplate therefore also returns the body's strings, unescaped, for the census, and the
+// split the provider emits so that only those strings are resolved at run time, each written
+// back as an escaped JSON string. Text that reads as a reference only across two strings is
+// never a reference: it is sent literally, and neither checked, listed nor hashed.
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
 
@@ -185,7 +196,45 @@ internal static class HttpRestBodyConversion
     /// The ASCII authoring refusal naming the step, or <see langword="null"/> when the body
     /// converted. It never quotes a body value.
     /// </param>
-    internal sealed record Result(string? Text, string? Refusal);
+    /// <param name="Strings">
+    /// For a structured body, every JSON string it sends (member names and string values),
+    /// unescaped and in the order they are written; the only text in which a reference can
+    /// be. <see langword="null"/> for a scalar body, whose <paramref name="Text"/> is read as
+    /// one text, and for a refusal.
+    /// </param>
+    /// <param name="Parts">
+    /// For a structured body holding at least one reference, the body split for run-time
+    /// resolution: an odd number of parts, where an even index is JSON text sent as it is
+    /// and an odd index is the unescaped text of ONE JSON string holding a reference, to be
+    /// resolved on its own and written back as a JSON string. Writing every odd part with
+    /// <c>JsonSerializer.Serialize</c> before any resolution gives back
+    /// <paramref name="Text"/> exactly. A body none of whose strings holds a reference, but
+    /// whose JSON text reads as one across two strings, is the single part
+    /// <paramref name="Text"/>, so that it is sent without being resolved.
+    /// <see langword="null"/> otherwise, when resolving <paramref name="Text"/> as a template
+    /// leaves it as it is.
+    /// </param>
+    internal sealed record Result(
+        string? Text,
+        string? Refusal,
+        IReadOnlyList<string>? Strings = null,
+        IReadOnlyList<string>? Parts = null);
+
+    /// <summary>
+    /// The pattern the run-time resolver (<c>Secret_Helpers.ResolveTemplate</c>) matches: a
+    /// <c>${secret:source/path}</c> reference, or a <c>{placeholder}</c>.
+    /// </summary>
+    /// <remarks>
+    /// A byte-for-byte copy of the combined pattern in the frozen <c>SecretHelper.Source</c>,
+    /// which this file cannot reference (see the header). It decides which strings are split
+    /// out for resolution, so a string it missed would be sent unresolved; a test in
+    /// Vouchfx.Engine.Runtime.Tests (HttpRestStructuredBodyCensusTests) reads the pattern out
+    /// of that source and fails if the two copies ever differ.
+    /// </remarks>
+    internal const string ReferencePattern =
+        @"(?<secret>\$\{secret:[A-Za-z0-9_-]+/[^}]+\})|(?<ph>\{(?<phName>[A-Za-z_][A-Za-z0-9_]*)\})";
+
+    private static readonly Regex s_reference = new(ReferencePattern, RegexOptions.CultureInvariant);
 
     /// <summary>
     /// Converts <paramref name="body"/>, the value of the step's <c>body</c> key, into the
@@ -207,11 +256,135 @@ internal static class HttpRestBodyConversion
         {
             var budget = MaxBodyNodes;
             var node = ToJsonNode(body, new Merges(step), depth: 1, ref budget);
-            return new Result(JsonSerializer.Serialize(node), null);
+            var text = JsonSerializer.Serialize(node);
+            var split = new Split();
+            split.Write(node);
+            return new Result(text, null, split.Strings, split.Finish(text));
         }
         catch (RefusalException refusal)
         {
             return new Result(null, refusal.Message);
+        }
+    }
+
+    /// <summary>
+    /// Walks a converted body once, writing it as compact JSON, to collect its strings and to
+    /// split it around the strings that hold a reference (see <see cref="Result"/>).
+    /// </summary>
+    /// <remarks>
+    /// The text sent for a body with no reference is still the serialiser's own output;
+    /// this walk only says where the strings are. It writes every string and every other
+    /// value with the serialiser's default settings, exactly as the serialiser writes them in
+    /// the tree, and <see cref="Finish"/> proves the result equal to the serialiser's text
+    /// before any split is used, so a difference is a defect that surfaces at bind time and
+    /// never a body that differs on the wire.
+    /// </remarks>
+    private sealed class Split
+    {
+        private readonly StringBuilder _literal = new();
+        private List<string>? _parts;
+
+        internal List<string> Strings { get; } = new();
+
+        internal void Write(JsonNode? node)
+        {
+            switch (node)
+            {
+                case null:
+                    _literal.Append("null");
+                    break;
+                case JsonObject obj:
+                    {
+                        _literal.Append('{');
+                        var first = true;
+                        foreach (var (key, value) in obj)
+                        {
+                            if (!first)
+                                _literal.Append(',');
+                            first = false;
+                            WriteString(key);
+                            _literal.Append(':');
+                            Write(value);
+                        }
+
+                        _literal.Append('}');
+                        break;
+                    }
+                case JsonArray arr:
+                    {
+                        _literal.Append('[');
+                        for (var index = 0; index < arr.Count; index++)
+                        {
+                            if (index > 0)
+                                _literal.Append(',');
+                            Write(arr[index]);
+                        }
+
+                        _literal.Append(']');
+                        break;
+                    }
+                default:
+                    {
+                        var value = node.AsValue();
+                        if (value.GetValueKind() == JsonValueKind.String)
+                            WriteString(value.GetValue<string>());
+                        else
+                            _literal.Append(value.ToJsonString());
+                        break;
+                    }
+            }
+        }
+
+        private void WriteString(string value)
+        {
+            Strings.Add(value);
+            if (!s_reference.IsMatch(value))
+            {
+                _literal.Append(JsonSerializer.Serialize(value));
+                return;
+            }
+
+            _parts ??= new List<string>();
+            _parts.Add(_literal.ToString());
+            _parts.Add(value);
+            _literal.Clear();
+        }
+
+        /// <summary>
+        /// The parts, or <see langword="null"/> when neither a string nor the JSON text holds
+        /// anything the resolver would read; throws when the walk does not reproduce
+        /// <paramref name="text"/>.
+        /// </summary>
+        internal List<string>? Finish(string text)
+        {
+            var rebuilt = new StringBuilder();
+            if (_parts is null)
+            {
+                rebuilt.Append(_literal);
+            }
+            else
+            {
+                _parts.Add(_literal.ToString());
+                for (var index = 0; index < _parts.Count; index++)
+                {
+                    rebuilt.Append(index % 2 == 0 ? _parts[index] : JsonSerializer.Serialize(_parts[index]));
+                }
+            }
+
+            if (!string.Equals(rebuilt.ToString(), text, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "http.rest: splitting a structured body around its references did not reproduce "
+                    + "the body's JSON. This is a defect in the body conversion, not in the suite.");
+            }
+
+            // No string holds a reference, but the JSON text reads as one across two strings
+            // (a key and its value, two items): sent as one part, which is never resolved,
+            // because resolving the text as a template would read that joined reference.
+            if (_parts is null && s_reference.IsMatch(text))
+                return new List<string> { text };
+
+            return _parts;
         }
     }
 

@@ -1,0 +1,107 @@
+# Emitted-code baseline corpus: references inside an http.rest request body.
+#
+# A structured body (a mapping or a sequence) has its references resolved one JSON string at
+# a time: each string holding a reference is emitted as its own part of the bound model's
+# BodyParts, resolved on its own at run time and written back as an escaped JSON string. One
+# step per case:
+#
+#   - a Vault reference whose path holds characters the JSON serialiser escapes, beside the
+#     same reference in a header;
+#   - text that reads as a reference only across a key and its value, and across two
+#     sequence items: never a reference, so it is one part that is sent without resolution;
+#   - a reference inside a folded scalar, which is one YAML string;
+#   - a secret and a placeholder in member names and in values;
+#   - numbers, booleans and null beside references, and a string that is only a reference;
+#   - a structured body with no reference, whose emitted call is unchanged;
+#   - a raw-text body, which is still resolved as one text.
+#
+# The golden records whatever the engine does today; nothing here is a statement of what it
+# should do. Used only by EmittedCodeBaselineTests; no topology is started and no secret is
+# read.
+metadata:
+  name: emitted-code-corpus-http-rest-body-references
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+steps:
+  - id: escaped-path-characters
+    type: http.rest
+    target: app
+    method: POST
+    path: /escaped
+    headers:
+      Authorization: '${secret:vault/kv/a+b#f}'
+    body:
+      token: '${secret:vault/kv/a+b#f}'
+      markup: '${secret:vault/kv/a<b>&c#f}'
+      accented: '${secret:vault/kv/café#f}'
+
+  - id: joined-key-and-value
+    type: http.rest
+    target: app
+    method: POST
+    path: /joined-pair
+    body:
+      'a${secret:env/': 'X}'
+
+  - id: joined-sequence-items
+    type: http.rest
+    target: app
+    method: POST
+    path: /joined-items
+    body:
+      - '${secret:env/'
+      - 'X}'
+
+  - id: folded-scalar-reference
+    type: http.rest
+    target: app
+    method: POST
+    path: /folded
+    body:
+      note: >-
+        token
+        ${secret:env/FOLDED_TOKEN}
+
+  - id: keys-and-values
+    type: http.rest
+    target: app
+    method: POST
+    path: /keys
+    body:
+      '{tenant}': '${secret:env/TENANT_TOKEN}'
+      '${secret:env/KEY_NAME}': '{orderId}'
+      mixed: 'id={orderId}; token=${secret:env/TENANT_TOKEN}'
+
+  - id: typed-beside-references
+    type: http.rest
+    target: app
+    method: POST
+    path: /typed
+    body:
+      count: 3
+      ratio: 1.5
+      active: true
+      none: null
+      empty:
+      only: '${secret:env/ONLY_REFERENCE}'
+      list: [1, '{orderId}', false]
+
+  - id: no-reference
+    type: http.rest
+    target: app
+    method: POST
+    path: /plain
+    body:
+      escaped: 'x+y<z>&"q\'
+      braces: '} ${ { not-a-reference'
+      list: [1, 2.5, true, null]
+
+  - id: raw-text-body
+    type: http.rest
+    target: app
+    method: POST
+    path: /raw
+    body: |
+      {"token":"${secret:env/RAW_TOKEN}","id":"{orderId}"}

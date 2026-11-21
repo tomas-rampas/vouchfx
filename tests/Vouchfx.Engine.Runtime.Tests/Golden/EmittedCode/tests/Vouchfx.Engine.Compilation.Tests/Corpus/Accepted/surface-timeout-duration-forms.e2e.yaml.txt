@@ -19,7 +19,8 @@ timeout-ms: 500
   "Headers": null,
   "Body": null,
   "Expect": null,
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "BodyParts": null
 }
 @@@@ step 1 host-resources
 []
@@ -31,7 +32,7 @@ System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
 @@@@ step 1 helpers
-HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
@@ -78,7 +79,8 @@ timeout-ms: 30000
   "Headers": null,
   "Body": null,
   "Expect": null,
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "BodyParts": null
 }
 @@@@ step 2 host-resources
 []
@@ -90,7 +92,7 @@ System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
 @@@@ step 2 helpers
-HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
@@ -137,7 +139,8 @@ timeout-ms: 120000
   "Headers": null,
   "Body": null,
   "Expect": null,
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "BodyParts": null
 }
 @@@@ step 3 host-resources
 []
@@ -149,7 +152,7 @@ System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
 @@@@ step 3 helpers
-HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
@@ -196,7 +199,8 @@ timeout-ms: 45000
   "Headers": null,
   "Body": null,
   "Expect": null,
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "BodyParts": null
 }
 @@@@ step 4 host-resources
 []
@@ -208,7 +212,7 @@ System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
 @@@@ step 4 helpers
-HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
@@ -247,7 +251,7 @@ using System.Diagnostics;
 using System.Threading.Tasks;
 using Vouchfx.Engine.Abstractions;
 
-// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae: body elided, recorded by name and hash]
 // [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
 // [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
 // [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]

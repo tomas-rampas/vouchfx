@@ -10,13 +10,28 @@ namespace Vouchfx.Engine.Runtime;
 /// This is not a raw-node secret scan. Map names and unlisted literals/placeholder-only
 /// fields remain opaque. PostgreSQL's historical collection is retained deliberately.
 /// The independent emission census tests gate additions without changing the frozen SDK.
-/// An http.rest structured body is read through the binder's own conversion, so its text
-/// is exactly the body that is sent; a body the binder refuses contributes nothing, and the
-/// refusal is reported once, by the provider's Validate.
+/// An http.rest structured body is read through the binder's own conversion, one JSON string
+/// per field, so each text is exactly what the run-time resolver reads; a body the binder
+/// refuses contributes nothing, and the refusal is reported once, by the provider's Validate.
 /// </remarks>
 internal static class StepTemplateCensus
 {
-    internal sealed record Field(string Location, string Text);
+    /// <summary>One field text the resolver reads, and where it is.</summary>
+    /// <param name="Location">The field's path within the step.</param>
+    /// <param name="Text">The text, as the run-time resolver reads it.</param>
+    internal sealed record Field(string Location, string Text)
+    {
+        /// <summary>
+        /// The text the secret-reference check validates; <see cref="Text"/> unless a
+        /// structured body string ends in a reference that is never closed (see
+        /// <see cref="WithoutOpenSigilTail"/>).
+        /// </summary>
+        internal string CheckText { get; init; } = Text;
+    }
+
+    /// <summary>The opening of a secret reference.</summary>
+    private const string SecretSigil = "${secret:";
+
     internal sealed record Collection(IReadOnlyList<Field> Fields);
 
     internal static Collection Collect(StepNode node)
@@ -54,8 +69,21 @@ internal static class StepTemplateCensus
                     // nothing and is not reported here: Bind carries the same refusal to
                     // Validate, which reports it once on the authoring channel, and the step
                     // is never compiled, so no reference in it is ever fetched or sent.
+                    //
+                    // A structured body is read one JSON string at a time, unescaped, because
+                    // that is how the run-time resolver reads it: never as the serialised text,
+                    // whose escapes would change a reference and whose structure could join two
+                    // strings into one. A scalar body is still one text.
                     var converted = ConvertBody(body, raw);
-                    if (converted is { Length: > 0 }) fields.Add(new Field("body", converted));
+                    if (converted?.Strings is { } strings)
+                    {
+                        foreach (var text in strings)
+                            if (text.Length > 0) fields.Add(new Field("body", text) { CheckText = WithoutOpenSigilTail(text) });
+                    }
+                    else if (converted?.Text is { Length: > 0 } text)
+                    {
+                        fields.Add(new Field("body", text));
+                    }
                 }
                 Values("expect.json"); Scalar("expect.bodyContains");
                 break;
@@ -136,14 +164,35 @@ internal static class StepTemplateCensus
     }
 
     /// <summary>
-    /// The text <c>HttpRestProvider.Bind</c> sends for <paramref name="body"/>, or
-    /// <see langword="null"/> when Bind sends none because the conversion refuses it.
+    /// <paramref name="text"/> cut before the first <c>${secret:</c> that no <c>}</c> follows,
+    /// or <paramref name="text"/> itself when there is none.
     /// </summary>
-    private static string? ConvertBody(YamlNode body, YamlMappingNode step)
+    /// <remarks>
+    /// Used for the strings of a structured body only. A reference never spans two strings
+    /// there, so a reference opened in one string and never closed in it is not a reference:
+    /// the run-time resolver leaves it as text and it is sent literally. This is exactly the
+    /// fragment that text which reads as a reference only across two strings leaves in its
+    /// first string, and such text is neither resolved nor refused. A reference that IS closed
+    /// in its string is checked like any other, malformed or with an unknown source.
+    /// </remarks>
+    private static string WithoutOpenSigilTail(string text)
+    {
+        // Every sigil before the last '}' has a '}' after it; the first one after it is the
+        // first that has none.
+        var open = text.IndexOf(SecretSigil, text.LastIndexOf('}') + 1, StringComparison.Ordinal);
+        return open >= 0 ? text[..open] : text;
+    }
+
+    /// <summary>
+    /// The conversion of <paramref name="body"/> that <c>HttpRestProvider.Bind</c> sends, or
+    /// <see langword="null"/> when its conversion fails with an exception. A refusal comes back
+    /// as a result with no text and no strings, so it contributes nothing.
+    /// </summary>
+    private static HttpRestBodyConversion.Result? ConvertBody(YamlNode body, YamlMappingNode step)
     {
         try
         {
-            return HttpRestBodyConversion.ToTemplate(body, step).Text;
+            return HttpRestBodyConversion.ToTemplate(body, step);
         }
         catch (Exception exception) when (exception is ArgumentException or JsonException or InvalidOperationException or NotSupportedException)
         {

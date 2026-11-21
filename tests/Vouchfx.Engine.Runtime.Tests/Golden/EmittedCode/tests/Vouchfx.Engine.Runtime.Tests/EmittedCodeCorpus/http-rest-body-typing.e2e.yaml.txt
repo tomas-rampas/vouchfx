@@ -23,7 +23,12 @@ timeout-ms: none
     "Json": null,
     "BodyContains": null
   },
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "BodyParts": [
+    "{\"plainInt\":123,\"doubleQuotedInt\":\"123\",\"singleQuotedInt\":\"123\",\"plainDecimal\":1.5,\"quotedDecimal\":\"1.5\",\"leadingZero\":7,\"leadingZeroTen\":10,\"quotedLeadingZero\":\"007\",\"trailingZeroDecimal\":1.5,\"yamlInfinity\":\".inf\",\"negative\":-42,\"plusSign\":5,\"exponent\":1000,\"hex\":\"0x1F\",\"plainTrue\":true,\"titleCaseTrue\":true,\"upperCaseFalse\":false,\"doubleQuotedTrue\":\"true\",\"singleQuotedFalse\":\"false\",\"yamlOneOneYes\":\"yes\",\"plainNull\":null,\"tilde\":null,\"quotedNull\":\"null\",\"quotedTilde\":\"~\",\"emptyValue\":null,\"quotedEmpty\":\"\",\"placeholder\":",
+    "{orderId}",
+    ",\"literal\":\"line one\\nline two\\n\",\"literalNumber\":\"123\\n\",\"literalStrip\":\"true\",\"folded\":\"folded text\\n\",\"foldedNumber\":\"1.5\"}"
+  ]
 }
 @@@@ step 1 host-resources
 []
@@ -35,7 +40,7 @@ System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
 @@@@ step 1 helpers
-HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
@@ -52,7 +57,7 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         "app",
         "POST",
         "/typing",
-        "{\u0022plainInt\u0022:123,\u0022doubleQuotedInt\u0022:\u0022123\u0022,\u0022singleQuotedInt\u0022:\u0022123\u0022,\u0022plainDecimal\u0022:1.5,\u0022quotedDecimal\u0022:\u00221.5\u0022,\u0022leadingZero\u0022:7,\u0022leadingZeroTen\u0022:10,\u0022quotedLeadingZero\u0022:\u0022007\u0022,\u0022trailingZeroDecimal\u0022:1.5,\u0022yamlInfinity\u0022:\u0022.inf\u0022,\u0022negative\u0022:-42,\u0022plusSign\u0022:5,\u0022exponent\u0022:1000,\u0022hex\u0022:\u00220x1F\u0022,\u0022plainTrue\u0022:true,\u0022titleCaseTrue\u0022:true,\u0022upperCaseFalse\u0022:false,\u0022doubleQuotedTrue\u0022:\u0022true\u0022,\u0022singleQuotedFalse\u0022:\u0022false\u0022,\u0022yamlOneOneYes\u0022:\u0022yes\u0022,\u0022plainNull\u0022:null,\u0022tilde\u0022:null,\u0022quotedNull\u0022:\u0022null\u0022,\u0022quotedTilde\u0022:\u0022~\u0022,\u0022emptyValue\u0022:null,\u0022quotedEmpty\u0022:\u0022\u0022,\u0022placeholder\u0022:\u0022{orderId}\u0022,\u0022literal\u0022:\u0022line one\\nline two\\n\u0022,\u0022literalNumber\u0022:\u0022123\\n\u0022,\u0022literalStrip\u0022:\u0022true\u0022,\u0022folded\u0022:\u0022folded text\\n\u0022,\u0022foldedNumber\u0022:\u00221.5\u0022}",
+        null,
         new string[] { },
         new string[] { },
         200,
@@ -64,7 +69,8 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         new string[] { },
         new string[] { },
         __stepCt_typed_scalars,
-        __stepBudgetGoverned_typed_scalars);
+        __stepBudgetGoverned_typed_scalars,
+        bodyParts: new string[] { "{\u0022plainInt\u0022:123,\u0022doubleQuotedInt\u0022:\u0022123\u0022,\u0022singleQuotedInt\u0022:\u0022123\u0022,\u0022plainDecimal\u0022:1.5,\u0022quotedDecimal\u0022:\u00221.5\u0022,\u0022leadingZero\u0022:7,\u0022leadingZeroTen\u0022:10,\u0022quotedLeadingZero\u0022:\u0022007\u0022,\u0022trailingZeroDecimal\u0022:1.5,\u0022yamlInfinity\u0022:\u0022.inf\u0022,\u0022negative\u0022:-42,\u0022plusSign\u0022:5,\u0022exponent\u0022:1000,\u0022hex\u0022:\u00220x1F\u0022,\u0022plainTrue\u0022:true,\u0022titleCaseTrue\u0022:true,\u0022upperCaseFalse\u0022:false,\u0022doubleQuotedTrue\u0022:\u0022true\u0022,\u0022singleQuotedFalse\u0022:\u0022false\u0022,\u0022yamlOneOneYes\u0022:\u0022yes\u0022,\u0022plainNull\u0022:null,\u0022tilde\u0022:null,\u0022quotedNull\u0022:\u0022null\u0022,\u0022quotedTilde\u0022:\u0022~\u0022,\u0022emptyValue\u0022:null,\u0022quotedEmpty\u0022:\u0022\u0022,\u0022placeholder\u0022:", "{orderId}", ",\u0022literal\u0022:\u0022line one\\nline two\\n\u0022,\u0022literalNumber\u0022:\u0022123\\n\u0022,\u0022literalStrip\u0022:\u0022true\u0022,\u0022folded\u0022:\u0022folded text\\n\u0022,\u0022foldedNumber\u0022:\u00221.5\u0022}" });
 }
 
 @@@@ step 2 of 7
@@ -90,7 +96,8 @@ timeout-ms: none
     "Json": null,
     "BodyContains": null
   },
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "BodyParts": null
 }
 @@@@ step 2 host-resources
 []
@@ -102,7 +109,7 @@ System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
 @@@@ step 2 helpers
-HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
@@ -193,7 +200,8 @@ timeout-ms: none
     ],
     "BodyContains": "007"
   },
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "BodyParts": null
 }
 @@@@ step 3 host-resources
 []
@@ -205,7 +213,7 @@ System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
 @@@@ step 3 helpers
-HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
@@ -252,7 +260,8 @@ timeout-ms: none
   "Headers": null,
   "Body": "[1,\"1\",null,{\"id\":\"compose-order-1\"}]",
   "Expect": null,
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "BodyParts": null
 }
 @@@@ step 4 host-resources
 []
@@ -264,7 +273,7 @@ System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
 @@@@ step 4 helpers
-HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
@@ -311,7 +320,8 @@ timeout-ms: none
   "Headers": null,
   "Body": "{\"amount\": 007, \"quoted\": \"007\"}",
   "Expect": null,
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "BodyParts": null
 }
 @@@@ step 5 host-resources
 []
@@ -323,7 +333,7 @@ System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
 @@@@ step 5 helpers
-HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
@@ -370,7 +380,8 @@ timeout-ms: none
   "Headers": null,
   "Body": "{\"overflow\":\"1e400\",\"negativeOverflow\":\"-1e400\",\"keepLiteral\":\"kept\\n\\n\",\"stripFolded\":\"true\",\"literalNull\":\"null\\n\",\"emptyPlain\":null,\"emptyQuoted\":\"\",\"tagStr\":\"true\",\"tagStrEmpty\":\"\",\"tagInt\":10,\"tagIntHex\":31,\"tagIntQuoted\":-7,\"tagFloat\":1.5,\"tagFloatInt\":2,\"tagBool\":true,\"tagBoolQuoted\":false,\"tagTimestamp\":\"2026-11-17\",\"defaults\":{\"retries\":3,\"region\":\"eu\"},\"override\":{\"region\":\"eu\",\"retries\":5},\"layered\":{\"region\":\"us\",\"retries\":3,\"tier\":\"silver\"}}",
   "Expect": null,
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "BodyParts": null
 }
 @@@@ step 6 host-resources
 []
@@ -382,7 +393,7 @@ System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
 @@@@ step 6 helpers
-HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
@@ -429,7 +440,8 @@ timeout-ms: none
   "Headers": null,
   "Body": "{\"plainNaN\":\"NaN\",\"plainInfinity\":\"Infinity\",\"negativeInfinity\":\"-Infinity\",\"outOfRange\":\"1e400\",\"tagStrNaN\":\"NaN\",\"tagIntOctal\":15}",
   "Expect": null,
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "BodyParts": null
 }
 @@@@ step 7 host-resources
 []
@@ -441,7 +453,7 @@ System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
 @@@@ step 7 helpers
-HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
@@ -480,7 +492,7 @@ using System.Diagnostics;
 using System.Threading.Tasks;
 using Vouchfx.Engine.Abstractions;
 
-// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae: body elided, recorded by name and hash]
 // [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
 // [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
 // [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
@@ -506,7 +518,7 @@ var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var 
         "app",
         "POST",
         "/typing",
-        "{\u0022plainInt\u0022:123,\u0022doubleQuotedInt\u0022:\u0022123\u0022,\u0022singleQuotedInt\u0022:\u0022123\u0022,\u0022plainDecimal\u0022:1.5,\u0022quotedDecimal\u0022:\u00221.5\u0022,\u0022leadingZero\u0022:7,\u0022leadingZeroTen\u0022:10,\u0022quotedLeadingZero\u0022:\u0022007\u0022,\u0022trailingZeroDecimal\u0022:1.5,\u0022yamlInfinity\u0022:\u0022.inf\u0022,\u0022negative\u0022:-42,\u0022plusSign\u0022:5,\u0022exponent\u0022:1000,\u0022hex\u0022:\u00220x1F\u0022,\u0022plainTrue\u0022:true,\u0022titleCaseTrue\u0022:true,\u0022upperCaseFalse\u0022:false,\u0022doubleQuotedTrue\u0022:\u0022true\u0022,\u0022singleQuotedFalse\u0022:\u0022false\u0022,\u0022yamlOneOneYes\u0022:\u0022yes\u0022,\u0022plainNull\u0022:null,\u0022tilde\u0022:null,\u0022quotedNull\u0022:\u0022null\u0022,\u0022quotedTilde\u0022:\u0022~\u0022,\u0022emptyValue\u0022:null,\u0022quotedEmpty\u0022:\u0022\u0022,\u0022placeholder\u0022:\u0022{orderId}\u0022,\u0022literal\u0022:\u0022line one\\nline two\\n\u0022,\u0022literalNumber\u0022:\u0022123\\n\u0022,\u0022literalStrip\u0022:\u0022true\u0022,\u0022folded\u0022:\u0022folded text\\n\u0022,\u0022foldedNumber\u0022:\u00221.5\u0022}",
+        null,
         new string[] { },
         new string[] { },
         200,
@@ -518,7 +530,8 @@ var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var 
         new string[] { },
         new string[] { },
         __stepCt_typed_scalars,
-        __stepBudgetGoverned_typed_scalars);
+        __stepBudgetGoverned_typed_scalars,
+        bodyParts: new string[] { "{\u0022plainInt\u0022:123,\u0022doubleQuotedInt\u0022:\u0022123\u0022,\u0022singleQuotedInt\u0022:\u0022123\u0022,\u0022plainDecimal\u0022:1.5,\u0022quotedDecimal\u0022:\u00221.5\u0022,\u0022leadingZero\u0022:7,\u0022leadingZeroTen\u0022:10,\u0022quotedLeadingZero\u0022:\u0022007\u0022,\u0022trailingZeroDecimal\u0022:1.5,\u0022yamlInfinity\u0022:\u0022.inf\u0022,\u0022negative\u0022:-42,\u0022plusSign\u0022:5,\u0022exponent\u0022:1000,\u0022hex\u0022:\u00220x1F\u0022,\u0022plainTrue\u0022:true,\u0022titleCaseTrue\u0022:true,\u0022upperCaseFalse\u0022:false,\u0022doubleQuotedTrue\u0022:\u0022true\u0022,\u0022singleQuotedFalse\u0022:\u0022false\u0022,\u0022yamlOneOneYes\u0022:\u0022yes\u0022,\u0022plainNull\u0022:null,\u0022tilde\u0022:null,\u0022quotedNull\u0022:\u0022null\u0022,\u0022quotedTilde\u0022:\u0022~\u0022,\u0022emptyValue\u0022:null,\u0022quotedEmpty\u0022:\u0022\u0022,\u0022placeholder\u0022:", "{orderId}", ",\u0022literal\u0022:\u0022line one\\nline two\\n\u0022,\u0022literalNumber\u0022:\u0022123\\n\u0022,\u0022literalStrip\u0022:\u0022true\u0022,\u0022folded\u0022:\u0022folded text\\n\u0022,\u0022foldedNumber\u0022:\u00221.5\u0022}" });
 }
     if (__vouchfxRunCt.IsCancellationRequested)
     {
