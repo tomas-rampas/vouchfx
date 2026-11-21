@@ -8,8 +8,9 @@ using Xunit;
 namespace Vouchfx.Engine.Compilation.Tests;
 
 /// <summary>
-/// Schema validation types a plain scalar from its text, and a tagged one from its text and
-/// tag, as YamlDotNet does. Text that .NET cannot turn into a finite number, or a tagged
+/// Schema validation types a plain scalar from its text; a tagged plain scalar whose text
+/// reads as a number or a boolean is typed from that text alone, except that a <c>!!str</c>
+/// tag gives a string. Text that .NET cannot turn into a finite number, or a tagged
 /// value (plain, quoted or block) that its tag cannot hold, is accepted as the string
 /// written rather than stopping the whole suite with a generic parse failure.
 /// </summary>
@@ -104,6 +105,10 @@ public sealed class SchemaYamlScalarTypingTests
     [InlineData("!!int 0123", "83")]
     [InlineData("!!int 0o17", "\"0o17\"")]
     [InlineData("!!int abc", "\"abc\"")]
+    [InlineData("!!int 0b", "\"0b\"")]
+    [InlineData("!!int 0_", "\"0_\"")]
+    [InlineData("!!map abc", "\"abc\"")]
+    [InlineData("!!timestamp abc", "\"abc\"")]
     [InlineData("!!float 1.5", "1.5")]
     [InlineData("!!float .5", "0.5")]
     [InlineData("!!float 1e3", "1000")]
@@ -199,6 +204,30 @@ public sealed class SchemaYamlScalarTypingTests
             () => SchemaResources.ConvertYamlToJsonDocument(document + "\n"));
 
         Assert.Contains("unresolved tag", failure.Message, System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The text fallback covers only the conversion of the tagged scalar itself. Reading
+    /// past that scalar scans the next token, and the YAML scanner throws an
+    /// <see cref="System.ArgumentOutOfRangeException"/> (not a YAML syntax error) for a
+    /// double-quoted lone surrogate escape. That failure belongs to the malformed text that
+    /// follows, so the document is still refused, as it was before the fallback existed.
+    /// </summary>
+    [Theory]
+    [InlineData("a: [!!int 0o17, \"\\uDC00\\uDC00, z]")]
+    [InlineData("a: [!!int 5, \"\\uDC00\\uDC00, z]")]
+    public void MalformedTokenAfterATaggedScalar_IsStillRefused(string document)
+    {
+        Assert.ThrowsAny<System.Exception>(
+            () => SchemaResources.ConvertYamlToJsonDocument(document + "\n"));
+    }
+
+    [Fact]
+    public void MalformedTokenAfterATaggedScalar_InABody_FailsValidation()
+    {
+        var result = DocumentValidator.Validate(StepWithValue("[!!int 0o17, \"\\uDC00\\uDC00, z]"), s_registry);
+
+        Assert.False(result.IsValid);
     }
 
     /// <summary>

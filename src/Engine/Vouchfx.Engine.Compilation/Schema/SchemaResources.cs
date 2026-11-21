@@ -630,7 +630,8 @@ internal static class SchemaResources
 
     /// <summary>
     /// A YamlDotNet node-type resolver that decides the CLR type of a plain scalar from
-    /// its text and of a tagged plain scalar from its text and tag: <see cref="long"/>,
+    /// its text, and of a tagged plain scalar from its text alone (a <c>!!str</c> tag
+    /// excepted): <see cref="long"/>,
     /// <see cref="double"/> or <see cref="bool"/> for an integer, a number or a boolean,
     /// instead of the default <see cref="string"/>.  This preserves the JSON Schema
     /// <c>type: integer</c> / <c>type: number</c> constraints during YAML→JSON conversion.
@@ -649,8 +650,9 @@ internal static class SchemaResources
     /// its text.  A tagged scalar (plain, quoted or block) whose conversion YamlDotNet then
     /// refuses (<c>!!int 0o17</c>, <c>!!float NaN</c>, <c>!!int "abc"</c>) is handled by
     /// <see cref="TextFallbackScalarDeserializer"/>, which gives the text written instead
-    /// of throwing.  The binder that owns the value decides what that text means, and
-    /// refuses a tag it cannot honour.
+    /// of throwing.  Only the <c>http.rest</c> structured-body conversion reads the tag
+    /// again, and it refuses a tag it cannot honour with the step and line; every other
+    /// binder takes the scalar's text as written and does not interpret the tag.
     /// </para>
     /// </remarks>
     private sealed class YamlScalarTypeResolver : INodeTypeResolver
@@ -742,9 +744,13 @@ internal static class SchemaResources
     /// always was, and gives the text written where that conversion refuses it (a tag its
     /// text cannot satisfy: <c>!!int 0o17</c>, <c>!!int "abc"</c>, <c>!!float NaN</c>,
     /// <c>!!bool maybe</c>).  There is no second configuration to keep in step: the
-    /// wrapped instance is the one the production deserialiser built.  Only the failures a
-    /// scalar conversion raises are caught, only around that single conversion; an untagged
-    /// scalar, and every other kind of node, is never touched.
+    /// wrapped instance is the one the production deserialiser built.  The wrapped call
+    /// first consumes the scalar, which makes the parser scan the token that follows, and
+    /// only then converts.  Only the exception types a scalar conversion raises are caught,
+    /// and only once the parser has moved past this scalar; a failure while scanning the
+    /// next token leaves the parser on this scalar and is rethrown, so malformed text after
+    /// a tagged value is still refused.  An untagged scalar, and every other kind of node,
+    /// is never touched.
     /// </summary>
     private sealed class TextFallbackScalarDeserializer : INodeDeserializer
     {
@@ -768,14 +774,18 @@ internal static class SchemaResources
             {
                 return _scalar.Deserialize(reader, expectedType, nestedObjectDeserializer, out value, rootDeserializer);
             }
-            catch (Exception ex) when (ex is FormatException
-                or OverflowException
-                or IndexOutOfRangeException
-                or ArgumentException
-                or InvalidCastException)
+            catch (Exception ex) when ((ex is FormatException
+                    or OverflowException
+                    or IndexOutOfRangeException
+                    or ArgumentException
+                    or InvalidCastException)
+                && !ReferenceEquals(reader.Current, scalar))
             {
-                // The scalar deserialiser consumes its event before converting it, so the
-                // parser is already past this scalar.
+                // The scalar deserialiser consumes its event, which scans the next token,
+                // before it converts. The parser sets Current only once that scan succeeds,
+                // so Current still being this scalar means the scan threw, and the failure
+                // belongs to the text that follows: it is rethrown. Current having moved
+                // means the conversion threw, and the parser is already past this scalar.
                 value = scalar.Value;
                 return true;
             }

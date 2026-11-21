@@ -925,15 +925,19 @@ public sealed class HttpRestBodyYamlSemanticsTests
     }
 
     /// <summary>
-    /// A plain <c>NaN</c> or <c>Infinity</c> in a structured body passes schema validation
-    /// (it is text, not a number) and is sent as the text written.
+    /// Text that is not a finite number (a plain <c>NaN</c>, <c>Infinity</c> or <c>1e400</c>,
+    /// or a <c>!!str</c>-tagged <c>NaN</c>), a <c>!!timestamp</c> value YAML cannot read as a
+    /// date, and the non-specific tag on <c>NaN</c> all pass schema validation and are sent as
+    /// the text written.
     /// </summary>
     [Theory]
     [InlineData("NaN", "{\"v\":\"NaN\"}")]
     [InlineData("-Infinity", "{\"v\":\"-Infinity\"}")]
     [InlineData("1e400", "{\"v\":\"1e400\"}")]
     [InlineData("!!str NaN", "{\"v\":\"NaN\"}")]
-    public void Engine_PlainNaN_ValidatesAndIsSentAsText(string value, string expectedBody)
+    [InlineData("!!timestamp abc", "{\"v\":\"abc\"}")]
+    [InlineData("! NaN", "{\"v\":\"NaN\"}")]
+    public void Engine_NonFiniteOrUnreadableTaggedText_ValidatesAndIsSentAsText(string value, string expectedBody)
     {
         var yaml = ValidSuiteWithValue(value);
 
@@ -986,6 +990,23 @@ public sealed class HttpRestBodyYamlSemanticsTests
         var refusal = RefuseBody(yaml);
         Assert.Contains("step 'agree'", refusal, StringComparison.Ordinal);
         Assert.Contains("tags the value at line 12, column 10 as !!float", refusal, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <c>!!map</c> on a scalar passes schema validation as the text written (the YAML
+    /// library cannot read <c>abc</c> as a mapping); the binder refuses a collection tag on a
+    /// scalar, naming the step and the line.
+    /// </summary>
+    [Fact]
+    public void Engine_MapTaggedScalar_PassesTheBridge_BinderRefusesWithLocation()
+    {
+        var yaml = ValidSuiteWithValue("!!map abc");
+
+        var validation = DocumentValidator.Validate(yaml, s_registry);
+        Assert.True(validation.IsValid, string.Join("; ", validation.Errors.Select(e => e.Message)));
+        var refusal = RefuseBody(yaml);
+        Assert.Contains("step 'agree'", refusal, StringComparison.Ordinal);
+        Assert.Contains("uses the YAML tag '!!map' on a scalar at line 12, column 10", refusal, StringComparison.Ordinal);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
