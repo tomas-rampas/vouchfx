@@ -21,7 +21,7 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
-## [1.4.0] — 2026-11-19
+## [1.4.0] — 2026-11-21
 
 1.4.0 is the first release that targets .NET 10. 1.3.0 was not published; the changes that were prepared under that number ship in this release and are included below.
 
@@ -70,6 +70,7 @@ to published pre-releases on 2026-07-14.
 - CI raises the Linux inotify limits before test hosts start, because `ubuntu-latest` (ubuntu-26.04) defaults to 128 instances ([#655](https://github.com/tomas-rampas/vouchfx/pull/655)).
 - Dependency upgrades via Dependabot: `github/codeql-action` 4.39.1 ([#653](https://github.com/tomas-rampas/vouchfx/pull/653)), `actions/setup-python` 7.1.0 ([#654](https://github.com/tomas-rampas/vouchfx/pull/654)), `actions/setup-dotnet` 6.1.0 ([#658](https://github.com/tomas-rampas/vouchfx/pull/658)) and the VS Code extension's `qs` development dependency 6.17.1 ([#656](https://github.com/tomas-rampas/vouchfx/pull/656)).
 - NuGet dependency upgrades: 20 of the 24 updates in Dependabot's `nuget-dependencies` group, including the StackExchange.Redis 3 and NATS.Net 3 majors. `AWSSDK.DynamoDBv2`/`AWSSDK.S3` 4, YamlDotNet 18 and Npgsql 10 are held back: AWSSDK 4 and Npgsql 10 change provider behaviour, and YamlDotNet types are part of the frozen v1 SDK surface, so a new major would stop published providers from loading ([#662](https://github.com/tomas-rampas/vouchfx/pull/662), [#659](https://github.com/tomas-rampas/vouchfx/pull/659)).
+- Three further dependency updates are in the published 1.4.0: `NuGet.Protocol` 8.0.0 (from 7.9.0), which only the CLI's `vouchfx providers` commands use, `NATS.Net` 3.4.0 (from 3.3.2) and the test-only `coverlet.collector` 10.1.1 ([#691](https://github.com/tomas-rampas/vouchfx/pull/691), [#692](https://github.com/tomas-rampas/vouchfx/pull/692)).
 - The `vouchfx` package description, the `vouchfx` and `Vouchfx.Sdk` package READMEs and the Debian package description now say that vouchfx orchestrates the container topology with .NET Aspire. They previously added Testcontainers, which no project references.
 
 ### Fixed

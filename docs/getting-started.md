@@ -32,8 +32,8 @@ source use runtime `RollForward=Major`, so they also run on a newer major runtim
 is absent, but never on .NET 8 or 9. The provider SDK packages (`Vouchfx.Sdk`,
 `Vouchfx.Sdk.Testing` and the engine libraries they depend on) keep their `net8.0` assets for
 the v1.x series, so providers built against them keep working. Older published tools retain
-their original runtime requirements; releases up to v1.2.1 target .NET 8, so the .NET 10 requirement
-applies to builds of current source and to the first release built from it.
+their original runtime requirements: releases up to v1.2.1 target .NET 8, and the .NET 10 requirement
+applies to v1.4.0 and later and to builds of current source.
 
 Run `dotnet --version` from the repository to check the selected SDK. See Microsoft's
 [SDK selection rules](https://learn.microsoft.com/en-us/dotnet/core/tools/global-json#rollforward).
@@ -98,7 +98,7 @@ The global-tool installer places the `vouchfx` command in `~/.dotnet/tools` (`%U
 connections whose connection string uses `VerifyCA` or `VerifyFull`, omits `SslCa`, and
 carries a non-empty password are affected; the
 [security policy](https://github.com/tomas-rampas/vouchfx/blob/main/SECURITY.md#published-121-tool-and-ghsa-473q-m89c-ghf8)
-lists every exclusion. On 1.2.1, set `SslCa`, or use 1.4.0 once it is published.
+lists every exclusion. On 1.2.1, set `SslCa`, or use 1.4.0 or later.
 
 **Using vouchfx-mcp?** Keep its CLI at the version required by the installed MCP package. Published MCP 1.1.0 [pins Core 1.2.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN), whose full version is `1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8`; it does not accept any other Core version, including 1.2.1 and a later release, until an MCP release pins it. If you also need another Core version, install the MCP-compatible CLI in a separate tool directory and put that directory first on `PATH` for the MCP server process.
 

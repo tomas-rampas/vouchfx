@@ -45,8 +45,8 @@ packages retain the runtime policy with which they were built.
 dotnet tool install --global vouchfx
 ```
 
-Current source needs the [.NET 10 runtime or SDK](https://dotnet.microsoft.com/download/dotnet).
-Previously published packages may still require .NET 8. Running a suite also
+vouchfx 1.4.0 and later, and current source, need the [.NET 10 runtime or SDK](https://dotnet.microsoft.com/download/dotnet).
+Releases up to 1.2.1 target .NET 8. Running a suite also
 needs a Docker daemon, since vouchfx starts real containers — but `vouchfx validate` and `vouchfx list`
 are Docker-free, so authoring and checking suites works on a machine without one. Machines without a
 .NET SDK can use the self-contained per-OS archives and MSI/deb/pkg installers available from the
