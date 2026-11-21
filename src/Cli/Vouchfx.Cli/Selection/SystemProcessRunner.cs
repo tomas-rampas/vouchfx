@@ -127,8 +127,8 @@ internal sealed class SystemProcessRunner : IProcessRunner
 
     private readonly TimeSpan _budget;
 
-    // Null in production. Read only on the cancel path; see CancelStageRecorder.
-    private readonly CancelStageRecorder? _recorder;
+    // Null in production. Diagnostic scaffolding, invoked on the cancel path only; see CancelStage.
+    private readonly Action<CancelStage, string?>? _onCancelStage;
 
     /// <summary>
     /// Initialises a runner with an explicit budget.
@@ -139,19 +139,23 @@ internal sealed class SystemProcessRunner : IProcessRunner
     /// whole type is internal to Vouchfx.Cli and nothing outside it can construct a runner at all.
     /// </remarks>
     internal SystemProcessRunner(TimeSpan budget)
-        : this(budget, recorder: null)
+        : this(budget, onCancelStage: null)
     {
     }
 
     /// <summary>
-    /// Initialises a runner with an explicit budget and a recorder for the stages of a cancelled run.
+    /// Initialises a runner with an explicit budget and a hook told each stage of a cancelled run.
     /// </summary>
     /// <param name="budget">The ceiling on a single <see cref="Run"/>; must be positive.</param>
-    /// <param name="recorder">
-    /// Receives a timestamp per stage of the cancel path, or <see langword="null"/> to record
-    /// nothing. Observation only: it changes neither what <see cref="Run"/> returns nor what it throws.
+    /// <param name="onCancelStage">
+    /// Invoked with each <see cref="CancelStage"/> the runner reaches on the cancel path, and with
+    /// the stage's detail (only <see cref="CancelStage.KillReturned"/> carries one), or
+    /// <see langword="null"/> for none. Diagnostic scaffolding (see <see cref="CancelStage"/>). It
+    /// must not throw: it runs inside the runner's teardown, where a throw would replace the
+    /// <see cref="OperationCanceledException"/>. A hook that does not throw leaves what
+    /// <see cref="Run"/> returns and throws unchanged.
     /// </param>
-    internal SystemProcessRunner(TimeSpan budget, CancelStageRecorder? recorder)
+    internal SystemProcessRunner(TimeSpan budget, Action<CancelStage, string?>? onCancelStage)
     {
         if (budget <= TimeSpan.Zero)
         {
@@ -162,7 +166,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
         }
 
         _budget = budget;
-        _recorder = recorder;
+        _onCancelStage = onCancelStage;
     }
 
     /// <summary>A shared, stateless instance carrying <see cref="DefaultBudget"/>.</summary>
@@ -286,6 +290,15 @@ internal sealed class SystemProcessRunner : IProcessRunner
         // checked each statement in between.
         using var timers = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
+        // Diagnostic scaffolding (see CancelStage): reports ProcessDisposed on the cancel path.
+        // A `using` declared at method scope is disposed when the method's block exits, which is
+        // after the nested `using (process)` statement below has disposed the Process, and before
+        // `timers` (reverse declaration order). It is armed only just before the cancel throw,
+        // and it is null, so the declaration costs one null test, when no hook is attached.
+        using var processDisposedStamp = _onCancelStage is null
+            ? null
+            : new ProcessDisposedStamp(_onCancelStage);
+
         // The launch sits ABOVE the try/finally on purpose: until Process.Start returns there is
         // nothing to kill and nothing to dispose, and a failed start must surface as a
         // ProcessLaunchException rather than be swallowed by cleanup for a child that never
@@ -352,8 +365,8 @@ internal sealed class SystemProcessRunner : IProcessRunner
             string? exceeded = null;
             var cancelled = false;
 
-            // Held only so the cancel path can stamp when the readers settle (CancelStageRecorder).
-            Task? readsForRecorder = null;
+            // Held only so the cancel path can report when the reads settle (see CancelStage).
+            Task? readsForCancelHook = null;
 
             // NULL, NOT 0, and that is the whole point of it. Every path that reaches the return
             // below either assigns a real exit code or throws first, so zero would be correct
@@ -382,7 +395,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 standardOutput = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
                 standardError = process.StandardError.ReadToEndAsync(CancellationToken.None);
                 var reads = Task.WhenAll(standardOutput, standardError);
-                readsForRecorder = reads;
+                readsForCancelHook = reads;
 
                 // The WhenAll promise is a task in its own right and needs its OWN observer:
                 // observing the two children below does not mark it observed, so if both of them
@@ -415,7 +428,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
                     // `finally`, exactly as the timeout does, so the tree-kill has been ISSUED
                     // before it.
                     cancelled = true;
-                    _recorder?.Mark(CancelStage.Observed);
+                    _onCancelStage?.Invoke(CancelStage.Observed, null);
                 }
                 else if (!settled)
                 {
@@ -470,7 +483,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
                     if (cancellationToken.IsCancellationRequested)
                     {
                         cancelled = true;
-                        _recorder?.Mark(CancelStage.Observed);
+                        _onCancelStage?.Invoke(CancelStage.Observed, null);
                     }
                     else if (exit.IsCompletedSuccessfully)
                     {
@@ -504,17 +517,19 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 // exited, so HasExited short-circuits) and it is what makes "every path issues the
                 // kill" true by construction rather than by inspection.
                 //
-                // The recorder is consulted only when this run was cancelled, so an uncancelled run
-                // pays one boolean test here and nothing else.
-                var recorder = cancelled ? _recorder : null;
-                if (recorder is not null)
+                // The cancel-stage hook (diagnostic scaffolding, see CancelStage) is taken only
+                // when this run was cancelled, so an uncancelled run touches it only through null
+                // tests. The reads observer is attached AFTER KillIssued so ReadersDrained can
+                // never precede it, and it is a task continuation, which disposing the Process
+                // cannot discard.
+                var onCancelStage = cancelled ? _onCancelStage : null;
+                if (onCancelStage is not null)
                 {
-                    recorder.Mark(CancelStage.KillIssued);
-                    WatchForSettling(process, readsForRecorder, recorder);
+                    onCancelStage(CancelStage.KillIssued, null);
+                    ReportReadsSettled(readsForCancelHook, onCancelStage);
                 }
 
-                KillTreeQuietly(process, recorder);
-                recorder?.Mark(CancelStage.KillReturned);
+                KillTreeQuietly(process, onCancelStage);
 
                 // Then THIS PROCESS'S OWN ends of the two pipes, which `using (process)` does not
                 // release: Process.Close() closes the captured streams only while their read mode
@@ -523,7 +538,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 // caller's job. Without this the StreamReader/FileStream pairs and their pipe
                 // handles survive until finalisation.
                 DisposeCapturedStreams(process);
-                recorder?.Mark(CancelStage.StreamsDisposed);
+                onCancelStage?.Invoke(CancelStage.StreamsDisposed, null);
 
                 // Then the losing delay, so no timer outlives the call.
                 timers.Cancel();
@@ -542,7 +557,8 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 // identically today. The token is carried for a debugger and for a future consumer,
                 // not for a mechanism that exists. What DOES matter here: GitChangeSet.RunGit maps
                 // none of its three catches over this type, so it propagates untouched.
-                _recorder?.Mark(CancelStage.Thrown);
+                _onCancelStage?.Invoke(CancelStage.Thrown, null);
+                processDisposedStamp?.Arm();
                 throw new OperationCanceledException(cancellationToken);
             }
 
@@ -710,6 +726,11 @@ internal sealed class SystemProcessRunner : IProcessRunner
     /// refusals that a kill can legitimately lose.
     /// </summary>
     /// <param name="process">The child to terminate. Already-exited is not an error.</param>
+    /// <param name="onCancelStage">
+    /// The runner's cancel-stage hook on its cancel path, otherwise <see langword="null"/>. Told
+    /// <see cref="CancelStage.KillReturned"/> with the TYPE name of any exception swallowed below.
+    /// Diagnostic scaffolding: see <see cref="CancelStage"/>.
+    /// </param>
     /// <remarks>
     /// <para>
     /// <strong>A deliberate second copy of <c>Vouchfx.TestSupport.ChildProcess.KillTreeQuietly</c>,
@@ -761,8 +782,9 @@ internal sealed class SystemProcessRunner : IProcessRunner
     ///   </description></item>
     /// </list>
     /// </remarks>
-    internal static void KillTreeQuietly(Process process, CancelStageRecorder? recorder = null)
+    internal static void KillTreeQuietly(Process process, Action<CancelStage, string?>? onCancelStage = null)
     {
+        Exception? swallowed = null;
         try
         {
             if (!process.HasExited)
@@ -776,46 +798,57 @@ internal sealed class SystemProcessRunner : IProcessRunner
                                        or AggregateException)
         {
             // Terminating, partially killed, remote, or no longer associated — see the remarks.
-            // Still swallowed; the recorder, when one is attached, learns only the exception's TYPE.
-            recorder?.NoteKillSwallowed(ex);
+            // Still swallowed; a cancel-stage hook, when one is passed, learns only its TYPE.
+            swallowed = ex;
         }
+
+        onCancelStage?.Invoke(CancelStage.KillReturned, swallowed?.GetType().FullName);
     }
 
     /// <summary>
-    /// Cancel path with a recorder attached only: stamps when the child exits and when the readers
-    /// settle, each on whichever thread completes it. Observation, never a wait.
+    /// Cancel path with a hook attached only: reports <see cref="CancelStage.ReadersDrained"/> on
+    /// whichever thread completes the reads. Observation, never a wait.
     /// </summary>
     /// <remarks>
-    /// Called BEFORE the kill so a child that dies the instant it is killed is still seen. Guarded
-    /// like every other teardown step here, because it runs in a <c>finally</c>.
+    /// The continuation reads the fault so it is observed here as well as by <see cref="Observe"/>,
+    /// and is itself observed, so a hook that threw would not surface later as an unobserved task
+    /// exception. Nothing reports the stage if the reads never settle, which an orphaned grandchild
+    /// still holding a pipe is enough to cause.
     /// </remarks>
-    private static void WatchForSettling(Process process, Task? reads, CancelStageRecorder recorder)
-    {
-        reads?.ContinueWith(
-            static (_, state) => ((CancelStageRecorder)state!).Mark(CancelStage.ReadersDrained),
-            recorder,
+    private static void ReportReadsSettled(Task? reads, Action<CancelStage, string?> onCancelStage) =>
+        Observe(reads?.ContinueWith(
+            static (settled, state) =>
+            {
+                _ = settled.Exception;
+                ((Action<CancelStage, string?>)state!)(CancelStage.ReadersDrained, null);
+            },
+            onCancelStage,
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
+            TaskScheduler.Default));
 
-        try
+    /// <summary>
+    /// Reports <see cref="CancelStage.ProcessDisposed"/> when disposed, if it was armed first.
+    /// Diagnostic scaffolding: see <see cref="CancelStage"/>.
+    /// </summary>
+    private sealed class ProcessDisposedStamp : IDisposable
+    {
+        private readonly Action<CancelStage, string?> _onCancelStage;
+        private bool _armed;
+
+        internal ProcessDisposedStamp(Action<CancelStage, string?> onCancelStage) =>
+            _onCancelStage = onCancelStage;
+
+        /// <summary>Called on the cancel path just before the throw.</summary>
+        internal void Arm() => _armed = true;
+
+        /// <inheritdoc />
+        public void Dispose()
         {
-            process.WaitForExitAsync().ContinueWith(
-                static (settled, state) =>
-                {
-                    if (settled.IsCompletedSuccessfully)
-                    {
-                        ((CancelStageRecorder)state!).Mark(CancelStage.ChildExited);
-                    }
-                },
-                recorder,
-                CancellationToken.None,
-                TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            // No longer associated with a process; the stage simply stays unreached.
+            if (_armed)
+            {
+                _onCancelStage(CancelStage.ProcessDisposed, null);
+            }
         }
     }
 }
