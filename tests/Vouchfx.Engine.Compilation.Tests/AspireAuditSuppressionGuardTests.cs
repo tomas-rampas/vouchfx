@@ -18,13 +18,26 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// <para>
 /// This is a bounded source and text check, not proof that the advisory is unreachable.
 /// It reads every <c>*.props</c>, <c>*.targets</c>, <c>*.csproj</c>, <c>*.proj</c> and
-/// <c>nuget.config</c> file under the repository root as XML, reads every <c>*.rsp</c> file and
-/// every workflow under <c>.github/workflows</c> as plain text, and parses every
-/// <c>src/**/*.cs</c> file with Roslyn four times, with the Release and the Debug preprocessor
-/// symbols of both the <c>net10.0</c> and the <c>net8.0</c> build. The walk skips hidden directories (any name
-/// starting with a dot) and <c>bin</c>, <c>obj</c> and <c>node_modules</c>, so a local SDK or
-/// package cache is never mistaken for repository configuration. The workflows are read by
-/// explicit path for that reason.
+/// <c>nuget.config</c> file under the repository root as XML, reads every <c>*.rsp</c> file, every
+/// workflow under <c>.github/workflows</c>, every YAML, <c>.sh</c> and <c>.ps1</c> file under
+/// <c>.github/actions</c> and every <c>.sh</c> and <c>.ps1</c> file under <c>scripts</c> as plain
+/// text, and parses every <c>src/**/*.cs</c> file with Roslyn four times, with the Release and the
+/// Debug preprocessor symbols of both the <c>net10.0</c> and the <c>net8.0</c> build. Test sources
+/// are parsed the same way for the <c>DisableDashboard</c> check only, and only when the file names
+/// <c>DisableDashboard</c> or <c>DistributedApplicationOptions</c>. The walk skips hidden
+/// directories (any name starting with a dot) below its starting directory, and <c>bin</c>,
+/// <c>obj</c> and <c>node_modules</c>, so a local SDK or package cache is never mistaken for
+/// repository configuration. The workflows and actions are read by explicit path for that reason.
+/// A directory or file that disappears during the walk is treated as absent.
+/// </para>
+/// <para>
+/// Imports are checked rather than followed: every <c>&lt;Import Project&gt;</c> must end in
+/// <c>.props</c> or <c>.targets</c> and name no path segment that starts with a dot, so an imported
+/// file is always one this guard reads. The one property function accepted is
+/// <c>GetPathOfFileAbove</c>, checked on its file argument. Any other target that ends in a property
+/// expansion fails, because this guard does not evaluate MSBuild. Text is percent-decoded
+/// (<c>%XX</c>, repeatedly) before the audit patterns run, because MSBuild unescapes it
+/// first.
 /// </para>
 /// <para>
 /// It does not run NuGet audit, resolve transitive Aspire packages, or start a topology. Code
@@ -33,7 +46,25 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// and by nothing referencing YARP. Both are inferences from the code, and these tests only
 /// confirm the inferred facts still hold. A file that is not tracked but sits in the working
 /// tree is scanned too, which can only make the guard stricter. MSBuild element and attribute
-/// names are matched without regard to case, as MSBuild itself does.
+/// names are matched without regard to case, as MSBuild itself does. Using aliases and
+/// <c>using static</c> directives are collected across all parsed files, because a global using
+/// applies to every file, so an alias in one file can only make the construction-site check
+/// stricter in another. A <c>&lt;Using&gt;</c> item that names a <c>DistributedApplication</c> type
+/// is refused for the same reason.
+/// </para>
+/// <para>
+/// Accepted limits. The <c>DisableDashboard</c> check matches assignments in syntax, so a name built
+/// by reflection or a string is not seen, and an options object created by a type this guard cannot
+/// name is not either. Scripts in other languages (<c>*.py</c>) are not text-scanned. The agreement of
+/// <c>VouchfxDcpVersion</c>, the central <c>Aspire.Hosting.AppHost</c> version and each
+/// <c>Aspire.AppHost.Sdk</c> version is checked by <c>AspireVersionLockstepGuardTests</c>, not here.
+/// </para>
+/// <para>
+/// Host platforms (open maintainer decision). The shared <c>Vouchfx.Dcp.targets</c> embeds a DCP
+/// path for win-x64, linux-x64, osx-x64 and osx-arm64 only. A source build or topology test on
+/// linux-arm64, win-arm64 or linux-musl-x64 gets no DCP path and fails at topology start with
+/// Aspire's "CliPath is required". This guard does not test or widen that coverage. Whether to add
+/// platforms, or to state that they are unsupported, is for the maintainer to decide.
 /// </para>
 /// </remarks>
 public sealed class AspireAuditSuppressionGuardTests
@@ -49,6 +80,18 @@ public sealed class AspireAuditSuppressionGuardTests
     private const string PackagesPropsName = "Directory.Packages.props";
 
     private const string WorkflowsRelativePath = ".github/workflows";
+
+    private const string ActionsRelativePath = ".github/actions";
+
+    private const string ScriptsRelativePath = "scripts";
+
+    private const string CodeownersRelativePath = ".github/CODEOWNERS";
+
+    private const string DcpTargetsName = "Vouchfx.Dcp.targets";
+
+    private const string AppHostSdkName = "Aspire.AppHost.Sdk";
+
+    private const int MinimumAppHostProjects = 3;
 
     private const string TopologyRelativePath = "src/Engine/Vouchfx.Engine.Orchestration/HeadlessTopology.cs";
 
@@ -69,9 +112,17 @@ public sealed class AspireAuditSuppressionGuardTests
     /// <summary>The construction sites <see cref="TopologyRelativePath"/> is expected to contain, sorted ordinally.</summary>
     private static readonly string[] ExpectedTopologySites = { "DistributedApplication.CreateBuilder", "new DistributedApplicationOptions" };
 
+    /// <summary>Type names whose construction, or a using alias of which, is an Aspire construction site.</summary>
+    private static readonly string[] AspireTypeNames =
+    {
+        "DistributedApplication", "DistributedApplicationOptions", "DistributedApplicationBuilder", "DistributedApplicationTestingBuilder",
+    };
+
     private static readonly string[] SharedPreprocessorSymbols =
     {
-        "TRACE", "NET", "NETCOREAPP", "NETCOREAPP3_1_OR_GREATER",
+        "TRACE", "NET", "NETCOREAPP",
+        "NETCOREAPP1_0_OR_GREATER", "NETCOREAPP1_1_OR_GREATER", "NETCOREAPP2_0_OR_GREATER",
+        "NETCOREAPP2_1_OR_GREATER", "NETCOREAPP2_2_OR_GREATER", "NETCOREAPP3_0_OR_GREATER", "NETCOREAPP3_1_OR_GREATER",
         "NET5_0_OR_GREATER", "NET6_0_OR_GREATER", "NET7_0_OR_GREATER", "NET8_0_OR_GREATER",
     };
 
@@ -86,6 +137,18 @@ public sealed class AspireAuditSuppressionGuardTests
         ("net10.0", new[] { "NET10_0", "NET9_0_OR_GREATER", "NET10_0_OR_GREATER" }),
     };
 
+    private static readonly Regex PercentEscape = new("%([0-9A-Fa-f]{2})", RegexOptions.CultureInvariant);
+
+    /// <summary>MSBuild's <c>GetPathOfFileAbove</c>: the first argument names the imported file, the second a start directory.</summary>
+    private static readonly Regex GetPathOfFileAbove = new(
+        @"^\$\(\[MSBuild\]::GetPathOfFileAbove\(\s*'(?<file>[^']*)'\s*(?:,\s*'[^']*'\s*)?\)\)$",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    /// <summary>Text that turns warnings-as-errors off from a command line, a script or an action.</summary>
+    private static readonly Regex WarningsAsErrorsOffText = new(
+        @"TreatWarningsAsErrors\W{0,4}false|(?<![\w])[-/]warnaserror-(?![:\w])",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
     private static readonly Regex AuditWarningCode = new(@"(?<![0-9])NU190\d(?![0-9])", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly Regex AuditTextPattern = new(@"NuGetAudit|(?<![0-9])NU190\d(?![0-9])", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
@@ -93,6 +156,8 @@ public sealed class AspireAuditSuppressionGuardTests
     private static readonly Lazy<List<(string File, XDocument Document)>> MsBuildDocuments = new(LoadMsBuildDocuments);
 
     private static readonly Lazy<List<ParsedConfiguration>> SourceConfigurations = new(ParseSourceFiles);
+
+    private static readonly Lazy<List<ParsedConfiguration>> TestConfigurations = new(ParseTestFiles);
 
     private readonly ITestOutputHelper _output;
 
@@ -131,27 +196,83 @@ public sealed class AspireAuditSuppressionGuardTests
     [InlineData("CS1591%3bNU1903")]
     [InlineData("-p:NoWarn=\"NU1603%3BNU1903\"")]
     [InlineData("nu1903")]
+    [InlineData("CS1591;%20NU1903")]
+    [InlineData("CS1591%3B%20NU1904")]
+    [InlineData("N%55190%33")]
+    [InlineData("%4eU1903")]
+    [InlineData("%254eU1903")]
     public void GivenAuditWarningCodeText_WhenPatternsAreMatched_ThenBothPatternsMatch(string text)
     {
-        Assert.Matches(AuditWarningCode, text);
-        Assert.Matches(AuditTextPattern, text);
+        Assert.True(FindAuditWarningCode(text).Success, $"The warning-code pattern missed '{text}'.");
+        Assert.True(FindAuditText(text).Success, $"The text pattern missed '{text}'.");
     }
 
-    [Fact]
-    public void GivenNuGetAuditSwitch_WhenTextPatternIsMatched_ThenItMatchesButTheWarningCodePatternDoesNot()
+    [Theory]
+    [InlineData("-p:NuGetAudit=false")]
+    [InlineData("-p:NuGet%41udit=false")]
+    [InlineData("%4EuGetAuditLevel")]
+    public void GivenNuGetAuditSwitch_WhenTextPatternIsMatched_ThenItMatchesButTheWarningCodePatternDoesNot(string text)
     {
-        const string text = "-p:NuGetAudit=false";
-
-        Assert.Matches(AuditTextPattern, text);
-        Assert.DoesNotMatch(AuditWarningCode, text);
+        Assert.True(FindAuditText(text).Success, $"The text pattern missed '{text}'.");
+        Assert.False(FindAuditWarningCode(text).Success, $"The warning-code pattern matched '{text}'.");
     }
 
     [Theory]
     [InlineData("NU19034")]
+    [InlineData("NU1903%30")]
+    [InlineData("1NU1903")]
     public void GivenLongerNumericCode_WhenPatternsAreMatched_ThenNeitherPatternMatches(string text)
     {
-        Assert.DoesNotMatch(AuditWarningCode, text);
-        Assert.DoesNotMatch(AuditTextPattern, text);
+        Assert.False(FindAuditWarningCode(text).Success, $"The warning-code pattern matched '{text}'.");
+        Assert.False(FindAuditText(text).Success, $"The text pattern matched '{text}'.");
+    }
+
+    [Theory]
+    [InlineData("-p:TreatWarningsAsErrors=false", true)]
+    [InlineData("/p:TreatWarningsAsErrors=\"False\"", true)]
+    [InlineData("-p:TreatWarningsAsErrors=%66alse", true)]
+    [InlineData("export TREATWARNINGSASERRORS: false", true)]
+    [InlineData("dotnet build -warnaserror-", true)]
+    [InlineData("dotnet build /warnaserror- --no-restore", true)]
+    [InlineData("-p:TreatWarningsAsErrors=true", false)]
+    [InlineData("dotnet build -warnaserror", false)]
+    [InlineData("dotnet build -warnaserror+", false)]
+    [InlineData("TreatWarningsAsErrors is true, not false", false)]
+    public void GivenWarningsAsErrorsText_WhenPatternIsMatched_ThenOnlyTurningItOffMatches(string text, bool expected)
+    {
+        Assert.Equal(expected, WarningsAsErrorsOffText.IsMatch(DecodeEscapes(text)));
+    }
+
+    [Theory]
+    [InlineData("Vouchfx.Dcp.targets", null)]
+    [InlineData("..\\..\\src\\Cli\\Vouchfx.Cli\\Vouchfx.Dcp.targets", null)]
+    [InlineData("$(MSBuildThisFileDirectory)../build/shared.props", null)]
+    [InlineData("build/*.TARGETS", null)]
+    [InlineData("$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))", null)]
+    [InlineData("build/.hidden/x.props", "hidden path segment")]
+    [InlineData("build/%2Ehidden/x.props", "hidden path segment")]
+    [InlineData("..\\.hidden\\x.targets", "hidden path segment")]
+    [InlineData(".x.props", "hidden path segment")]
+    [InlineData("build/x.txt", "does not end in .props or .targets")]
+    [InlineData("build/x.props.txt", "does not end in .props or .targets")]
+    [InlineData("$(SomeProperty)", "does not end in .props or .targets")]
+    [InlineData("$([MSBuild]::GetPathOfFileAbove('x.txt'))", "does not end in .props or .targets")]
+    [InlineData("$([MSBuild]::GetPathOfFileAbove('.cfg/x.props'))", "hidden path segment")]
+    [InlineData("", "no Project")]
+    [InlineData(null, "no Project")]
+    public void GivenImportTarget_WhenItIsChecked_ThenOnlyVisibleProjectFilesPass(string? project, string? expectedProblem)
+    {
+        var problem = ImportProblem(project);
+
+        if (expectedProblem is null)
+        {
+            Assert.Null(problem);
+        }
+        else
+        {
+            Assert.NotNull(problem);
+            Assert.Contains(expectedProblem, problem, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -176,7 +297,7 @@ public sealed class AspireAuditSuppressionGuardTests
 
                 foreach (var text in texts)
                 {
-                    var match = AuditWarningCode.Match(text);
+                    var match = FindAuditWarningCode(text);
                     if (match.Success)
                     {
                         violations.Add($"{file}: <{name}> mentions {match.Value}");
@@ -195,41 +316,221 @@ public sealed class AspireAuditSuppressionGuardTests
     }
 
     [Fact]
-    public void GivenResponseFilesAndWorkflows_WhenTextIsScanned_ThenNoAuditSettingIsChanged()
+    public void GivenTextFiles_WhenTheyAreScanned_ThenNoAuditSettingIsChangedAndWarningsStayErrors()
     {
         var root = RepoRoot.Resolve();
-        var files = EnumerateFiles(root, p => p.EndsWith(".rsp", StringComparison.OrdinalIgnoreCase));
-        var workflows = Path.Combine(root, WorkflowsRelativePath);
-        if (Directory.Exists(workflows))
-        {
-            files.AddRange(Directory
-                .EnumerateFiles(workflows)
-                .Where(p => p.EndsWith(".yml", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(p => p, StringComparer.Ordinal));
-        }
+        var files = TextScanFiles(root);
 
         var violations = new List<string>();
+        var warningViolations = new List<string>();
         foreach (var path in files)
         {
-            var lines = File.ReadAllLines(path);
+            var lines = TryReadAllLines(path);
             for (var index = 0; index < lines.Length; index++)
             {
-                var match = AuditTextPattern.Match(lines[index]);
+                var match = FindAuditText(lines[index]);
                 if (match.Success)
                 {
                     violations.Add($"{Relative(root, path)}:{index + 1}: {match.Value}");
                 }
+
+                var off = WarningsAsErrorsOffText.Match(DecodeEscapes(lines[index]));
+                if (off.Success)
+                {
+                    warningViolations.Add($"{Relative(root, path)}:{index + 1}: {off.Value}");
+                }
             }
         }
 
-        _output.WriteLine($"Scanned {files.Count} response and workflow files; findings: {violations.Count}");
+        _output.WriteLine($"Scanned {files.Count} response, workflow, action and script files; findings: {violations.Count + warningViolations.Count}");
         Assert.True(
             violations.Count == 0,
-            "NuGet audit settings must not be changed from a response file (*.rsp) or a workflow, for example with "
+            "NuGet audit settings must not be changed from a response file (*.rsp), a workflow, a composite action "
+            + "or a script (*.sh, *.ps1), for example with "
             + "-p:NuGetAudit=false, /nowarn:NU1903 or a NuGetAudit environment variable, because that would hide "
             + $"advisories other than {AdvisoryId} where this guard's MSBuild checks cannot see it. Any change, "
             + "including a stricter one, needs a deliberate edit of this test. Remove these: "
             + $"[{string.Join("; ", violations)}]. {DismissalHint}");
+        Assert.True(
+            warningViolations.Count == 0,
+            "Warnings must stay errors. Turning TreatWarningsAsErrors off, or passing -warnaserror-, from a response "
+            + "file, workflow, action or script would turn NU190x audit warnings back into warnings. Remove these: "
+            + $"[{string.Join("; ", warningViolations)}]. {DismissalHint}");
+    }
+
+    [Fact]
+    public void GivenARepositoryLayout_WhenTextScanFilesAreListed_ThenActionsAndScriptsAreIncludedAndHiddenOnesAreNot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vouchfx-guard-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            foreach (var relative in new[]
+            {
+                ".github/workflows/build.yml", ".github/workflows/notes.txt", ".github/actions/setup/action.yml",
+                ".github/actions/setup/nested/run.sh", ".github/actions/setup/.hidden/skipped.sh", "scripts/a.sh",
+                "scripts/ci/b.ps1", "scripts/ci/c.py", "scripts/node_modules/d.sh", "scripts/.cache/e.ps1", "tools/f.rsp",
+                "tools/g.sh",
+            })
+            {
+                var path = Path.Combine(root, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, "# fixture\n");
+            }
+
+            var found = TextScanFiles(root).Select(p => Relative(root, p)).ToList();
+
+            Assert.Equal(
+                new List<string>
+                {
+                    ".github/actions/setup/action.yml", ".github/actions/setup/nested/run.sh", ".github/workflows/build.yml",
+                    "scripts/a.sh", "scripts/ci/b.ps1", "tools/f.rsp",
+                },
+                found.OrderBy(p => p, StringComparer.Ordinal).ToList());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void GivenTheRepository_WhenTextScanFilesAreListed_ThenWorkflowsAndScriptsAreFound()
+    {
+        var root = RepoRoot.Resolve();
+        var found = TextScanFiles(root).Select(p => Relative(root, p)).ToList();
+
+        Assert.Contains(found, p => p.StartsWith(WorkflowsRelativePath + "/", StringComparison.Ordinal));
+        Assert.Contains(found, p => p.StartsWith(ScriptsRelativePath + "/", StringComparison.Ordinal) && p.EndsWith(".sh", StringComparison.Ordinal));
+        Assert.Contains(found, p => p.StartsWith(ScriptsRelativePath + "/", StringComparison.Ordinal) && p.EndsWith(".ps1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GivenADirectoryRemovedDuringTheWalk_WhenFilesAreEnumerated_ThenTheWalkSkipsItAndKeepsTheRest()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vouchfx-guard-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            foreach (var name in new[] { "a", "b" })
+            {
+                Directory.CreateDirectory(Path.Combine(root, name));
+                File.WriteAllText(Path.Combine(root, name, "f.txt"), "x");
+            }
+
+            // Both children are queued before either is walked. The first file seen deletes the other
+            // directory, which is what a parallel run clearing a build directory does.
+            var deleted = false;
+            var found = EnumerateFiles(root, path =>
+            {
+                if (!deleted)
+                {
+                    deleted = true;
+                    var other = string.Equals(Path.GetFileName(Path.GetDirectoryName(path)), "a", StringComparison.Ordinal) ? "b" : "a";
+                    Directory.Delete(Path.Combine(root, other), recursive: true);
+                }
+
+                return true;
+            });
+
+            Assert.Single(found);
+            Assert.Empty(EnumerateFiles(Path.Combine(root, "missing"), _ => true));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void GivenMsBuildFiles_WhenImportsAreScanned_ThenEveryImportIsAVisibleProjectFile()
+    {
+        var violations = new List<string>();
+        var imports = 0;
+        foreach (var (file, document) in MsBuildDocuments.Value)
+        {
+            foreach (var element in document.Descendants().Where(e => NameIs(e, "Import")))
+            {
+                imports++;
+                var project = AttributeValue(element, "Project");
+                var problem = ImportProblem(project);
+                if (problem is not null)
+                {
+                    violations.Add($"{file}: <Import Project=\"{project}\"> {problem}");
+                }
+            }
+        }
+
+        _output.WriteLine($"Imports scanned: {imports}; findings: {violations.Count}");
+        Assert.True(imports > 0, "No <Import> element was found in any MSBuild file, so the search is probably broken.");
+        Assert.True(
+            violations.Count == 0,
+            "Every <Import Project> must end in .props or .targets and have no path segment that starts with a dot, "
+            + "so that an imported file is one the audit guard reads: an audit override in a file of another "
+            + $"extension, or in a hidden directory, would not be seen. Found: [{string.Join("; ", violations)}]. {DismissalHint}");
+    }
+
+    [Fact]
+    public void GivenMsBuildFiles_WhenTreatWarningsAsErrorsIsScanned_ThenNoFileTurnsItOffAndTheRootEnablesIt()
+    {
+        var off = new List<string>();
+        foreach (var (file, document) in MsBuildDocuments.Value)
+        {
+            foreach (var element in document.Descendants().Where(e => NameIs(e, "TreatWarningsAsErrors")))
+            {
+                var value = DecodeEscapes(element.Value).Trim();
+                if (!string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
+                {
+                    off.Add($"{file}: <TreatWarningsAsErrors> is '{value}'");
+                }
+            }
+        }
+
+        Assert.True(
+            off.Count == 0,
+            "TreatWarningsAsErrors must only ever be the literal true. A project setting it to false, or to a value "
+            + $"this guard cannot read, would turn NU190x audit warnings back into warnings. Found: [{string.Join("; ", off)}]. "
+            + DismissalHint);
+
+        var rootProps = Assert.Single(MsBuildDocuments.Value, d => IsRootProps(d.File)).Document;
+        Assert.Contains(
+            rootProps.Descendants().Where(e => NameIs(e, "TreatWarningsAsErrors")),
+            e => string.Equals(e.Value.Trim(), "true", StringComparison.OrdinalIgnoreCase)
+                && !e.AncestorsAndSelf().Any(a => AttributeValue(a, "Condition") is not null));
+    }
+
+    [Fact]
+    public void GivenCodeowners_WhenProtectedPathsAreListed_ThenTheAuditContractFilesShareThePackagesOwner()
+    {
+        var lines = File.ReadAllLines(Path.Combine(RepoRoot.Resolve(), CodeownersRelativePath))
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0 && !l.StartsWith('#'))
+            .Select(l => l.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            .ToList();
+
+        var catchAll = lines.FindIndex(l => l[0] == "*");
+        var packages = lines.FindIndex(l => l[0] == "/" + PackagesPropsName);
+        Assert.True(catchAll >= 0 && packages > catchAll, $"{CodeownersRelativePath} must list /{PackagesPropsName} after the catch-all.");
+        var owners = lines[packages].Skip(1).ToList();
+        Assert.NotEmpty(owners);
+
+        var missing = new List<string>();
+        foreach (var path in new[]
+        {
+            "/.github/dependabot.yml", "/" + RootPropsName, "/tests/Vouchfx.Engine.Compilation.Tests/AspireAuditSuppressionGuardTests.cs",
+        })
+        {
+            var index = lines.FindIndex(l => l[0] == path);
+            if (index <= catchAll || !lines[index].Skip(1).SequenceEqual(owners, StringComparer.Ordinal))
+            {
+                missing.Add(path);
+            }
+        }
+
+        Assert.True(
+            missing.Count == 0,
+            $"{CodeownersRelativePath} must give each of [{string.Join(", ", missing)}] the same owners as /{PackagesPropsName} "
+            + $"([{string.Join(" ", owners)}]), on its own line after the catch-all. .github/dependabot.yml holds the Aspire "
+            + "and YamlDotNet update holds that the audit suppression's contract depends on. "
+            + DismissalHint);
     }
 
     [Fact]
@@ -361,18 +662,7 @@ public sealed class AspireAuditSuppressionGuardTests
 
         foreach (var configuration in SourceConfigurations.Value)
         {
-            var sites = new List<(string File, int Line, string Site)>();
-            foreach (var (file, root) in configuration.Files)
-            {
-                foreach (var node in root.DescendantNodes())
-                {
-                    var site = DescribeConstructionSite(node);
-                    if (site is not null)
-                    {
-                        sites.Add((file, LineOf(node), site));
-                    }
-                }
-            }
+            var sites = FindConstructionSites(configuration.Files);
 
             _output.WriteLine($"Aspire construction sites ({configuration.Name}): "
                 + string.Join("; ", sites.Select(s => $"{s.File}:{s.Line}: {s.Site}")));
@@ -413,49 +703,7 @@ public sealed class AspireAuditSuppressionGuardTests
 
         foreach (var configuration in SourceConfigurations.Value)
         {
-            var badAssignments = new List<string>();
-            var topologyTrueAssignments = 0;
-            var optionsWithoutTrue = new List<string>();
-
-            foreach (var (file, root) in configuration.Files)
-            {
-                foreach (var assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
-                {
-                    if (!IsDisableDashboardTarget(assignment.Left))
-                    {
-                        continue;
-                    }
-
-                    if (assignment.IsKind(SyntaxKind.SimpleAssignmentExpression)
-                        && assignment.Right.IsKind(SyntaxKind.TrueLiteralExpression))
-                    {
-                        if (string.Equals(file, TopologyRelativePath, StringComparison.Ordinal))
-                        {
-                            topologyTrueAssignments++;
-                        }
-
-                        continue;
-                    }
-
-                    badAssignments.Add($"{file}:{LineOf(assignment)}: {assignment.ToString().Replace('\n', ' ').Trim()}");
-                }
-
-                foreach (var creation in root.DescendantNodes().OfType<BaseObjectCreationExpressionSyntax>())
-                {
-                    if (!IsOptionsCreation(creation))
-                    {
-                        continue;
-                    }
-
-                    var setsTrue = creation.Initializer?.Expressions
-                        .OfType<AssignmentExpressionSyntax>()
-                        .Any(a => IsDisableDashboardTarget(a.Left) && a.Right.IsKind(SyntaxKind.TrueLiteralExpression)) ?? false;
-                    if (!setsTrue)
-                    {
-                        optionsWithoutTrue.Add($"{file}:{LineOf(creation)}");
-                    }
-                }
-            }
+            var (badAssignments, optionsWithoutTrue, topologyTrueAssignments) = InspectDashboardAssignments(configuration.Files);
 
             Assert.True(
                 badAssignments.Count == 0,
@@ -476,41 +724,310 @@ public sealed class AspireAuditSuppressionGuardTests
         }
     }
 
-    private static string? DescribeConstructionSite(SyntaxNode node)
+    [Fact]
+    public void GivenSuppressionIsPresent_WhenTestSourceIsParsed_ThenDisableDashboardIsOnlyEverAssignedTrue()
+    {
+        if (!RootSuppressionIsPresent())
+        {
+            return;
+        }
+
+        foreach (var configuration in TestConfigurations.Value)
+        {
+            var (badAssignments, optionsWithoutTrue, _) = InspectDashboardAssignments(configuration.Files);
+
+            Assert.True(
+                badAssignments.Count == 0,
+                $"The {AdvisoryId} suppression is justified by DisableDashboard only ever being set to the literal true, "
+                + $"in test sources too. Found other assignments under tests in the {configuration.Name} build: "
+                + $"[{string.Join("; ", badAssignments)}]. Restore the literal true, or re-assess the advisory path and get "
+                + "a maintainer decision.");
+            Assert.True(
+                optionsWithoutTrue.Count == 0,
+                $"Every DistributedApplicationOptions under tests must set DisableDashboard = true in its initialiser, because "
+                + $"the {AdvisoryId} suppression depends on it. Missing in the {configuration.Name} build at: "
+                + $"[{string.Join("; ", optionsWithoutTrue)}].");
+        }
+    }
+
+    [Fact]
+    public void GivenSuppressionIsPresent_WhenPackagesAreScanned_ThenNoAspireDashboardPackageIsReferenced()
+    {
+        if (!RootSuppressionIsPresent())
+        {
+            return;
+        }
+
+        var dashboard = new List<string>();
+        foreach (var (file, document) in MsBuildDocuments.Value)
+        {
+            foreach (var element in document.Descendants().Where(e => PackageElements.Contains(e.Name.LocalName, StringComparer.OrdinalIgnoreCase)))
+            {
+                var id = DecodeEscapes(PackageId(element));
+                if (id.StartsWith("Aspire.Dashboard", StringComparison.OrdinalIgnoreCase))
+                {
+                    dashboard.Add($"{file}: {id}");
+                }
+            }
+        }
+
+        Assert.True(
+            dashboard.Count == 0,
+            $"The {AdvisoryId} suppression assumes no Aspire.Dashboard.* package is restored: Vouchfx.Dcp.targets skips the "
+            + $"SDK's default references so no dashboard package enters the restore graph. Found: [{string.Join("; ", dashboard)}]. "
+            + "Remove the reference, or re-assess the advisory path and get a maintainer decision.");
+    }
+
+    [Fact]
+    public void GivenSuppressionIsPresent_WhenProjectsAreScanned_ThenEveryAspireHostImportsTheDcpTargets()
+    {
+        if (!RootSuppressionIsPresent())
+        {
+            return;
+        }
+
+        var hosts = 0;
+        var missing = new List<string>();
+        foreach (var (file, document) in MsBuildDocuments.Value.Where(d => d.File.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (!IsAspireHost(document))
+            {
+                continue;
+            }
+
+            hosts++;
+            var importsTargets = document
+                .Descendants()
+                .Where(e => NameIs(e, "Import"))
+                .Where(e => !e.AncestorsAndSelf().Any(a => AttributeValue(a, "Condition") is not null))
+                .Any(e => string.Equals(
+                    DecodeEscapes(AttributeValue(e, "Project") ?? string.Empty).Trim().Split('/', '\\')[^1],
+                    DcpTargetsName,
+                    StringComparison.OrdinalIgnoreCase));
+            if (!importsTargets)
+            {
+                missing.Add(file);
+            }
+        }
+
+        _output.WriteLine("Aspire hosts: " + hosts);
+        Assert.True(
+            hosts >= MinimumAppHostProjects,
+            $"Only {hosts} Aspire host projects were found, expected at least {MinimumAppHostProjects}. The search is probably "
+            + "broken, so this guard would check nothing.");
+        Assert.True(
+            missing.Count == 0,
+            $"Every project that uses {AppHostSdkName} or sets IsAspireHost must import {DcpTargetsName} unconditionally. "
+            + "Without it the SDK's default references restore Aspire.Dashboard.Sdk, which the "
+            + $"{AdvisoryId} suppression assumes is never restored. Missing in: [{string.Join("; ", missing)}].");
+    }
+
+    [Fact]
+    public void GivenSuppressionIsPresent_WhenMsBuildItemsAreScanned_ThenNoUsingItemNamesAnAspireApplicationType()
+    {
+        if (!RootSuppressionIsPresent())
+        {
+            return;
+        }
+
+        var usings = new List<string>();
+        foreach (var (file, document) in MsBuildDocuments.Value)
+        {
+            foreach (var element in document.Descendants().Where(e => NameIs(e, "Using")))
+            {
+                var include = DecodeEscapes(AttributeValue(element, "Include") ?? string.Empty);
+                if (AspireTypeNames.Any(n => include.Contains(n, StringComparison.OrdinalIgnoreCase)))
+                {
+                    usings.Add($"{file}: <Using Include=\"{include}\">");
+                }
+            }
+        }
+
+        Assert.True(
+            usings.Count == 0,
+            "A <Using> item would import a DistributedApplication type into every file without a using directive this "
+            + $"guard's syntax checks can see. Found: [{string.Join("; ", usings)}]. Remove it, or re-assess the advisory "
+            + "path and get a maintainer decision.");
+    }
+
+    [Fact]
+    public void GivenSourceWithAliasesAndStaticUsings_WhenConstructionSitesAreFound_ThenEveryFormIsRecognised()
+    {
+        var cases = new (string Name, string[] Sources, string Expected)[]
+        {
+            ("bare CreateBuilder after using static",
+                new[] { "using static Aspire.Hosting.DistributedApplication;\nclass C { void M(string[] args) { var b = CreateBuilder(args); } }" },
+                "DistributedApplication.CreateBuilder"),
+            ("bare CreateSlimBuilder after using static",
+                new[] { "using static Aspire.Hosting.DistributedApplication;\nclass C { void M(string[] args) { CreateSlimBuilder(args); } }" },
+                "DistributedApplication.CreateSlimBuilder"),
+            ("global using static in another file",
+                new[] { "global using static Aspire.Hosting.DistributedApplication;", "class C { void M() { CreateBuilder(); } }" },
+                "DistributedApplication.CreateBuilder"),
+            ("using alias of DistributedApplication",
+                new[] { "using X = Aspire.Hosting.DistributedApplication;\nclass C { void M(string[] a) { X.CreateBuilder(a); } }" },
+                "DistributedApplication.CreateBuilder"),
+            ("using alias of the options type",
+                new[] { "using O = Aspire.Hosting.DistributedApplicationOptions;\nclass C { object M() => new O(); }" },
+                "new DistributedApplicationOptions"),
+            ("using alias of the options type, target-typed",
+                new[] { "using O = Aspire.Hosting.DistributedApplicationOptions;\nclass C { O M() { return new(); } }" },
+                "new DistributedApplicationOptions"),
+            ("using alias of the builder type",
+                new[] { "using B = Aspire.Hosting.DistributedApplicationBuilder;\nclass C { object M() => new B(null); }" },
+                "new DistributedApplicationBuilder"),
+            ("using alias of the testing builder",
+                new[] { "using T = Aspire.Hosting.Testing.DistributedApplicationTestingBuilder;\nclass C { void M() { T.CreateAsync<object>(); } }" },
+                "DistributedApplicationTestingBuilder"),
+            ("qualified call",
+                new[] { "class C { void M() { Aspire.Hosting.DistributedApplication.CreateBuilder(); } }" },
+                "DistributedApplication.CreateBuilder"),
+            ("code under a legacy NETCOREAPP symbol",
+                new[] { "#if NETCOREAPP2_1_OR_GREATER\nclass C { void M() { DistributedApplication.CreateBuilder(); } }\n#endif" },
+                "DistributedApplication.CreateBuilder"),
+        };
+
+        foreach (var (name, sources, expected) in cases)
+        {
+            foreach (var (configuration, options) in ParseConfigurations())
+            {
+                var files = sources
+                    .Select((code, index) => ($"case{index}.cs", CSharpSyntaxTree.ParseText(code, options).GetRoot()))
+                    .Cast<(string File, SyntaxNode Root)>()
+                    .ToList();
+                var sites = FindConstructionSites(files).Select(s => s.Site).ToList();
+
+                Assert.True(sites.Contains(expected, StringComparer.Ordinal), $"'{name}' was not recognised as '{expected}' in the {configuration} build. Sites: [{string.Join(", ", sites)}].");
+            }
+        }
+
+        // Names that merely look alike are not construction sites.
+        var unrelated = new[]
+        {
+            "using static System.Console;\nclass C { void M() { CreateBuilder(); } }",
+            "class C { void M() { WebApplication.CreateBuilder(); Host.CreateDefaultBuilder(); } }",
+        };
+        foreach (var code in unrelated)
+        {
+            var files = new[] { ("unrelated.cs", CSharpSyntaxTree.ParseText(code).GetRoot()) }.Cast<(string File, SyntaxNode Root)>().ToList();
+            Assert.Empty(FindConstructionSites(files));
+        }
+    }
+
+    private static List<(string File, int Line, string Site)> FindConstructionSites(IReadOnlyList<(string File, SyntaxNode Root)> files)
+    {
+        var imports = ImportedNames.From(files.Select(f => f.Root));
+        var sites = new List<(string File, int Line, string Site)>();
+        foreach (var (file, root) in files)
+        {
+            foreach (var node in root.DescendantNodes())
+            {
+                var site = DescribeConstructionSite(node, imports);
+                if (site is not null)
+                {
+                    sites.Add((file, LineOf(node), site));
+                }
+            }
+        }
+
+        return sites;
+    }
+
+    private static (List<string> BadAssignments, List<string> OptionsWithoutTrue, int TopologyTrueAssignments) InspectDashboardAssignments(
+        IReadOnlyList<(string File, SyntaxNode Root)> files)
+    {
+        var imports = ImportedNames.From(files.Select(f => f.Root));
+        var badAssignments = new List<string>();
+        var optionsWithoutTrue = new List<string>();
+        var topologyTrueAssignments = 0;
+
+        foreach (var (file, root) in files)
+        {
+            foreach (var assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+            {
+                if (!IsDisableDashboardTarget(assignment.Left))
+                {
+                    continue;
+                }
+
+                if (assignment.IsKind(SyntaxKind.SimpleAssignmentExpression)
+                    && assignment.Right.IsKind(SyntaxKind.TrueLiteralExpression))
+                {
+                    if (string.Equals(file, TopologyRelativePath, StringComparison.Ordinal))
+                    {
+                        topologyTrueAssignments++;
+                    }
+
+                    continue;
+                }
+
+                badAssignments.Add($"{file}:{LineOf(assignment)}: {assignment.ToString().Replace('\n', ' ').Trim()}");
+            }
+
+            foreach (var creation in root.DescendantNodes().OfType<BaseObjectCreationExpressionSyntax>())
+            {
+                if (!IsOptionsCreation(creation, imports))
+                {
+                    continue;
+                }
+
+                var setsTrue = creation.Initializer?.Expressions
+                    .OfType<AssignmentExpressionSyntax>()
+                    .Any(a => IsDisableDashboardTarget(a.Left) && a.Right.IsKind(SyntaxKind.TrueLiteralExpression)) ?? false;
+                if (!setsTrue)
+                {
+                    optionsWithoutTrue.Add($"{file}:{LineOf(creation)}");
+                }
+            }
+        }
+
+        return (badAssignments, optionsWithoutTrue, topologyTrueAssignments);
+    }
+
+    private static string? DescribeConstructionSite(SyntaxNode node, ImportedNames imports)
     {
         switch (node)
         {
             case ObjectCreationExpressionSyntax creation:
-                var typeName = SimpleName(creation.Type);
+                var typeName = imports.Canonical(SimpleName(creation.Type));
                 return typeName is "DistributedApplicationOptions" or "DistributedApplicationBuilder"
                     ? "new " + typeName
                     : null;
             case ImplicitObjectCreationExpressionSyntax implicitCreation:
-                var targetName = ImplicitTargetTypeName(implicitCreation);
+                var targetName = imports.Canonical(ImplicitTargetTypeName(implicitCreation, imports));
                 return targetName is "DistributedApplicationOptions" or "DistributedApplicationBuilder"
                     ? "new " + targetName
                     : null;
-            case InvocationExpressionSyntax invocation when DescribeBuilderInvocation(invocation) is { } description:
+            case InvocationExpressionSyntax invocation when DescribeBuilderInvocation(invocation, imports) is { } description:
                 return description;
-            case IdentifierNameSyntax { Identifier.ValueText: "DistributedApplicationTestingBuilder" }:
+            case IdentifierNameSyntax identifier when imports.Canonical(identifier.Identifier.ValueText) == "DistributedApplicationTestingBuilder":
                 return "DistributedApplicationTestingBuilder";
             default:
                 return null;
         }
     }
 
-    private static string? DescribeBuilderInvocation(InvocationExpressionSyntax invocation) =>
-        invocation.Expression is MemberAccessExpressionSyntax { Name.Identifier.ValueText: "CreateBuilder" or "CreateSlimBuilder" } access
-        && SimpleName(access.Expression) == "DistributedApplication"
-            ? "DistributedApplication." + access.Name.Identifier.ValueText
-            : null;
+    private static string? DescribeBuilderInvocation(InvocationExpressionSyntax invocation, ImportedNames imports)
+    {
+        switch (invocation.Expression)
+        {
+            case MemberAccessExpressionSyntax { Name.Identifier.ValueText: "CreateBuilder" or "CreateSlimBuilder" } access
+                when imports.Canonical(SimpleName(access.Expression)) == "DistributedApplication":
+                return "DistributedApplication." + access.Name.Identifier.ValueText;
+            case IdentifierNameSyntax { Identifier.ValueText: "CreateBuilder" or "CreateSlimBuilder" } bare
+                when imports.StaticApplication:
+                return "DistributedApplication." + bare.Identifier.ValueText;
+            default:
+                return null;
+        }
+    }
 
     /// <summary>
     /// Names the type a target-typed <c>new()</c> creates, when the syntax states it: a local or
     /// field declaration, a property initialiser, a parameter default, a return from a member
     /// with a declared type, or an argument to <c>DistributedApplication.CreateBuilder</c>.
     /// </summary>
-    private static string? ImplicitTargetTypeName(ImplicitObjectCreationExpressionSyntax creation)
+    private static string? ImplicitTargetTypeName(ImplicitObjectCreationExpressionSyntax creation, ImportedNames imports)
     {
         switch (creation.Parent)
         {
@@ -521,7 +1038,7 @@ public sealed class AspireAuditSuppressionGuardTests
             case EqualsValueClauseSyntax { Parent: ParameterSyntax { Type: { } parameterType } }:
                 return SimpleName(parameterType);
             case ArgumentSyntax { Parent: ArgumentListSyntax { Parent: InvocationExpressionSyntax invocation } }
-                when DescribeBuilderInvocation(invocation) is not null:
+                when DescribeBuilderInvocation(invocation, imports) is not null:
                 return "DistributedApplicationOptions";
             case ReturnStatementSyntax or ArrowExpressionClauseSyntax:
                 var member = creation.Ancestors().FirstOrDefault(a =>
@@ -540,13 +1057,134 @@ public sealed class AspireAuditSuppressionGuardTests
         }
     }
 
-    private static bool IsOptionsCreation(BaseObjectCreationExpressionSyntax creation) =>
+    private static bool IsOptionsCreation(BaseObjectCreationExpressionSyntax creation, ImportedNames imports) =>
         creation switch
         {
-            ObjectCreationExpressionSyntax typed => SimpleName(typed.Type) == "DistributedApplicationOptions",
-            ImplicitObjectCreationExpressionSyntax implicitCreation => ImplicitTargetTypeName(implicitCreation) == "DistributedApplicationOptions",
+            ObjectCreationExpressionSyntax typed => imports.Canonical(SimpleName(typed.Type)) == "DistributedApplicationOptions",
+            ImplicitObjectCreationExpressionSyntax implicitCreation =>
+                imports.Canonical(ImplicitTargetTypeName(implicitCreation, imports)) == "DistributedApplicationOptions",
             _ => false,
         };
+
+    private static string DecodeEscapes(string text)
+    {
+        // MSBuild unescapes %XX before it reads a value, and an escape can itself be escaped, so decode until stable.
+        for (var pass = 0; pass < 4; pass++)
+        {
+            var decoded = PercentEscape.Replace(text, m => ((char)Convert.ToInt32(m.Groups[1].Value, 16)).ToString());
+            if (string.Equals(decoded, text, StringComparison.Ordinal))
+            {
+                break;
+            }
+
+            text = decoded;
+        }
+
+        return text;
+    }
+
+    private static Match FindAuditWarningCode(string text) => AuditWarningCode.Match(DecodeEscapes(text));
+
+    private static Match FindAuditText(string text) => AuditTextPattern.Match(DecodeEscapes(text));
+
+    /// <summary>Why an <c>&lt;Import Project&gt;</c> value would hide a file from this guard, or null when it would not.</summary>
+    private static string? ImportProblem(string? project)
+    {
+        var target = DecodeEscapes(project ?? string.Empty).Trim();
+        if (target.Length == 0)
+        {
+            return "has no Project attribute";
+        }
+
+        var function = GetPathOfFileAbove.Match(target);
+        if (function.Success)
+        {
+            target = function.Groups["file"].Value;
+        }
+
+        if (!target.EndsWith(".props", StringComparison.OrdinalIgnoreCase) && !target.EndsWith(".targets", StringComparison.OrdinalIgnoreCase))
+        {
+            return "does not end in .props or .targets";
+        }
+
+        var hidden = target.Split('/', '\\').FirstOrDefault(segment => segment.StartsWith('.') && segment is not "." and not "..");
+        return hidden is null ? null : $"has the hidden path segment '{hidden}'";
+    }
+
+    /// <summary>True when the project uses the Aspire AppHost SDK, in any of its spellings, or sets <c>IsAspireHost</c>.</summary>
+    private static bool IsAspireHost(XDocument document)
+    {
+        var sdkNames = document.Descendants()
+            .Where(e => NameIs(e, "Sdk") || NameIs(e, "Import"))
+            .Select(e => AttributeValue(e, NameIs(e, "Sdk") ? "Name" : "Sdk"))
+            .Concat((document.Root is { } project ? AttributeValue(project, "Sdk") : null)?.Split(';') ?? Array.Empty<string>())
+            .Select(sdk => (sdk ?? string.Empty).Trim().Split('/')[0]);
+        var setsHostFlag = document.Descendants()
+            .Where(e => NameIs(e, "IsAspireHost"))
+            .Any(e => !string.Equals(DecodeEscapes(e.Value).Trim(), "false", StringComparison.OrdinalIgnoreCase));
+
+        return setsHostFlag || sdkNames.Any(n => string.Equals(n, AppHostSdkName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string[] TryReadAllLines(string path)
+    {
+        try
+        {
+            return File.ReadAllLines(path);
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    /// <summary>
+    /// Every file this guard reads as text: response files under the root, workflows, composite
+    /// actions (YAML, <c>.sh</c>, <c>.ps1</c>) and scripts (<c>.sh</c>, <c>.ps1</c>).
+    /// </summary>
+    private static List<string> TextScanFiles(string root)
+    {
+        static bool Has(string path, params string[] extensions) =>
+            extensions.Any(e => path.EndsWith(e, StringComparison.OrdinalIgnoreCase));
+
+        var files = EnumerateFiles(root, p => Has(p, ".rsp"));
+        files.AddRange(EnumerateFiles(Path.Combine(root, WorkflowsRelativePath), p => Has(p, ".yml", ".yaml")));
+        files.AddRange(EnumerateFiles(Path.Combine(root, ActionsRelativePath), p => Has(p, ".yml", ".yaml", ".sh", ".ps1")));
+        files.AddRange(EnumerateFiles(Path.Combine(root, ScriptsRelativePath), p => Has(p, ".sh", ".ps1")));
+        return files.Distinct(StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>The using aliases and static usings of a set of parsed files that name an Aspire application type.</summary>
+    private sealed record ImportedNames(IReadOnlyDictionary<string, string> Aliases, bool StaticApplication)
+    {
+        public static ImportedNames From(IEnumerable<SyntaxNode> roots)
+        {
+            var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+            var staticApplication = false;
+            foreach (var directive in roots.SelectMany(r => r.DescendantNodes().OfType<UsingDirectiveSyntax>()))
+            {
+                var name = SimpleName(directive.NamespaceOrType);
+                if (name is null || !AspireTypeNames.Contains(name, StringComparer.Ordinal))
+                {
+                    continue;
+                }
+
+                if (directive.Alias is { } alias)
+                {
+                    aliases[alias.Name.Identifier.ValueText] = name;
+                }
+                else if (directive.StaticKeyword.IsKind(SyntaxKind.StaticKeyword) && name == "DistributedApplication")
+                {
+                    staticApplication = true;
+                }
+            }
+
+            return new ImportedNames(aliases, staticApplication);
+        }
+
+        public string? Canonical(string? name) =>
+            name is not null && Aliases.TryGetValue(name, out var real) ? real : name;
+    }
 
     private static bool IsDisableDashboardTarget(ExpressionSyntax left) =>
         left switch
@@ -614,34 +1252,67 @@ public sealed class AspireAuditSuppressionGuardTests
             {
                 Assert.Fail($"{relative} is not well-formed XML, so the audit guard cannot read it: {exception.Message}");
             }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+            {
+                // Deleted between the walk and the read, as another local run may do: no longer part of the tree.
+            }
         }
 
         return documents;
     }
 
-    private static List<ParsedConfiguration> ParseSourceFiles()
+    private static List<ParsedConfiguration> ParseSourceFiles() => ParseCSharp("src", filter: null);
+
+    /// <summary>
+    /// Parses test sources for the <c>DisableDashboard</c> check. Only files that name
+    /// <c>DisableDashboard</c> or <c>DistributedApplicationOptions</c> are parsed, which keeps the walk fast.
+    /// </summary>
+    private static List<ParsedConfiguration> ParseTestFiles() =>
+        ParseCSharp(
+            "tests",
+            text => text.Contains("DisableDashboard", StringComparison.Ordinal) || text.Contains("DistributedApplicationOptions", StringComparison.Ordinal));
+
+    private static List<ParsedConfiguration> ParseCSharp(string directory, Func<string, bool>? filter)
     {
         var root = RepoRoot.Resolve();
-        var paths = EnumerateFiles(Path.Combine(root, "src"), p => p.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
-        var texts = paths.Select(p => (File: Relative(root, p), Path: p, Text: File.ReadAllText(p))).ToList();
+        var paths = EnumerateFiles(Path.Combine(root, directory), p => p.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
+        var texts = new List<(string File, string Path, string Text)>();
+        foreach (var path in paths)
+        {
+            try
+            {
+                var text = File.ReadAllText(path);
+                if (filter is null || filter(text))
+                {
+                    texts.Add((Relative(root, path), path, text));
+                }
+            }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+            {
+                // Deleted between the walk and the read: no longer part of the tree.
+            }
+        }
 
         // Each build's own symbols: code that #if leaves out of a build is skipped trivia in that
         // build's tree, so it never counts there, and every check runs against both trees.
-        var configurations = new List<ParsedConfiguration>();
+        return ParseConfigurations()
+            .Select(c => new ParsedConfiguration(
+                c.Name,
+                texts.Select(t => (t.File, CSharpSyntaxTree.ParseText(t.Text, c.Options, path: t.Path).GetRoot())).ToList()))
+            .ToList();
+    }
+
+    private static IEnumerable<(string Name, CSharpParseOptions Options)> ParseConfigurations()
+    {
         foreach (var (name, buildSymbol) in new[] { ("Release", "RELEASE"), ("Debug", "DEBUG") })
         {
             foreach (var (framework, frameworkSymbols) in FrameworkPreprocessorSymbols)
             {
-                var options = CSharpParseOptions.Default.WithPreprocessorSymbols(
-                    SharedPreprocessorSymbols.Concat(frameworkSymbols).Append(buildSymbol));
-                var files = texts
-                    .Select(t => (t.File, CSharpSyntaxTree.ParseText(t.Text, options, path: t.Path).GetRoot()))
-                    .ToList();
-                configurations.Add(new ParsedConfiguration($"{name} {framework}", files));
+                yield return (
+                    $"{name} {framework}",
+                    CSharpParseOptions.Default.WithPreprocessorSymbols(SharedPreprocessorSymbols.Concat(frameworkSymbols).Append(buildSymbol)));
             }
         }
-
-        return configurations;
     }
 
     private static bool IsMsBuildFile(string path)
@@ -668,13 +1339,20 @@ public sealed class AspireAuditSuppressionGuardTests
         while (pending.Count > 0)
         {
             var current = pending.Pop();
-            files.AddRange(Directory.EnumerateFiles(current).Where(include));
-            foreach (var child in Directory.EnumerateDirectories(current))
+            try
             {
-                if (!IsSkippedDirectory(Path.GetFileName(child)))
+                files.AddRange(Directory.EnumerateFiles(current).Where(include));
+                foreach (var child in Directory.EnumerateDirectories(current))
                 {
-                    pending.Push(child);
+                    if (!IsSkippedDirectory(Path.GetFileName(child)))
+                    {
+                        pending.Push(child);
+                    }
                 }
+            }
+            catch (DirectoryNotFoundException)
+            {
+                // Removed mid-walk, as a parallel local run does to a build directory: no longer part of the tree.
             }
         }
 

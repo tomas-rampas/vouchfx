@@ -53,6 +53,9 @@
 # global.json selects the SDK that every build and test run uses.
 /global.json                                    @tomas-rampas
 /nuget.config                                   @tomas-rampas
+# dependabot.yml holds the Aspire.* and YamlDotNet update holds that the audit suppression's
+# contract depends on, so a change to it is owner-reviewed too.
+/.github/dependabot.yml                         @tomas-rampas
 # The guard for the NuGet audit suppression is owner-reviewed alongside the suppression itself.
 /tests/Vouchfx.Engine.Compilation.Tests/AspireAuditSuppressionGuardTests.cs @tomas-rampas
 

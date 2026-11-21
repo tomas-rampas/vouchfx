@@ -108,9 +108,9 @@ updates:
       # build reports advisories independently. Security updates also have their own fixed
       # limit of 10 open pull requests; beyond that only the alerts remain.
       # Aspire is held at the 13.4.x patch line for the v1.x series (ZEB-33). 13.5.x is
-      # unpatched for GHSA-f7vh-h5g3-7jrh, and 13.6.5, the only patched release,
-      # requires YamlDotNet 18.1.0 or later (as does 13.6.0), which the YamlDotNet hold
-      # below rules out. Patch updates within 13.4.x still flow.
+      # unpatched for GHSA-f7vh-h5g3-7jrh. Aspire 13.6.0 and 13.6.5 require YamlDotNet
+      # 18.1.0 or later, which the YamlDotNet hold below rules out, and 13.6.5 is the only
+      # patched release. Patch updates within 13.4.x still flow.
       # AspireVersionLockstepGuardTests fails an Aspire patch pull request until
       # VouchfxDcpVersion (Directory.Packages.props) and every Aspire.AppHost.Sdk
       # version are moved on the same branch. Dependabot may attempt a security update to
