@@ -23,6 +23,7 @@ using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.MailExpect.Smtp;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Steps.MailExpect.Smtp.Tests;
@@ -262,11 +263,11 @@ public sealed class MailExpectSmtpSubstituteTests
     /// </summary>
     private static DisposableAction StartMockMailpit(out string baseUrl, string messagesJson)
     {
-        var listener = new HttpListener();
-        var port = GetFreePort();
-        baseUrl = $"http://127.0.0.1:{port}";
-        listener.Prefixes.Add(baseUrl + "/");
-        listener.Start();
+        // Started on a probed free port (retried on a bind collision) and ended with exactly one
+        // Close() and no Stop() before it: see LoopbackHttpListener.
+        var bound = LoopbackHttpListener.Start();
+        var listener = bound.Listener;
+        baseUrl = bound.BaseUrl;
 
         var cts = new CancellationTokenSource();
         var thread = new Thread(() =>
@@ -305,7 +306,7 @@ public sealed class MailExpectSmtpSubstituteTests
                 }
                 catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException)
                 {
-                    // Dispose() (below) cancels cts BEFORE calling listener.Stop()/Close(), but
+                    // Dispose() (below) cancels cts BEFORE closing the listener, but
                     // that teardown can still race a response this thread is actively writing:
                     // the client may already have every byte it needs while this thread sits
                     // between Write and Close (or inside either call) when the listener disposes
@@ -324,18 +325,8 @@ public sealed class MailExpectSmtpSubstituteTests
         return new DisposableAction(() =>
         {
             cts.Cancel();
-            listener.Stop();
-            listener.Close();
+            bound.Dispose();
         });
-    }
-
-    private static int GetFreePort()
-    {
-        var l = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-        l.Start();
-        var port = ((IPEndPoint)l.LocalEndpoint).Port;
-        l.Stop();
-        return port;
     }
 
     private sealed class DisposableAction : IDisposable

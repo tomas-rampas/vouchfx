@@ -23,6 +23,7 @@ using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.MailExpect.Smtp;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Steps.MailExpect.Smtp.Tests;
@@ -642,11 +643,11 @@ public sealed class MailExpectSmtpEmitTests
     private static DisposableAction StartMockMailpit(out string baseUrl, string messagesJson)
     {
         // Find a free port.
-        var listener = new HttpListener();
-        var port = GetFreePort();
-        baseUrl = $"http://127.0.0.1:{port}";
-        listener.Prefixes.Add(baseUrl + "/");
-        listener.Start();
+        // Started on a probed free port (retried on a bind collision) and ended with exactly one
+        // Close() and no Stop() before it: see LoopbackHttpListener.
+        var bound = LoopbackHttpListener.Start();
+        var listener = bound.Listener;
+        baseUrl = bound.BaseUrl;
 
         // Serve requests on a background thread.
         var cts = new CancellationTokenSource();
@@ -691,7 +692,7 @@ public sealed class MailExpectSmtpEmitTests
                 }
                 catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException)
                 {
-                    // Dispose() (below) cancels cts BEFORE calling listener.Stop()/Close(), but
+                    // Dispose() (below) cancels cts BEFORE closing the listener, but
                     // that teardown can still race a response this thread is actively writing:
                     // the client may already have every byte it needs while this thread sits
                     // between Write and Close (or inside either call) when the listener disposes
@@ -709,8 +710,7 @@ public sealed class MailExpectSmtpEmitTests
         return new DisposableAction(() =>
         {
             cts.Cancel();
-            listener.Stop();
-            listener.Close();
+            bound.Dispose();
         });
     }
 
@@ -723,11 +723,11 @@ public sealed class MailExpectSmtpEmitTests
     private static DisposableAction StartMockMailpitWithDetail(
         out string baseUrl, string messagesJson, string detailJson)
     {
-        var listener = new HttpListener();
-        var port = GetFreePort();
-        baseUrl = $"http://127.0.0.1:{port}";
-        listener.Prefixes.Add(baseUrl + "/");
-        listener.Start();
+        // Started on a probed free port (retried on a bind collision) and ended with exactly one
+        // Close() and no Stop() before it: see LoopbackHttpListener.
+        var bound = LoopbackHttpListener.Start();
+        var listener = bound.Listener;
+        baseUrl = bound.BaseUrl;
 
         var cts = new CancellationTokenSource();
         var thread = new Thread(() =>
@@ -766,7 +766,7 @@ public sealed class MailExpectSmtpEmitTests
                 }
                 catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException)
                 {
-                    // See StartMockMailpit above: Dispose()'s listener.Stop()/Close() can race an
+                    // See StartMockMailpit above: Dispose()'s listener Close() can race an
                     // in-flight response on this thread; contain the resulting
                     // ObjectDisposedException/HttpListenerException so it can never crash the
                     // test host as an unhandled background-thread exception.
@@ -779,8 +779,7 @@ public sealed class MailExpectSmtpEmitTests
         return new DisposableAction(() =>
         {
             cts.Cancel();
-            listener.Stop();
-            listener.Close();
+            bound.Dispose();
         });
     }
 
@@ -795,11 +794,11 @@ public sealed class MailExpectSmtpEmitTests
     private static DisposableAction StartMailpitWithFailingDetail(
         out string baseUrl, string messagesJson)
     {
-        var listener = new HttpListener();
-        var port = GetFreePort();
-        baseUrl = $"http://127.0.0.1:{port}";
-        listener.Prefixes.Add(baseUrl + "/");
-        listener.Start();
+        // Started on a probed free port (retried on a bind collision) and ended with exactly one
+        // Close() and no Stop() before it: see LoopbackHttpListener.
+        var bound = LoopbackHttpListener.Start();
+        var listener = bound.Listener;
+        baseUrl = bound.BaseUrl;
 
         var cts = new CancellationTokenSource();
         var thread = new Thread(() =>
@@ -855,8 +854,7 @@ public sealed class MailExpectSmtpEmitTests
         return new DisposableAction(() =>
         {
             cts.Cancel();
-            listener.Stop();
-            listener.Close();
+            bound.Dispose();
         });
     }
 
@@ -868,11 +866,11 @@ public sealed class MailExpectSmtpEmitTests
     /// </summary>
     private static DisposableAction StartMailpitAlways500(out string baseUrl)
     {
-        var listener = new HttpListener();
-        var port = GetFreePort();
-        baseUrl = $"http://127.0.0.1:{port}";
-        listener.Prefixes.Add(baseUrl + "/");
-        listener.Start();
+        // Started on a probed free port (retried on a bind collision) and ended with exactly one
+        // Close() and no Stop() before it: see LoopbackHttpListener.
+        var bound = LoopbackHttpListener.Start();
+        var listener = bound.Listener;
+        baseUrl = bound.BaseUrl;
 
         var cts = new CancellationTokenSource();
         var thread = new Thread(() =>
@@ -907,8 +905,7 @@ public sealed class MailExpectSmtpEmitTests
         return new DisposableAction(() =>
         {
             cts.Cancel();
-            listener.Stop();
-            listener.Close();
+            bound.Dispose();
         });
     }
 

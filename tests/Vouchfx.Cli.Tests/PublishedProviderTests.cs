@@ -52,10 +52,9 @@ public sealed class PublishedProviderTests
         var directory = ProviderDirectoryTests.Temp(); var providers = CopyPublishedProvider(directory);
         using var scope = new ProviderRegistryScope(ProviderDirectoryScanner.Load(new[] { providers }));
         using var compiler = isolated ? new ScriptCompilerScope(CompileWorkerMode.Compile) : null;
-        using var listener = new HttpListener();
-        var portProbe = new TcpListener(IPAddress.Loopback, 0); portProbe.Start();
-        var port = ((IPEndPoint)portProbe.LocalEndpoint).Port; portProbe.Stop();
-        listener.Prefixes.Add($"http://127.0.0.1:{port}/"); listener.Start();
+        // One Close() ends the listener (no Stop() before it): see LoopbackHttpListener.
+        var bound = LoopbackHttpListener.Start();
+        var listener = bound.Listener; var port = bound.Port;
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         var server = Task.Run(async () =>
         {
@@ -110,7 +109,8 @@ public sealed class PublishedProviderTests
         }
         finally
         {
-            cancellation.Cancel(); listener.Stop();
+            // Cancel first so a pending GetContextAsync ends as OperationCanceledException, then close once.
+            cancellation.Cancel(); bound.Dispose();
             try { await server; } catch (Exception exception) when (exception is OperationCanceledException or HttpListenerException) { }
         }
     }
