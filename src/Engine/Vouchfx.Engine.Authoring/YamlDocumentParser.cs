@@ -19,6 +19,7 @@ using System.Globalization;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Sdk;
+using Vouchfx.Yaml;
 using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
 
@@ -83,6 +84,18 @@ public static class YamlDocumentParser
         // 367 MB) YamlStream.Load plus this method complete in under 1 ms at a 25 MB working
         // set. Providers that DO re-materialise a subtree carry their own bound —
         // see HttpRestProvider's MaxBodyNodes (#346).
+        //
+        // A cycle is not an expansion. YamlSequenceNode.GetHashCode follows every child, and
+        // YamlMappingNode.Load hashes every key while it inserts it. A sequence that contains
+        // itself and is reachable from a mapping key therefore overflows the stack inside Load,
+        // and StackOverflowException cannot be caught here. The scan below reads the event
+        // stream only and refuses that shape before the representation model is built. A
+        // sequence or mapping that only refers to itself as a value still loads.
+        if (YamlAnchorCycleGuard.Find(yamlText) is { } cycle)
+        {
+            throw new YamlParseException(cycle.Message, cycle.Line, cycle.Column);
+        }
+
         YamlStream stream;
         try
         {

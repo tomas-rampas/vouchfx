@@ -1979,4 +1979,187 @@ public sealed class YamlDocumentParserTests
         Assert.True(ex.Line > 0, $"Line should be populated from the offending {shape} node.");
         Assert.True(ex.Column > 0, $"Column should be populated from the offending {shape} node.");
     }
+
+    // -------------------------------------------------------------------------
+    // Self-containing sequences hashed as mapping keys
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_SelfContainingSequenceUsedAsMappingKey_ThrowsInsteadOfOverflowing()
+    {
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse("body: { ? &k [ *k ] : v }\n"));
+        Assert.Contains("*k", ex.Message, StringComparison.Ordinal);
+        Assert.True(ex.Line > 0);
+        Assert.True(ex.Column > 0);
+    }
+
+    [Fact]
+    public void Parse_NestedSelfContainingSequenceKey_ThrowsInsteadOfOverflowing()
+    {
+        const string yaml = """
+            root:
+              ?
+                - &k [*k]
+              : v
+            """;
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("*k", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_SelfContainingSequenceDefinedAsValueThenUsedAsKey_ThrowsInsteadOfOverflowing()
+    {
+        const string yaml = """
+            items: &k [*k]
+            lookup:
+              ? *k
+              : 1
+            """;
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("*k", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_MutualSequenceCycleUsedAsKey_ThrowsInsteadOfOverflowing()
+    {
+        const string yaml = """
+            a: &a [*b]
+            b: &b [*a]
+            lookup: { ? *a : 1 }
+            """;
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("*a", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_SequenceThatContainsCyclicMappingThenUsedAsKey_ThrowsInsteadOfOverflowing()
+    {
+        const string yaml = """
+            outer: &outer
+              - &box
+                items:
+                  - &k [*k]
+            lookup: { ? *outer : 1 }
+            """;
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("*outer", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_MappingThatContainsCyclicSequenceThenUsedAsKey_ThrowsInsteadOfOverflowing()
+    {
+        const string yaml = """
+            box: &box
+              items:
+                - &k [*k]
+            lookup: { ? *box : 1 }
+            """;
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("*box", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_OrdinaryAlias_StillResolves()
+    {
+        const string yaml = """
+            metadata:
+              name: &n demo
+              description: *n
+            steps: []
+            """;
+
+        var document = YamlDocumentParser.Parse(yaml);
+        Assert.Equal("demo", document.Metadata!.Name);
+        Assert.Equal("demo", document.Metadata.Description);
+    }
+
+    [Fact]
+    public void Parse_SelfContainingSequenceUsedOnlyAsValue_StillParses()
+    {
+        const string yaml = """
+            steps: []
+            items: &k [*k]
+            """;
+
+        var document = YamlDocumentParser.Parse(yaml);
+        Assert.Empty(document.Steps);
+    }
+
+    [Fact]
+    public void Parse_MappingThatRefersToItselfAsValue_StillParses()
+    {
+        const string yaml = """
+            steps: []
+            box: &box
+              name: box
+              self: *box
+            """;
+
+        var document = YamlDocumentParser.Parse(yaml);
+        Assert.Empty(document.Steps);
+    }
+
+    [Fact]
+    public void Parse_MappingThatRefersToItselfThenUsedAsKey_StillParses()
+    {
+        const string yaml = """
+            steps: []
+            box: &box
+              self: *box
+            lookup: { ? *box : 1 }
+            """;
+
+        var document = YamlDocumentParser.Parse(yaml);
+        Assert.Empty(document.Steps);
+    }
+
+    [Fact]
+    public void Parse_FiniteSequenceUsedAsMappingKey_StillParses()
+    {
+        const string yaml = """
+            steps: []
+            items: &items [1, 2]
+            lookup:
+              ? *items
+              : 1
+            """;
+
+        var document = YamlDocumentParser.Parse(yaml);
+        Assert.Empty(document.Steps);
+    }
+
+    [Fact]
+    public void Parse_AnchoredCyclicSequenceInsideHashedMapping_StillParses()
+    {
+        const string yaml = """
+            steps: []
+            root:
+              ?
+                nested: &k [*k]
+              : 1
+            """;
+
+        var document = YamlDocumentParser.Parse(yaml);
+        Assert.Empty(document.Steps);
+    }
+
+    [Fact]
+    public void Parse_CyclicSequenceBehindAnchoredValue_DoesNotRefuseMappingKey()
+    {
+        const string yaml = """
+            steps: []
+            box: &box
+              items: &items
+                - &k [*k]
+            lookup: { ? *box : 1 }
+            """;
+
+        var document = YamlDocumentParser.Parse(yaml);
+        Assert.Empty(document.Steps);
+    }
 }

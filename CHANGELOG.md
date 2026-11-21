@@ -21,6 +21,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Fixed
+
+- `vouchfx validate` and `vouchfx run` no longer abort the process when a YAML alias is hashed as a mapping key and the node it points at contains a sequence that contains itself. YamlDotNet 16.3.0 hashes every mapping key while it loads the document, and `YamlSequenceNode.GetHashCode` follows that sequence with no cycle check, which raises an uncatchable `StackOverflowException`. The document is now refused with a parse error before the representation model is built. The same refusal applies to a Compose configuration or manifest. A sequence or mapping that only refers to itself as a value still loads.
+
 ## [1.4.0] — 2026-11-21
 
 1.4.0 is the first release that targets .NET 10. 1.3.0 was not published; the changes that were prepared under that number ship in this release and are included below.

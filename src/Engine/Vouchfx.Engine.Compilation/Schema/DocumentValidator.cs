@@ -13,6 +13,7 @@
 // range) the prefix is omitted rather than throwing.
 using System.Linq;
 using Vouchfx.Sdk;
+using Vouchfx.Yaml;
 using YamlDotNet.RepresentationModel;
 
 namespace Vouchfx.Engine.Compilation.Schema;
@@ -556,6 +557,14 @@ public static class DocumentValidator
     /// </summary>
     private static YamlMappingNode? TryParseYamlRoot(string yamlText)
     {
+        // Same crash as YamlDocumentParser.Parse: hashing a self-containing sequence key
+        // overflows inside Load, which this catch cannot see. Schema line enrichment is
+        // skipped; the parser reports the authoring error on the path that follows.
+        if (YamlAnchorCycleGuard.Find(yamlText) is not null)
+        {
+            return null;
+        }
+
         try
         {
             var stream = new YamlStream();
