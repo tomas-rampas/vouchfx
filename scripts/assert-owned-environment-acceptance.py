@@ -99,6 +99,70 @@ def require_raw_stream(directory: Path, raw: Path, channel: str, binding: object
     require(len(value) == size and hashlib.sha256(value).hexdigest().upper() == digest, "Raw stream bytes do not match their reported size/hash")
 
 
+TEARDOWN_REFUSAL = "Case or fixture teardown did not complete"
+FIELD_LIMIT = 400
+LIST_LIMIT = 20
+PROGRESS_FIELDS = ("ExpectedCycles", "CompletedCycles", "AttemptedCycles", "CurrentCycle", "LastReleaseCompleted")
+WAIT_FIELDS = ("Purpose", "Outcome", "StartedUtc", "ElapsedMilliseconds", "BoundMilliseconds", "ContainersStillPresent", "NetworksStillPresent",
+               "VolumesStillPresent", "BaselineContainersMissing", "DcpProcessesStillPresent", "JournalsStillPresent", "ContainerStates", "NetworkNames", "StateReadError")
+
+
+def render(value: object) -> str:
+    """Render one evidence field for a log line: bounded, single-line, and explicit about absence."""
+    if value is None:
+        return "null"
+    if type(value) is list:
+        shown = ", ".join(render(item) for item in value[:LIST_LIMIT])
+        return "[" + shown + (f", ... +{len(value) - LIST_LIMIT} more" if len(value) > LIST_LIMIT else "") + "]"
+    text = " ".join(str(value).split())
+    return text if len(text) <= FIELD_LIMIT else text[:FIELD_LIMIT] + "...(truncated)"
+
+
+def describe_wait(label: str, wait: object) -> list[str]:
+    if type(wait) is not dict:
+        return [f"    {label}: not recorded (evidence predates wait diagnostics, or no wait ran)"]
+    return [f"    {label}: " + " ".join(f"{name}={render(wait[name])}" for name in WAIT_FIELDS if name in wait)]
+
+
+def describe_teardown(kind: str, report: dict) -> list[str]:
+    roles = []
+    if report.get("Completed") is not True:
+        roles.append("case did not complete")
+    if report.get("FixtureCleanupCompleted") is not True:
+        roles.append("fixture teardown did not complete")
+    lines = [f"  {kind}: " + "; ".join(roles)]
+    lines.append("    markers: " + " ".join(f"{name}={render(report.get(name, '<absent>'))}" for name in ("Completed", "FixtureCleanupCompleted")))
+    lines.append("    progress: " + " ".join(f"{name}={render(report.get(name, '<absent>'))}" for name in PROGRESS_FIELDS))
+    for name in ("Failure", "CleanupFailure"):
+        lines.append(f"    {name}: {render(report.get(name))}")
+    before, closure = report.get("LastBefore"), report.get("FixtureClosureLastInventory")
+    if type(before) is dict and type(closure) is dict:
+        for key in ("Containers", "Networks", "Volumes"):
+            if type(before.get(key)) is list and type(closure.get(key)) is list:
+                lines.append(f"    {key} present at last closure check but absent from the cycle baseline: {render(sorted(set(closure[key]) - set(before[key])))}")
+    lines.extend(describe_wait("last baseline wait", report.get("LastClosureWait")))
+    failed = report.get("FailedClosureWaits")
+    if type(failed) is list:
+        lines.append(f"    non-converged baseline waits: {len(failed)}")
+        for index, wait in enumerate(failed, 1):
+            lines.extend(describe_wait(f"non-converged wait {index}", wait))
+    return lines
+
+
+def refuse_incomplete_teardown(directory: Path) -> None:
+    """Name every case and fixture whose teardown did not complete, with the evidence read, before any other verdict."""
+    lines = []
+    for kind in CASES:
+        try:
+            report = read_json(directory / (kind + ".json"))
+        except (ValueError, OSError):
+            continue  # a missing or malformed report keeps its own, existing refusal
+        if report.get("Completed") is not True or report.get("FixtureCleanupCompleted") is not True:
+            lines.extend(describe_teardown(kind, report))
+    if lines:
+        raise ValueError("\n".join([TEARDOWN_REFUSAL, *lines]))
+
+
 def validate(directory: Path, cli: Path) -> dict:
     invocation = read_json(directory / "invocation.json")
     require(integer(invocation.get("schemaVersion"), 1), "Malformed invocation schema")
@@ -106,11 +170,12 @@ def validate(directory: Path, cli: Path) -> dict:
         require(type(invocation.get(name)) is str and re.fullmatch(r"[0-9a-f]{40}", invocation[name]) is not None, "Missing checkout/head identity")
     cli_digest = hashlib.sha256(cli.read_bytes()).hexdigest().upper()
     require(invocation.get("builtCliSha256") == cli_digest, "The built CLI changed after preparation")
+    refuse_incomplete_teardown(directory)
     cases = {}
     for kind, count in CASES.items():
         report = read_json(directory / (kind + ".json"))
         require(integer(report.get("SchemaVersion"), 1) and report.get("Kind") == kind, "Wrong case/schema")
-        require(report.get("Completed") is True and report.get("FixtureCleanupCompleted") is True, "Case or fixture teardown did not complete")
+        require(report.get("Completed") is True and report.get("FixtureCleanupCompleted") is True, TEARDOWN_REFUSAL)
         require(report.get("Failure") is None and report.get("CleanupFailure") is None, "A first-attempt failure is present")
         for name in ("ExpectedCycles", "CompletedCycles", "AttemptedCycles", "CurrentCycle"):
             require(integer(report.get(name), count), "Missing, partial or non-integer cycle count")

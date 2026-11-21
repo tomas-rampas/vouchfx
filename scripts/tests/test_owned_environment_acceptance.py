@@ -269,6 +269,78 @@ class EvidenceAdmissionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             GATE.validate(self.directory, self.cli)
 
+    def refusal(self):
+        with self.assertRaises(ValueError) as caught:
+            GATE.validate(self.directory, self.cli)
+        return str(caught.exception)
+
+    def change(self, kind, **fields):
+        report = copy.deepcopy(self.reports[kind])
+        report.update(fields)
+        self.write(kind + ".json", report)
+
+    def test_teardown_refusal_names_the_failing_case_and_the_evidence_read(self):
+        self.change("warm-host-compiled-image", Completed=False, AttemptedCycles=7, CurrentCycle=7, Failure="boom in cycle 7")
+        message = self.refusal()
+        self.assertEqual("Case or fixture teardown did not complete", message.splitlines()[0])
+        self.assertIn("warm-host-compiled-image: case did not complete", message)
+        for text in ("Completed=False", "FixtureCleanupCompleted=True", "AttemptedCycles=7", "ExpectedCycles=20", "boom in cycle 7"):
+            self.assertIn(text, message)
+        self.assertNotIn("compose-capabilities", message)
+        self.assertNotIn("cold-host-compiler-profile", message)
+
+    def test_teardown_refusal_names_the_failing_fixture_with_wait_diagnostics(self):
+        wait = {"Purpose": "fixture-disposal", "Outcome": "bound-elapsed", "StartedUtc": "2026-01-01T00:00:00Z", "ElapsedMilliseconds": 30012,
+                "BoundMilliseconds": 30000, "ContainersStillPresent": ["aspire-leftover"], "NetworksStillPresent": ["aspire-session-network-x"],
+                "VolumesStillPresent": [], "BaselineContainersMissing": [], "DcpProcessesStillPresent": [], "JournalsStillPresent": [],
+                "ContainerStates": ["aspire-leftover|abc|exited|Exited (0) 1 second ago"], "NetworkNames": ["aspire-session-network-x|def"], "StateReadError": None}
+        self.change("cold-host-compiler-profile", FixtureCleanupCompleted=False, CleanupFailure="timed out", LastClosureWait=wait, FailedClosureWaits=[wait])
+        message = self.refusal()
+        self.assertEqual("Case or fixture teardown did not complete", message.splitlines()[0])
+        self.assertIn("cold-host-compiler-profile: fixture teardown did not complete", message)
+        for text in ("FixtureCleanupCompleted=False", "CleanupFailure: timed out", "Outcome=bound-elapsed", "ElapsedMilliseconds=30012", "BoundMilliseconds=30000",
+                     "aspire-leftover", "aspire-session-network-x", "Exited (0)", "non-converged baseline waits: 1"):
+            self.assertIn(text, message)
+
+    def test_teardown_refusal_names_every_failing_case_not_just_the_first(self):
+        self.change("compose-capabilities", FixtureCleanupCompleted=False)
+        self.change("cold-host-compiler-profile", Completed=False)
+        message = self.refusal()
+        self.assertIn("compose-capabilities: fixture teardown did not complete", message)
+        self.assertIn("cold-host-compiler-profile: case did not complete", message)
+        self.assertNotIn("warm-host-compiled-image", message)
+
+    def test_evidence_without_the_new_fields_keeps_the_old_verdict(self):
+        self.change("warm-host-compiled-image", FixtureCleanupCompleted=False)
+        message = self.refusal()
+        self.assertEqual("Case or fixture teardown did not complete", message.splitlines()[0])
+        self.assertIn("warm-host-compiled-image: fixture teardown did not complete", message)
+        self.assertIn("last baseline wait: not recorded", message)
+        self.assertNotIn("non-converged", message)
+
+    def test_teardown_diagnostics_are_bounded_and_tolerate_malformed_new_fields(self):
+        self.change("warm-host-compiled-image", Completed=False, Failure="x" * 5000, LastClosureWait="not-an-object",
+                    FailedClosureWaits=[{"ContainersStillPresent": ["c%d" % n for n in range(100)]}, 7])
+        message = self.refusal()
+        self.assertEqual("Case or fixture teardown did not complete", message.splitlines()[0])
+        self.assertIn("(truncated)", message)
+        self.assertIn("more]", message)
+        self.assertLess(len(message), 6000)
+
+    def test_passing_evidence_still_passes_with_the_new_fields_present(self):
+        wait = {"Purpose": "cycle-release", "Outcome": "converged", "ElapsedMilliseconds": 400, "BoundMilliseconds": 30000}
+        self.change("warm-host-compiled-image", LastClosureWait=wait, FailedClosureWaits=[])
+        self.assertTrue(GATE.validate(self.directory, self.cli)["accepted"])
+
+    def test_a_missing_case_report_keeps_its_own_refusal_not_a_teardown_one(self):
+        self.change("warm-host-compiled-image", Completed=False)
+        (self.directory / "compose-capabilities.json").unlink()
+        message = self.refusal()
+        self.assertEqual("Case or fixture teardown did not complete", message.splitlines()[0])
+        self.assertNotIn("compose-capabilities", message)
+        (self.directory / "warm-host-compiled-image.json").unlink()
+        self.assertIn("Missing, linked or oversized evidence", self.refusal())
+
 
 if __name__ == "__main__":
     unittest.main()

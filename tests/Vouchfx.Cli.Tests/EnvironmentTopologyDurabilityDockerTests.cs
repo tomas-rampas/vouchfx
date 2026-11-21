@@ -544,6 +544,8 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
         public ColdResult? AttemptedColdResult { get; set; }
         public bool LastReleaseCompleted { get; set; }
         public ResourceInventory? FixtureClosureLastInventory => Fixture.LastClosureInventory;
+        public ClosureWait? LastClosureWait => Fixture.LastClosureWait;
+        public IReadOnlyList<ClosureWait> FailedClosureWaits => Fixture.FailedClosureWaits;
         public IReadOnlyList<OwnedDcpResidual> ResidualDcpProcesses => Fixture.ResidualDcpProcesses;
         public string DockerCachePolicy { get; } = "existing image layers retained; no image prune or uncached-pull claim";
         public List<object> Cycles { get; } = new();
@@ -569,6 +571,10 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
     private sealed record ResourceInventory(string[] Containers, string[] Networks, string[] Volumes,
         IReadOnlyDictionary<string, string> Created, string[] DcpProcesses, string[] Journals);
     private sealed record ColdResult(int Pid, DateTime BirthUtc, int ExitCode, string[] ObservedContainers, string[] ObservedDcpProcesses, string[] ObservedJournals, RawStreamBinding Stdout, RawStreamBinding Stderr, ResourceInventory Active);
+    /// <summary>What a baseline wait was for, how long it ran against which bound, and what was still present when it ended.</summary>
+    private sealed record ClosureWait(string Purpose, string Outcome, DateTime StartedUtc, long ElapsedMilliseconds, long BoundMilliseconds,
+        string[] ContainersStillPresent, string[] NetworksStillPresent, string[] VolumesStillPresent, string[] BaselineContainersMissing,
+        string[] DcpProcessesStillPresent, string[] JournalsStillPresent, string[] ContainerStates, string[] NetworkNames, string? StateReadError);
     private sealed record LinuxProcessState(int Pid, long BirthUtcTicks, string State, int ParentPid);
     private sealed record OwnedDcpIdentity(int Pid, long BirthUtcTicks, int CliPid, long CliBirthUtcTicks, string Profile);
     private sealed record OwnedDcpResidual(string Identity, bool OwnershipProven, int? CliPid, long? CliBirthUtcTicks,
@@ -605,7 +611,10 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
         private string? _volume;
         private ResourceInventory? _initial;
         private readonly Dictionary<string, OwnedDcpIdentity> _ownedDcp = new(StringComparer.Ordinal);
+        private static readonly TimeSpan ClosureWaitBound = TimeSpan.FromSeconds(30);
         internal ResourceInventory? LastClosureInventory { get; private set; }
+        internal ClosureWait? LastClosureWait { get; private set; }
+        internal List<ClosureWait> FailedClosureWaits { get; } = new();
         internal IReadOnlyList<OwnedDcpResidual> ResidualDcpProcesses { get; private set; } = Array.Empty<OwnedDcpResidual>();
         private string Password { get; } = "fixture-" + Guid.NewGuid().ToString("N");
         internal string PasswordVariable { get; } = "VOUCHFX_TOPOLOGY_PASSWORD_" + Guid.NewGuid().ToString("N");
@@ -689,7 +698,7 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
 
         internal async Task<ResourceInventory> AssertReleasedAsync(ResourceInventory before, ResourceInventory active, CancellationToken ct, string? profile = null)
         {
-            var after = await WaitForBaselineAsync(before, profile, ct);
+            var after = await WaitForBaselineAsync(before, profile, "cycle-release", ct);
             Assert.Equal(before.Created.OrderBy(pair => pair.Key, StringComparer.Ordinal), after.Created.OrderBy(pair => pair.Key, StringComparer.Ordinal));
             Assert.All(active.Containers.Except(before.Containers), id => Assert.DoesNotContain(id, after.Containers));
             Assert.All(active.Networks.Except(before.Networks), id => Assert.DoesNotContain(id, after.Networks));
@@ -698,11 +707,14 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             return after;
         }
 
-        private async Task<ResourceInventory> WaitForBaselineAsync(ResourceInventory before, string? profile, CancellationToken ct)
+        private async Task<ResourceInventory> WaitForBaselineAsync(ResourceInventory before, string? profile, string purpose, CancellationToken ct)
         {
             LastClosureInventory = null;
+            var clock = Stopwatch.StartNew();
+            var started = DateTime.UtcNow;
             using var join = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            join.CancelAfter(TimeSpan.FromSeconds(30));
+            join.CancelAfter(ClosureWaitBound);
+            string outcome = "error";
             try
             {
                 while (true)
@@ -714,18 +726,63 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
                         && after.Volumes.SequenceEqual(before.Volumes) && after.DcpProcesses.SequenceEqual(before.DcpProcesses)
                         && after.Journals.SequenceEqual(before.Journals))
                     {
+                        outcome = "creation-identity-changed";
                         Assert.Equal(before.Created.OrderBy(pair => pair.Key, StringComparer.Ordinal), after.Created.OrderBy(pair => pair.Key, StringComparer.Ordinal));
+                        outcome = "converged";
                         return after;
                     }
                     await Task.Delay(100, join.Token);
                 }
             }
-            catch
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested && join.IsCancellationRequested)
             {
+                outcome = "bound-elapsed";
                 ResidualDcpProcesses = DescribeResidualDcp(LastClosureInventory?.DcpProcesses.Except(before.DcpProcesses) ?? Array.Empty<string>());
                 throw;
             }
+            catch (Exception error)
+            {
+                if (error is OperationCanceledException) outcome = "caller-cancelled";
+                else if (outcome != "creation-identity-changed") outcome = "error";
+                ResidualDcpProcesses = DescribeResidualDcp(LastClosureInventory?.DcpProcesses.Except(before.DcpProcesses) ?? Array.Empty<string>());
+                throw;
+            }
+            finally
+            {
+                clock.Stop();
+                await RecordClosureWaitAsync(purpose, outcome, started, clock.Elapsed, before);
+            }
         }
+
+        // Diagnostics only: the bound above is unchanged. The wait failing and the resources really
+        // lingering look identical from the verdict alone, so the evidence says which one happened.
+        private async Task RecordClosureWaitAsync(string purpose, string outcome, DateTime started, TimeSpan elapsed, ResourceInventory before)
+        {
+            var last = LastClosureInventory;
+            var record = new ClosureWait(purpose, outcome, started, (long)elapsed.TotalMilliseconds, (long)ClosureWaitBound.TotalMilliseconds,
+                last is null ? Array.Empty<string>() : last.Containers.Except(before.Containers).ToArray(),
+                last is null ? Array.Empty<string>() : last.Networks.Except(before.Networks).ToArray(),
+                last is null ? Array.Empty<string>() : last.Volumes.Except(before.Volumes).ToArray(),
+                last is null ? Array.Empty<string>() : before.Containers.Except(last.Containers).ToArray(),
+                last is null ? Array.Empty<string>() : last.DcpProcesses.Except(before.DcpProcesses).ToArray(),
+                last is null ? Array.Empty<string>() : last.Journals.Except(before.Journals).ToArray(),
+                Array.Empty<string>(), Array.Empty<string>(), null);
+            if (outcome != "converged")
+            {
+                try
+                {
+                    using var look = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    var containers = await DockerAsync(look.Token, "container", "ls", "--all", "--no-trunc", "--format", "{{.Names}}|{{.ID}}|{{.State}}|{{.Status}}");
+                    var networks = await DockerAsync(look.Token, "network", "ls", "--no-trunc", "--format", "{{.Name}}|{{.ID}}");
+                    record = record with { ContainerStates = Lines(containers), NetworkNames = Lines(networks) };
+                }
+                catch (Exception error) { record = record with { StateReadError = error.GetType().Name }; }
+                FailedClosureWaits.Add(record);
+            }
+            LastClosureWait = record;
+        }
+
+        private static string[] Lines(string text) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Order(StringComparer.Ordinal).ToArray();
 
         internal async Task<ColdResult> RunColdCliAsync(string cli, string suite, string profile, ResourceInventory before, CancellationToken ct)
         {
@@ -1004,7 +1061,7 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             if (_volume is not null) { await DockerAsync("volume", "rm", _volume); _volume = null; }
             if (_initial is not null)
             {
-                var after = await WaitForBaselineAsync(_initial, Directory, CancellationToken.None);
+                var after = await WaitForBaselineAsync(_initial, Directory, "fixture-disposal", CancellationToken.None);
                 Assert.Equal(_initial.Containers, after.Containers);
                 Assert.Equal(_initial.Networks, after.Networks);
                 Assert.Equal(_initial.Volumes, after.Volumes);

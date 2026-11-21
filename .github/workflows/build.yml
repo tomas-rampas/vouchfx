@@ -1452,6 +1452,47 @@ jobs:
             --directory "$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS" \
             --cli src/Cli/Vouchfx.Cli/bin/Release/net10.0/vouchfx.dll
 
+      # Failure diagnostics only: record what Docker still holds at the moment this job failed, so
+      # "a container or the session network was really left behind" can be told apart from "the
+      # baseline wait timed out and the resources were gone a second later". Runs after the verifier
+      # (which must judge the evidence as the tests left it) and lands inside the evidence directory
+      # so it travels in the same artefact. Read-only; nothing is removed or retried, and every
+      # command is best effort so one refusal cannot hide the others.
+      #
+      # Deliberately NOT a raw `docker inspect`: that prints each container's environment, which
+      # can carry the fixture's database password, and artefacts on this repository are public.
+      # State, network membership and event history carry no environment.
+      - name: Capture Docker state for failure diagnosis
+        if: failure() && steps.topology-evidence-preparation.outcome == 'success'
+        timeout-minutes: 3
+        env:
+          VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS: ${{ runner.temp }}/vouchfx-topology-acceptance
+        run: |
+          out="$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS/docker-state"
+          mkdir -p "$out"
+          date -u +%Y-%m-%dT%H:%M:%SZ > "$out/captured-at-utc.txt"
+          docker ps -a --no-trunc > "$out/docker-ps-a.txt" 2>&1 || echo "docker ps -a exited $?" >> "$out/docker-ps-a.txt"
+          docker network ls --no-trunc > "$out/docker-network-ls.txt" 2>&1 || echo "docker network ls exited $?" >> "$out/docker-network-ls.txt"
+          docker volume ls > "$out/docker-volume-ls.txt" 2>&1 || echo "docker volume ls exited $?" >> "$out/docker-volume-ls.txt"
+          {
+            docker ps -a -q --no-trunc | while read -r id; do
+              docker inspect --format '{{.Name}} {{.Id}} state={{json .State}}' "$id" || echo "inspect of $id failed"
+            done
+          } > "$out/container-state.txt" 2>&1 || echo "container state capture exited $?" >> "$out/container-state.txt"
+          {
+            docker network ls -q --no-trunc | while read -r id; do
+              docker network inspect --format '{{.Name}} {{.Id}} created={{.Created}} containers={{json .Containers}}' "$id" || echo "inspect of $id failed"
+            done
+          } > "$out/network-state.txt" 2>&1 || echo "network state capture exited $?" >> "$out/network-state.txt"
+          # A bounded window ending now, so the command terminates instead of streaming.
+          timeout 60 docker events --since "$(( $(date +%s) - 3600 ))" --until "$(date +%s)" \
+            --format '{{.TimeNano}} {{.Type}} {{.Action}} {{.Actor.ID}} {{index .Actor.Attributes "name"}}' \
+            > "$out/docker-events-last-hour.txt" 2>&1 || echo "docker events exited $?" >> "$out/docker-events-last-hour.txt"
+          exit 0
+
+      # 30 days, not the 7 every other artefact in this workflow carries: this evidence is the only
+      # record of a rare teardown failure (one in about 75 runs), and a week is shorter than the
+      # time it can take to notice and look at one.
       - name: Upload first-attempt owned topology evidence
         if: always() && steps.topology-evidence-preparation.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1459,7 +1500,7 @@ jobs:
           name: owned-environment-acceptance
           path: ${{ runner.temp }}/vouchfx-topology-acceptance
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
       - name: Collect new default-root DCP captures
         id: dcp-captures

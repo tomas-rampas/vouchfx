@@ -162,6 +162,18 @@ The [shared-app .NET Compose orders sample](https://github.com/tomas-rampas/vouc
 
 The Linux Docker CI lane runs these ownership cases in the exclusive Compose acceptance collection. It retains first-attempt JSON evidence and the five cold CLI event/output files in the `owned-environment-acceptance` artefact, including partial records when a case fails. Its file-only admission gate requires all three cases and exact completed counts; a green exit without these records is insufficient.
 
+### Reading a teardown refusal
+
+When the gate refuses with `Case or fixture teardown did not complete`, the job log lists every case and fixture involved, so the log alone identifies the failing one. For each, it prints:
+
+- which marker failed: `Completed` (the case did not finish) or `FixtureCleanupCompleted` (the fixture's own teardown did not finish), with both values, the cycle counters (`ExpectedCycles`, `CompletedCycles`, `AttemptedCycles`, `CurrentCycle`, `LastReleaseCompleted`) and the recorded `Failure` and `CleanupFailure` text, shortened to fit a log line;
+- the containers, networks and volumes present at the last closure check that were not in the baseline;
+- the last baseline wait (`LastClosureWait`) and each wait that did not converge (`FailedClosureWaits`): its `Purpose` (`cycle-release` or `fixture-disposal`), `Outcome`, `ElapsedMilliseconds` against `BoundMilliseconds`, what was still present when it ended, and the container states and network names Docker reported at that moment.
+
+`Outcome` separates the two readings that otherwise look identical. `bound-elapsed` means the 30-second baseline wait ran out; if the `StillPresent` lists are empty, or the container states show the resources already gone, the wait was too short for a slow teardown. If they name a container or an `aspire-session-network-*` network, that resource was genuinely left behind, which breaks the teardown invariant and is a product defect to investigate. `creation-identity-changed` means the resource names matched but a resource was recreated, `caller-cancelled` means the surrounding test deadline stopped the wait, and `error` means something else failed inside it. Evidence recorded before these fields existed is still judged as before, and the log says `not recorded` for the missing wait.
+
+On a failed run the `owned-environment-acceptance` artefact also holds a `docker-state` directory: `docker ps -a`, `docker network ls`, `docker volume ls`, per-container state, per-network membership and the last hour of Docker events. It deliberately omits container environments, which can hold the fixture's database password. The artefact is kept for 30 days, longer than the 7 days used elsewhere, because this failure is rare and the artefact is the only record of it.
+
 | Capability | Native regression case |
 | --- | --- |
 | Requested profile starts its service; another profile stays inactive | `Compose_RequestedProfileAndOrderedInterpolationFilesAndServiceEnvFile_AffectRealContainer` |
