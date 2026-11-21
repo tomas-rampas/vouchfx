@@ -49,19 +49,44 @@ public sealed class HostProviderAdmissionTests
     }
 
     [Fact]
-    public void SourceCapabilityStamp_IsAtLeastTheNewestChangelogVersion()
+    public void SourceCapabilityStamp_MatchesTheNewestChangelogVersion()
     {
         // Source builds and CI omit -p:Version. Directory.Build.props then supplies the
-        // capability stamp, and a stale fallback refuses providers whose MinEngineVersion
-        // the source can actually host. The community template and JsonRpc source both
-        // require 1.2.0; the floor is the newest CHANGELOG.md version heading so the next
-        // release cannot leave the fallback behind.
+        // capability stamp. A stale fallback refuses providers whose MinEngineVersion the
+        // source can actually host (the community template and JsonRpc source both require
+        // 1.2.0), and a fallback ahead of the changelog would admit external providers
+        // against a version the engine is not. The stamp therefore equals the newest
+        // CHANGELOG.md version heading, which is the release being prepared or the latest
+        // published one. A separate release-only version property was considered and not
+        // added: it would touch about eight pack and publish invocations in release.yml.
         var newest = NewestChangelogVersion();
         var actual = HostProviderRegistry.EngineVersion;
-        Assert.True(
-            EngineSemVersion.Parse(actual).CompareTo(EngineSemVersion.Parse(newest)) >= 0,
-            $"Engine capability stamp '{actual}' is older than the newest CHANGELOG.md version heading {newest}. Raise the VouchfxEngineVersion fallback in Directory.Build.props.");
+        AssertStampMatchesChangelog(actual, newest);
         Assert.Single(HostProviderRegistry.Build(new[] { CreateModuleAssembly(newest, rejectSchema: false) }).All);
+    }
+
+    [Theory]
+    [InlineData("1.4.0", "1.4.0", true)]
+    [InlineData("9.9.9", "1.4.0", false)]
+    [InlineData("1.3.0", "1.4.0", false)]
+    public void StampGuard_RequiresExactChangelogVersion(string actual, string newest, bool passes)
+    {
+        var call = () => AssertStampMatchesChangelog(actual, newest);
+        if (passes)
+            call();
+        else
+            Assert.ThrowsAny<Exception>(call);
+    }
+
+    private static void AssertStampMatchesChangelog(string actual, string newest)
+    {
+        var comparison = EngineSemVersion.Parse(actual).CompareTo(EngineSemVersion.Parse(newest));
+        Assert.True(
+            comparison >= 0,
+            $"Engine capability stamp '{actual}' is older than the newest CHANGELOG.md version heading '{newest}'. The CHANGELOG heading and the VouchfxEngineVersion fallback in Directory.Build.props move in the same commit.");
+        Assert.True(
+            comparison <= 0,
+            $"Engine capability stamp '{actual}' is newer than the newest CHANGELOG.md version heading '{newest}'. The CHANGELOG heading and the VouchfxEngineVersion fallback in Directory.Build.props move in the same commit.");
     }
 
     private static string NewestChangelogVersion()

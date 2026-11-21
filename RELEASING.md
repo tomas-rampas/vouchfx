@@ -16,9 +16,9 @@ published. Pushing a version tag alone does not start the pipeline. Manual
    above it, so the file keeps exactly one `## [Unreleased]` heading
    (`scripts/check_site.py` enforces this). Do this in the reviewed commit
    before tagging. Check that the `VouchfxEngineVersion` fallback in
-   `Directory.Build.props` is at least `<version>`: the
-   `SourceCapabilityStamp_IsAtLeastTheNewestChangelogVersion` test fails when the
-   newest versioned heading is higher than the fallback.
+   `Directory.Build.props` equals `<version>`: the
+   `SourceCapabilityStamp_MatchesTheNewestChangelogVersion` test fails when the
+   newest versioned heading and the fallback differ.
 2. Navigate to the GitHub Releases page for this repository.
 3. Click **Draft a new release**.
 4. Create a new tag in the format `v<semver>` (e.g. `v1.2.3`) at the reviewed
