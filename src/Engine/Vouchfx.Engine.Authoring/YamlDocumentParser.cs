@@ -78,15 +78,18 @@ public static class YamlDocumentParser
         // StepSpec.RawNode rather than copying it.
         //
         // MEASURED on the pinned YamlDotNet 16.3.0, with the amplifying shape from #505 —
-        // anchored sequences, ten aliases per level: at ELEVEN levels (a nominal expansion of
-        // 10^11 nodes, versus the seven levels that already cost the JSON bridge 13.8 s and
-        // 367 MB) YamlStream.Load plus this method complete in under 1 ms at a 25 MB working
-        // set. Providers that DO re-materialise a subtree carry their own bound —
+        // anchored sequences, ten aliases per level, shared only in value position: at ELEVEN
+        // levels (a nominal expansion of 10^11 nodes, versus the seven levels that already cost
+        // the JSON bridge 13.8 s and 367 MB) YamlStream.Load plus this method complete in under
+        // 1 ms at a 25 MB working set. That holds only while no mapping key reaches the shared
+        // structure: Load hashes every key as it inserts it, and a sequence hashes by walking
+        // all of its elements with no limit and no memoisation, so an alias to a collection
+        // inside a key would overflow the stack (uncatchable) or cost time exponential in the
+        // sharing depth. The event-level pre-scan below refuses such a key with a line and
+        // column, which keeps the measurement above true for every document that reaches Load.
+        // Providers that DO re-materialise a subtree carry their own bound —
         // see HttpRestProvider's MaxBodyNodes (#346).
-        // YamlStream.Load hashes a mapping key on insert, so a key holding an alias to its own
-        // still-open anchor recurses until the stack overflows, which cannot be caught.
-        // The event-level pre-scan refuses it first, with a line and column.
-        YamlCycleGuard.Check(yamlText);
+        YamlKeyAliasGuard.Check(yamlText);
 
         YamlStream stream;
         try

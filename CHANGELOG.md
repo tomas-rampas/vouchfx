@@ -23,7 +23,7 @@ to published pre-releases on 2026-07-14.
 
 ### Fixed
 
-- **A mapping key that contains an alias to its own anchor no longer crashes `vouchfx validate` and `vouchfx run`.** A file such as `body: { ? &k [ *k ] : v }` made the YAML loader recurse until the process died with a stack overflow, which cannot be caught. The engine now scans the document first and refuses such a key as an ordinary YAML parse error that names the line and column, so the command exits non-zero and never 0. The same guard covers Compose configuration files. Complex keys and anchors that do not refer to themselves are unaffected.
+- **A mapping key that refers to a collection by alias no longer crashes or hangs `vouchfx validate` and `vouchfx run`.** A file such as `body: { ? &k [ *k ] : v }`, or one whose key reaches a very deep or heavily shared anchored collection, made the YAML loader recurse until the process died with a stack overflow, which cannot be caught, or run for seconds. The engine now scans the document first and refuses an alias inside a mapping key whose anchor is on a mapping or a sequence, whether that anchor is still open or already complete, as an ordinary YAML parse error that names the line and column, so the command exits non-zero and never 0. Aliases to scalar anchors in keys, collections written inline in keys, and every alias outside a key (including merge keys) are unaffected; the consequence is that `a: &k [1]` followed by `{ ? *k : v }` is now refused. The guard covers suite files, Compose configuration files and the Compose manifests they reference.
 
 ## [1.4.0] — 2026-11-21
 

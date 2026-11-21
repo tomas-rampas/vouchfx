@@ -31,15 +31,40 @@ public sealed class ComposeTcpBindingTests : IDisposable
         Assert.Contains(path, plan.InputFiles);
     }
 
+    // An alias to a collection inside a mapping key makes YamlStream.Load hash the key without
+    // bound (stack overflow, or exponential time). The pre-scan must refuse every shape before
+    // Load, with the line and column, so none of these can crash the test host.
     [Theory]
-    [InlineData("{ ? &k [ *k ] : v }")]
-    [InlineData("version: 1\nfiles: [./c.yaml]\nservices: { ? &k { x: *k } : v }")]
-    public void SelfReferencingMappingKey_IsRefusedAsInvalidYaml_NotAStackOverflow(string text)
+    [InlineData("{ ? &k [ *k ] : v }", 1, 10)]
+    [InlineData("a: &k [ *k ]\nb: { ? *k : v }", 2, 8)]
+    [InlineData("a: &k [ x ]\nb: { ? *k : v }", 2, 8)]
+    [InlineData("a: &k [ *k ]\nb: { *k : v }", 2, 6)]
+    [InlineData("a: &k [ *k ]\n*k : v", 2, 1)]
+    [InlineData("a: &k [ *k ]\n? [ *k ] : v", 2, 5)]
+    [InlineData("a: &k !!seq [ *k ]\n? !!seq [ *k ] : v", 2, 11)]
+    [InlineData("a: &x [ &y [ *x ] ]\nb: { ? *y : v }", 2, 8)]
+    public void CollectionAliasInMappingKey_IsRefusedAsInvalidYaml_NotAStackOverflow(string text, int line, int column)
     {
-        var path = Path.Combine(_directory, "self-ref.compose.yaml");
+        var path = Path.Combine(_directory, "key-alias.compose.yaml");
         File.WriteAllText(path, text);
         var ex = Assert.Throws<ArgumentException>(() => ComposeConfiguration.Load(path));
-        Assert.StartsWith("Compose configuration: invalid YAML.", ex.Message, StringComparison.Ordinal);
+        Assert.StartsWith(
+            $"Compose configuration: invalid YAML at line {line}, column {column}: alias '", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("a key may refer by alias only to a scalar", ex.Message, StringComparison.Ordinal);
+    }
+
+    // The configuration is clean; the manifest it references holds the refused key, so the
+    // second load (the manifest scan) is the one that must refuse it.
+    [Theory]
+    [InlineData("services: { web: { image: app } }\nx: &k [ *k ]\ny: { ? *k : v }", 3, 8)]
+    [InlineData("x: &k [ one ]\ny: { ? *k : v }", 2, 8)]
+    public void CollectionAliasInManifestKey_IsRefusedAsInvalidManifestYaml(string manifest, int line, int column)
+    {
+        var path = WriteConfiguration("{\"web\":{\"service\":\"web\",\"port\":8080,\"readiness\":{\"path\":\"/health\",\"status\":200}}}");
+        File.WriteAllText(Path.Combine(_directory, "compose.yaml"), manifest);
+        var ex = Assert.Throws<ArgumentException>(() => ComposeConfiguration.Load(path));
+        Assert.StartsWith(
+            $"Compose manifest: invalid YAML; at line {line}, column {column}: alias 'k'", ex.Message, StringComparison.Ordinal);
     }
 
     [Theory]

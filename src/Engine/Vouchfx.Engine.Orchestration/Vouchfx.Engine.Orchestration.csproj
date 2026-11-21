@@ -119,9 +119,11 @@
   </ItemGroup>
 
   <!-- The Compose loaders call YamlStream.Load directly; Authoring's guard is internal, so the
-       self-reference pre-scan source is linked in as a private copy (see Compilation). -->
+       key-alias pre-scan source is linked in as a private copy (see Compilation). Both this
+       project and Compilation grant InternalsVisibleTo to Vouchfx.Engine.Runtime and its tests,
+       so the first use of YamlKeyAliasGuard there fails with CS0433 and must pick one assembly. -->
   <ItemGroup>
-    <Compile Include="..\Vouchfx.Engine.Authoring\YamlCycleGuard.Scan.cs" Link="Shared\YamlCycleGuard.Scan.cs" />
+    <Compile Include="..\Vouchfx.Engine.Authoring\YamlKeyAliasGuard.Scan.cs" Link="Shared\YamlKeyAliasGuard.Scan.cs" />
   </ItemGroup>
 
   <ItemGroup>

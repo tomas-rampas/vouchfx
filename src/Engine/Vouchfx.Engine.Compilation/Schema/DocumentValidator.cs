@@ -171,7 +171,9 @@ public static class DocumentValidator
         // parsing fails (the document was already rejected as malformed) both
         // concerns degrade gracefully: no line prefixes, no unknown-type
         // detection — there is no YAML tree left to walk.
-        YamlMappingNode? rootMapping = TryParseYamlRoot(yamlText);
+        YamlMappingNode? rootMapping = TryParseYamlRoot(yamlText, out var refusedKey);
+        if (refusedKey is not null)
+            return new SchemaValidationResult(false, new[] { refusedKey });
 
         // Run the unknown-step-type cross-check UNCONDITIONALLY — not only when
         // the schema pass already failed — because a document whose ONLY defect
@@ -554,16 +556,23 @@ public static class DocumentValidator
     /// Returns <see langword="null"/> when the YAML cannot be parsed or the
     /// root node is not a mapping (e.g. a bare scalar or sequence).
     /// </summary>
-    private static YamlMappingNode? TryParseYamlRoot(string yamlText)
+    private static YamlMappingNode? TryParseYamlRoot(string yamlText, out SchemaValidationError? refusedKey)
     {
-        // A self-referencing mapping key overflows the stack inside YamlStream.Load, which no
-        // catch can stop; the authoring parser refuses it with a located error, so here it
-        // simply means "cannot resolve lines".
-        if (Vouchfx.Engine.Authoring.YamlCycleGuard.TryFindSelfReferencingKey(yamlText, out _, out _, out _))
-            return null;
-
+        refusedKey = null;
         try
         {
+            // An alias to a collection inside a mapping key can overflow the stack inside
+            // YamlStream.Load, which no catch can stop. Refuse it with the same located text
+            // the authoring parser gives, so the schema's generic recursion message is not
+            // the only explanation.
+            if (Vouchfx.Engine.Authoring.YamlKeyAliasGuard.TryFindCollectionAliasInKey(
+                    yamlText, out var anchor, out var line, out var column))
+            {
+                refusedKey = new SchemaValidationError(
+                    string.Empty, Vouchfx.Engine.Authoring.YamlKeyAliasGuard.Message(anchor, line, column));
+                return null;
+            }
+
             var stream = new YamlStream();
             using var reader = new System.IO.StringReader(yamlText);
             stream.Load(reader);

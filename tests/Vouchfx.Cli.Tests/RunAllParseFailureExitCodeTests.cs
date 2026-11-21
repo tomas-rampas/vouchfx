@@ -63,6 +63,21 @@ public sealed class RunAllParseFailureExitCodeTests : IDisposable
             telemetryHook: null,
             cancellationToken: default);
 
+    // The run path: a key that reaches a collection by alias is a parse failure (never a crash,
+    // never exit 0). With every scenario unparseable the Docker-touching call is not reached.
+    [Fact]
+    public async Task ExecuteAsync_CollectionAliasInMappingKey_ReturnsInconclusive_WithoutCrashing()
+    {
+        var file = Path.Combine(_root, "key-alias.e2e.yaml");
+        File.WriteAllText(file, "steps: []\na: &k [ *k ]\nb: { ? *k : v }\n");
+
+        var sw = new StringWriter();
+        var exitCode = await ExecuteAsync(file, sw);
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        Assert.Contains("line 3, column 8: alias 'k' inside a mapping key", sw.ToString(), StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -306,22 +306,25 @@ public sealed class ValidateCommandTests : IDisposable
         Assert.Equal(string.Empty, stderr.ToString());
     }
 
-    // A mapping key holding an alias to its own open anchor overflows the stack inside
+    // A mapping key holding an alias to a collection can overflow the stack inside
     // YamlStream.Load (uncatchable). The pre-scan must turn it into an ordinary parse
     // failure: a non-zero exit, never a crash and never exit 0.
-    [Fact]
-    public void Execute_SelfReferencingMappingKey_ReturnsNonZeroParseFailure_WithoutCrashing()
+    [Theory]
+    [InlineData("steps: []\nbody: { ? &k [ *k ] : v }\n", 2, 16)]
+    [InlineData("steps: []\na: &k [ *k ]\nb: { ? *k : v }\n", 3, 8)]
+    [InlineData("steps: []\na: &k [ one ]\nb: { ? *k : v }\n", 3, 8)]
+    public void Execute_CollectionAliasInMappingKey_ReturnsNonZeroParseFailure_WithoutCrashing(string yaml, int line, int column)
     {
         var sw = new StringWriter();
-        var file = Path.Combine(_root, "self-ref.e2e.yaml");
-        File.WriteAllText(file, "steps: []\nbody: { ? &k [ *k ] : v }\n");
+        var file = Path.Combine(_root, "key-alias.e2e.yaml");
+        File.WriteAllText(file, yaml);
 
         var exitCode = Execute(file, json: false, sw);
 
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
         var text = sw.ToString();
         Assert.Contains("[Parse]", text, StringComparison.Ordinal);
-        Assert.Contains("alias 'k' refers to a node that is still being defined", text, StringComparison.Ordinal);
+        Assert.Contains($"line {line}, column {column}: alias 'k' inside a mapping key", text, StringComparison.Ordinal);
     }
 
     // ── a Failed discovery surfaces its OWN ParseError, not a re-validation ───

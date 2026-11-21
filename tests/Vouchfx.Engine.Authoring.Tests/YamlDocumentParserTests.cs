@@ -14,18 +14,73 @@ namespace Vouchfx.Engine.Authoring.Tests;
 /// </summary>
 public sealed class YamlDocumentParserTests
 {
-    // A mapping key that is a collection holding an alias to its own still-open anchor makes
-    // YamlStream.Load hash the key on insert and recurse until the stack overflows, which no
-    // handler can catch. The pre-scan must refuse it with a located parse error instead.
+    // YamlStream.Load hashes a mapping key on insert, and a sequence hashes by walking all of its
+    // elements with no limit, so a key that reaches a collection through an alias can overflow the
+    // stack (uncatchable) or take exponential time. The pre-scan must refuse every such key with a
+    // located parse error BEFORE Load, so none of these can crash the test host.
     [Theory]
-    [InlineData("body: { ? &k [ *k ] : v }\n")]
-    [InlineData("body: { ? &k { x: *k } : v }\n")]
-    [InlineData("? &k [ *k ] : v\n")]
-    public void Parse_SelfReferentialMappingKey_ThrowsYamlParseExceptionWithLocation_NotStackOverflow(string yaml)
+    [InlineData("body: { ? &k [ *k ] : v }\n", "k", 1, 16)]
+    [InlineData("body: { ? &k { x: *k } : v }\n", "k", 1, 19)]
+    [InlineData("? &k [ *k ] : v\n", "k", 1, 8)]
+    [InlineData("steps: []\na: &k [ *k ]\nb: { ? *k : v }\n", "k", 3, 8)]
+    [InlineData("steps: []\na: &k [ *k ]\n? [ *k ] : v\n", "k", 3, 5)]
+    [InlineData("steps: []\na: &k [ *k ]\nb: { *k : v }\n", "k", 3, 6)]
+    [InlineData("steps: []\na: &k [ *k ]\n*k : v\n", "k", 3, 1)]
+    [InlineData("steps: []\na: &x [ &y [ *x ] ]\nb: { ? *y : v }\n", "y", 3, 8)]
+    [InlineData("steps: []\na: &w [ &k [ *k ], 1 ]\nb: { ? *w : v }\n", "w", 3, 8)]
+    [InlineData("steps: []\na: &k [ x ]\nb: &k [ *k ]\nc: { ? *k : v }\n", "k", 4, 8)]
+    [InlineData("steps: []\na: &k !!seq [ *k ]\nb: { ? !!seq [ *k ] : v }\n", "k", 3, 16)]
+    [InlineData("steps: []\na: &k !!seq [ *k ]\n? !!seq [ *k ] : v\n", "k", 3, 11)]
+    [InlineData("steps: []\na: &k [ *k ]\nb: &j [ *j ]\nc: { ? *k : v, ? *j : w }\n", "k", 4, 8)]
+    [InlineData("steps: []\na: &k [ 1 ]\nb: { ? *k : v }\n", "k", 3, 8)]
+    public void Parse_CollectionAliasInMappingKey_ThrowsYamlParseExceptionWithLocation_NotStackOverflow(
+        string yaml, string anchor, int line, int column)
     {
         var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
-        Assert.True(ex.Line > 0);
-        Assert.Contains("alias 'k' refers to a node that is still being defined", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(line, ex.Line);
+        Assert.Equal(column, ex.Column);
+        Assert.Equal(
+            $"YAML parse error at line {line}, column {column}: alias '{anchor}' inside a mapping key refers to a mapping or sequence; " +
+            "a key may refer by alias only to a scalar.",
+            ex.Message);
+    }
+
+    [Fact]
+    public void Parse_DeepAliasChainUsedAsKey_IsRefusedBeforeLoad()
+    {
+        // 60,000 links: acyclic, but hashing the key would recurse that deep and overflow the stack.
+        var sb = new System.Text.StringBuilder("variables:\n  c: [");
+        for (var i = 0; i < 60_000; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append("&c").Append(i).Append(" [").Append(i == 0 ? "x" : "*c" + (i - 1)).Append(']');
+        }
+
+        sb.Append("]\n  ? *c59999 : v\nsteps: []\n");
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(sb.ToString()));
+        Assert.Equal(3, ex.Line);
+        Assert.Equal(5, ex.Column);
+        Assert.Contains("alias 'c59999' inside a mapping key", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_BillionLaughsKey_IsRefusedPromptly()
+    {
+        var sb = new System.Text.StringBuilder("variables:\n  l0: &l0 [a, b]\n");
+        for (var level = 1; level <= 8; level++)
+        {
+            sb.Append("  l").Append(level).Append(": &l").Append(level).Append(" [")
+              .Append(string.Join(", ", Enumerable.Repeat("*l" + (level - 1), 10))).Append("]\n");
+        }
+
+        sb.Append("  ? *l8 : v\nsteps: []\n");
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(sb.ToString()));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"refusal took {watch.Elapsed}");
+        Assert.Equal(11, ex.Line);
+        Assert.Contains("alias 'l8' inside a mapping key", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

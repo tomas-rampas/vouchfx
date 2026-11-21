@@ -118,6 +118,17 @@ change. Keys are compared by their text, so two keys whose text matches are refu
 case where YAML's own type resolution would distinguish them — `!!str 1:` beside `1:`. That is
 deliberate, and it fails closed.
 
+**A mapping key may refer by alias only to a scalar.** Inside a mapping key, at any depth, an alias
+(`*name`) whose anchor is on a mapping or a sequence is refused at parse time with a YAML parse error
+that names the line and column of the alias, whether the anchor is still being defined
+(`? &k [ *k ] : v`) or was completed earlier. This applies to every YAML file the engine reads: suite
+files and Compose configuration files and the Compose manifests they reference. The loader hashes a
+key when it inserts it and walks everything the key can reach, so a key that reached a cyclic, very
+deep or heavily shared collection would crash the process or take exponential time. An alias to a
+scalar anchor in a key stays legal, as does a collection written out inline in a key (`? [a, b] : v`).
+Aliases anywhere else are untouched, including a value that refers to its own anchor and merge keys
+(`<<: *base`); the rule has one visible consequence: `a: &k [1]` followed by `{ ? *k : v }` is refused.
+
 ### 3.1 The metadata section
 
 The metadata section carries information about the test rather than instructions to the engine. Its fields feed reporting dashboards and let the runner select a subset of tests — for example, only those tagged as a smoke test, or only those owned by a particular team. None of it affects execution.
@@ -633,7 +644,6 @@ A `body` written as a single scalar (plain, quoted or a block scalar) is sent as
 - **Empty values.** A key with no value (`note:`) is null, the same as `null` and `~`. Write `""` or `''` to send an empty string.
 - **Tags.** An explicit YAML core-schema tag decides the type, whether or not the value is quoted: `!!str` makes a string of anything (`!!str 123` is `"123"`); `!!int`, `!!float`, `!!bool` and `!!null` force their type (`!!int "5"` is 5) and refuse a value that does not fit it. `!!int` takes decimal digits with an optional sign (sent exactly, at any length), or `0o`/`0x` followed by octal/hexadecimal digits that fit in 64 bits; `!!float` takes a decimal number with an optional fraction and exponent, but not `.inf` or `.nan`, which JSON cannot represent; `!!bool` takes the six spellings above, not `yes`/`no`/`on`/`off`; `!!null` takes an empty value, `~` or one of the three null spellings. `!!map` and `!!seq` are accepted on a mapping and a sequence, and `!!timestamp` is sent as the text written. Any other tag, such as an application tag like `!money` or `!!binary`, is refused. Schema validation refuses `!!null` anywhere in a suite before the body is converted, so write `null` instead.
 - **Merge keys.** `<<: *base` merges the members of the mapping `base` into the mapping that contains the merge key, and `<<: [*first, *second]` merges several. A key the mapping writes itself wins over a merged one, and within a sequence an earlier mapping wins over a later one. A merged mapping's own merge keys are applied first. The `<<` member itself is not sent; write `"<<"` (quoted) to send a member with that name. Merge keys work at any depth of the body, including inside a sequence.
-- **Self-references.** A node may not contain an alias to itself where that node is a mapping key: `? &k [ *k ] : v` is refused with a YAML parse error that names the line and column, in every file the engine reads, instead of being loaded.
 - **Member order.** Members are sent in the order of the mapping as written. The members a merge key contributes appear where the `<<` key is written, in the merged mapping's own order (for a sequence of mappings, the first mapping's members, then the members of each later mapping not already supplied). A merged member that the mapping overrides is sent once, at the position of the key that overrides it.
 
 ```yaml
