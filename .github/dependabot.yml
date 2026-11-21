@@ -30,8 +30,10 @@
 # to avoid NU1109/NU1605 under transitive pinning (Microsoft.Data.SqlClient, RabbitMQ.Client,
 # System.Text.Json). A Dependabot bump of one of those (or of Aspire.Hosting.*) can fail
 # restore with NU1109/NU1605; resolve it on the PR branch by moving the paired pins together,
-# not by reverting the bump. A System.Text.Json major is the exception: it is held
-# in the nuget `ignore` list below because 11.x ships no net8.0 asset.
+# not by reverting the bump. A System.Text.Json major is the exception: it stays held in
+# the nuget `ignore` list below, although the repository now targets net10.0, because 11.x
+# has no supported asset for the net8.0 provider-contract libraries and the event-wire
+# contract was checked only against 10.x.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -83,8 +85,12 @@ updates:
           - "minor"
           - "patch"
     ignore:
-      # Roslyn follows the pinned .NET 8 SDK's compiler (mcp measured CS9057 on a 5.x bump
-      # under -warnaserror). Scripting and the plain compiler move in lockstep.
+      # Roslyn is pinned to 4.14.x, the line this engine's script compiler and its tests are
+      # validated on. Its major was first held because a 5.x bump produced CS9057 (an analyser
+      # built against a newer compiler than the one running) under -warnaserror with the .NET 8
+      # SDK, as measured in vouchfx-mcp. The repository now builds with the .NET 10 SDK, whose
+      # own compiler is newer than 4.14; a 5.x bump has not been re-measured against it. Held
+      # until a dedicated upgrade measures it. Scripting and the plain compiler move in lockstep.
       - dependency-name: "Microsoft.CodeAnalysis.*"
         update-types: ["version-update:semver-major"]
       # System.CommandLine is pinned to the 2.0.0 GA API surface (see Directory.Packages.props).
@@ -137,20 +143,33 @@ updates:
       # (see PR #662).
       - dependency-name: "Npgsql"
         update-types: ["version-update:semver-major"]
-      # System.Text.Json versions with the .NET release, and its next major can drop older
-      # target frameworks: 11.x ships no net8.0 asset (only net10.0, net11.0, net462 and
-      # netstandard2.0), so on a net8.0 project its build targets report "doesn't support
-      # net8.0", which -warnaserror turns into an error. Held until the repository targets
-      # net10.0 or later. No other runtime-tied package is listed because Dependabot's NuGet
-      # version updates act only on packages a project references directly (a PackageReference,
-      # or a GlobalPackageReference, which this repository does not use). A package that is
-      # only a central transitive pin (a PackageVersion with no PackageReference, such as
-      # System.Security.Cryptography.Pkcs) is not version-updated, so a hold on it would do
-      # nothing there. A runtime-tied package that a project starts referencing directly needs
-      # its own major hold. For security updates, see the note above the Aspire hold.
+      # System.Text.Json versions with the .NET release. Its major stays held although the
+      # repository now targets net10.0: EventContractFreezeTests asserts that the central pin
+      # in Directory.Packages.props is on major 10, the major the event-wire contract was
+      # checked against. The five provider-contract libraries and the two example provider
+      # templates stay on net8.0 (VouchfxProviderContractTargetFramework in
+      # Directory.Build.props), where 11.x has no supported asset: it ships only net10.0,
+      # net11.0, net462 and netstandard2.0, so a net8.0 library that gains it transitively
+      # takes the netstandard2.0 asset, which is unsupported on net8.0. A net10.0 project that
+      # references 11.x directly takes it and ships it beside the application, replacing the
+      # framework serializer the event-wire contract was checked against. Both were measured
+      # with SDK 10.0.115 (see the System.Text.Json pin comment in Directory.Packages.props).
+      # Revisit when the provider-contract libraries leave net8.0 and the event-wire notes
+      # have been re-checked against the new major. Dependabot's NuGet version updates act
+      # only on packages a project references directly (a PackageReference, or a
+      # GlobalPackageReference, which this repository does not use), and no project
+      # references System.Text.Json directly at present, so this hold currently matches no
+      # directly referenced package. It is kept so that a reintroduced direct reference cannot
+      # take 11.x unnoticed. No other runtime-tied package is listed for the same reason: a
+      # package that is only a central transitive pin (a PackageVersion with no
+      # PackageReference, such as System.Security.Cryptography.Pkcs) is not version-updated,
+      # so a hold on it would do nothing there. A runtime-tied package that a project starts
+      # referencing directly needs its own major hold. For security updates, see the note
+      # above the Aspire hold.
       - dependency-name: "System.Text.Json"
         update-types: ["version-update:semver-major"]
-      # MySqlConnector 3.x targets net8.0 and builds clean, but it has not been run against the
+      # MySqlConnector 3.x targets net8.0 (and net10.0) and built clean when the projects that
+      # reference it targeted net8.0; they now target net10.0. It has not been run against the
       # MySQL seed, reset and TLS paths. Held until a dedicated upgrade passes the Docker
       # integration jobs. MySqlConnectorPinGuardTests enforces the 2.6.1 security floor. A
       # security fix that exists only in 3.x may not arrive as a pull request while this hold

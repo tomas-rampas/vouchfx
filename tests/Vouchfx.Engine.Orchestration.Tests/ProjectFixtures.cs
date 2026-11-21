@@ -48,7 +48,7 @@ internal sealed class ProjectFixtures : IDisposable
         File.WriteAllText(
             csproj,
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n" +
-            "    <TargetFramework>net8.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            "    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
 
         if (applicationUrl is not null)
         {

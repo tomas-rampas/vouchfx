@@ -238,7 +238,7 @@ class PublicationTests(unittest.TestCase):
 
     def test_cli_keeps_only_the_exact_tool_settings_contract(self):
         gate.check_package(self.package([(gate.TOOL_SETTINGS, SETTINGS)]))
-        self.refused([(gate.TOOL_SETTINGS, SETTINGS), ("tools/net8.0/any/vouchfx.xml", documentation())],
+        self.refused([(gate.TOOL_SETTINGS, SETTINGS), ("tools/net10.0/any/vouchfx.xml", documentation())],
                      "CLI package contains unexpected XML", library=None)
         self.refused([(gate.TOOL_SETTINGS, SETTINGS.replace("vouchfx.dll", "other.dll"))],
                      "CLI tool-settings contract", library=None)
@@ -257,7 +257,7 @@ class PublicationTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             gate.check_packages(self.directory, VERSION, include_planning=True)
         library = gate.PLANNING
-        self.package([(f"lib/net8.0/{library}.xml", documentation(library=library))],
+        self.package([(f"lib/net10.0/{library}.xml", documentation(library=library))],
                      self.directory / f"{library}.{VERSION}.nupkg")
         gate.check_packages(self.directory, VERSION, include_planning=True)
 

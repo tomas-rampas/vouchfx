@@ -13,7 +13,7 @@
          Scripting package above — they ship in lockstep from the same Roslyn release. -->
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
   </ItemGroup>
-  <ItemGroup Label="Aspire orchestration (§4) — net8.0 compatible">
+  <ItemGroup Label="Aspire orchestration (§4)">
     <PackageVersion Include="Aspire.Hosting" Version="13.4.6" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.4.6" />
     <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.4.6" />
@@ -50,10 +50,24 @@
     <!-- Azure.Messaging.ServiceBus 7.18.2 (via System.Memory.Data) floors System.Text.Json
          at a 6.0.x build vulnerable to CVE-2024-43485 (GHSA-8g4q-xg66-9fp4, .NET DoS;
          Dependabot alerts #31/#32/#56/#57 on the two azureservicebus providers and their
-         tests — the only projects with no Aspire reference to lift them). Pinned to
-         10.0.14, above the 10.0.8 floor Aspire.Hosting.* 13.4.6 imposes everywhere else,
+         tests — the only projects with no Aspire reference to lift them). Pinned to a
+         10.0.x patch (10.0.14 at the time, now 10.0.15), above the 10.0.8 floor
+         Aspire.Hosting.* 13.4.6 imposes everywhere else,
          to avoid NU1109 downgrade errors under CentralPackageTransitivePinningEnabled
-         (the CVE fix landed in 8.0.5; 10.0.8 targets net8.0). -->
+         (the CVE fix landed in 8.0.5; 10.0.8 targets net8.0).
+         Since the move to net10.0 this pin resolves in no project: NuGet prunes a net10.0
+         graph's System.Text.Json edges that the shared framework's version satisfies (every
+         System.Text.Json edge in this solution is one; an edge requiring 11.x or later is not pruned), and
+         none of the net8.0 provider-contract libraries pulls it in. It is kept, unchanged,
+         so that a net8.0 library that later gains a transitive System.Text.Json dependency
+         is held on this patched 10.x line rather than whatever floor that dependency
+         declares. Keep it on 10.x. Measured with SDK 10.0.115: raising it to 11.0.0 still
+         resolves the package in no project of this solution, but a net10.0 project that
+         then references it directly (NU1510 refuses a direct 10.x reference that would be
+         pruned, not an 11.x one) takes 11.x and ships it beside the application, replacing
+         the framework serializer the event-wire notes were measured against; a net8.0
+         library that gains it transitively takes 11.x's netstandard2.0 asset, unsupported
+         on net8.0. EventContractFreezeTests pins this major. -->
     <PackageVersion Include="System.Text.Json" Version="10.0.15" />
   </ItemGroup>
   <ItemGroup Label="CLI runner (S07-C-01) — System.CommandLine GA 2.0.x">
@@ -63,7 +77,7 @@
          betas exposed different ctor overloads (e.g. Argument&lt;T&gt;(name, () =&gt; default, desc)),
          so the version is pinned to keep the API surface this CLI compiles against stable. -->
     <PackageVersion Include="System.CommandLine" Version="2.0.15" />
-    <PackageVersion Include="NuGet.Protocol" Version="7.9.0" />
+    <PackageVersion Include="NuGet.Protocol" Version="8.0.0" />
   </ItemGroup>
   <ItemGroup Label="JSON / Schema / YAML (§5.7)">
     <PackageVersion Include="JsonPath.Net" Version="3.1.0" />
@@ -71,9 +85,9 @@
     <PackageVersion Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
   <ItemGroup Label="Azure Service Bus emulator (mq-publish/expect.azureservicebus)">
-    <!-- Azure.Messaging.ServiceBus 7.18.x: ServiceBusClient, ServiceBusSender,
+    <!-- Azure.Messaging.ServiceBus: ServiceBusClient, ServiceBusSender,
          ServiceBusReceiver (PeekMessagesAsync), ServiceBusAdministrationClient.
-         Pin to a stable 7.18 build; advance at engine cadence, not Azure SDK cadence.
+         Pin to a stable build; advance at engine cadence, not Azure SDK cadence.
          Both mq-publish.azureservicebus and mq-expect.azureservicebus reference this. -->
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.21.0" />
   </ItemGroup>
@@ -96,7 +110,7 @@
          exact required minimum to avoid NU1109 downgrade errors under
          CentralPackageTransitivePinningEnabled. The mq-publish.nats and
          mq-expect.nats providers were authored against this API surface. -->
-    <PackageVersion Include="NATS.Net" Version="3.3.2" />
+    <PackageVersion Include="NATS.Net" Version="3.4.0" />
   </ItemGroup>
   <ItemGroup Label="AWS SDK (db-assert.dynamodb / storage-assert.s3) — pinned to the latest 3.7.x line">
     <!-- AWS SDK v4 (4.0.x) is a recent major rewrite with breaking API changes; the 3.7.x
@@ -106,23 +120,23 @@
     <PackageVersion Include="AWSSDK.DynamoDBv2" Version="3.7.513.4" />
     <PackageVersion Include="AWSSDK.S3" Version="3.7.511.8" />
   </ItemGroup>
-  <ItemGroup Label="Avro / schema-registry (S06) — ship in lockstep with Confluent.Kafka 2.14.2">
-    <!-- Confluent.SchemaRegistry + Serdes.Avro version-match Confluent.Kafka (2.14.2).
-         Apache.Avro is pinned to exactly the version Serdes.Avro 2.14.2 transitively
+  <ItemGroup Label="Avro / schema-registry (S06) — ship in lockstep with Confluent.Kafka">
+    <!-- Confluent.SchemaRegistry + Serdes.Avro version-match Confluent.Kafka.
+         Apache.Avro is pinned to exactly the version Serdes.Avro transitively
          requires, to avoid an NU1605 downgrade warning under TreatWarningsAsErrors. -->
     <PackageVersion Include="Confluent.SchemaRegistry" Version="2.16.0" />
     <PackageVersion Include="Confluent.SchemaRegistry.Serdes.Avro" Version="2.16.0" />
     <PackageVersion Include="Apache.Avro" Version="1.12.2" />
   </ItemGroup>
   <ItemGroup Label="Per-scenario isolation (S04-A-01)">
-    <!-- Respawn 6.x: Respawner.CreateAsync(DbConnection, RespawnerOptions { DbAdapter = DbAdapter.Postgres })
-         then respawner.ResetAsync(connection).  Npgsql adapter is included in Respawn 6.2.1. -->
+    <!-- Respawn: Respawner.CreateAsync(DbConnection, RespawnerOptions { DbAdapter = DbAdapter.Postgres })
+         then respawner.ResetAsync(connection).  the Npgsql adapter is included in Respawn. -->
     <PackageVersion Include="Respawn" Version="7.0.0" />
   </ItemGroup>
   <ItemGroup Label="Test stack">
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
-    <PackageVersion Include="coverlet.collector" Version="10.1.0" />
+    <PackageVersion Include="coverlet.collector" Version="10.1.1" />
   </ItemGroup>
 </Project>

@@ -667,36 +667,42 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
 
             try
             {
-                // The file-path constructor, deliberately: it auto-detects PEM and DER, where
-                // X509Certificate2.CreateFromPem would reject a DER-encoded anchor outright.
-                // (Obsoleted as SYSLIB0057 in .NET 9 in favour of X509CertificateLoader, which
-                // does not exist on this repo's pinned net8.0 target; swap it when the TFM moves.)
+                // X509CertificateLoader.LoadCertificateFromFile, deliberately: it accepts a PEM or
+                // a DER anchor, where X509Certificate2.CreateFromPem would reject a DER-encoded
+                // anchor outright. It replaces the file-path constructor (obsoleted as SYSLIB0057
+                // in .NET 9) now that this project targets net10.0. Unlike that constructor it
+                // loads a single certificate only: measured on Linux / .NET 10.0.15, a PKCS#12
+                // (.pfx) anchor the constructor accepted now fails with CryptographicException
+                // and is refused below, while PEM and DER anchors load as before.
                 //
                 // No X509KeyStorageFlags decision to make here, unlike LoadClient below: a trust
                 // anchor is a public certificate with no private key, so nothing is imported into
-                // any key store and EphemeralKeySet would have nothing to apply to. Measured on
-                // this host — loading the anchor adds zero files to the user CNG key store.
-                return new X509Certificate2(ca.Resolved);
+                // any key store and EphemeralKeySet would have nothing to apply to. Measured with
+                // the replaced constructor on Windows (.NET 8): loading the anchor added zero files
+                // to the user CNG key store. This loader cannot load a private key at all.
+                return X509CertificateLoader.LoadCertificateFromFile(ca.Resolved);
             }
             catch (Exception ex) when (ex is CryptographicException or IOException or UnauthorizedAccessException)
             {
-                // ISSUE #375's sibling shape, substituted here as DEFENCE IN DEPTH — and the
-                // measurement is what makes that the honest word rather than "closed here".
+                // ISSUE #375's sibling shape. The platform's own message is folded into the
+                // diagnostic, so the declared path is substituted back over the resolved one.
                 //
-                // MEASURED on this host (.NET 8, Windows 10.0.26200), the three ways this catch is
-                // reachable through `new X509Certificate2(string)`:
+                // MEASURED on Linux / .NET 10.0.15, through X509CertificateLoader.LoadCertificateFromFile:
                 //
-                //   file missing      CryptographicException "The system cannot find the file specified."
-                //   file locked       CryptographicException "The process cannot access the file ..."
-                //   path is a folder  CryptographicException "Unspecified error"
+                //   file missing      CryptographicException "error:10000080:BIO routines::no such file"
+                //   path is a folder  CryptographicException "ASN1 corrupted data."
+                //   PKCS#12 bundle    CryptographicException (refused; see above)
                 //
-                // None names the path: this constructor goes through CryptoAPI, whose messages are
-                // path-free. So there is no measured leak at THIS site. The substitution is applied
-                // anyway because the filter admits `IOException` and `UnauthorizedAccessException`
-                // too, and those are the .NET types that DO embed the path they tried — the sibling
-                // site below is where that was measured actually happening. One rule at both
-                // catches costs an allocation on an already-failing path and removes the question
-                // of which platform, which runtime and which file-open route is which.
+                // None names the path there. NOT measured on Windows. The earlier measurement
+                // there (.NET 8, Windows 10.0.26200) was of the replaced `new X509Certificate2(string)`
+                // constructor, which went through CryptoAPI and was path-free; it says nothing
+                // about this loader. If the loader opens the file through managed file I/O on
+                // Windows, an IOException or UnauthorizedAccessException carrying the path is
+                // plausible (an inference, not a measurement), and the substitution below is then
+                // what keeps it out of the diagnostic. The filter admits those types for that
+                // reason, as the sibling site below does, where such a leak was measured.
+                // SecurityPathDisclosureLedgerTests.LoadCa_WhenTheAnchorVanishesAfterValidation_*
+                // pins the result on every platform the unit lanes run.
                 throw new SecurityMaterialException(
                     $"{_fieldPathPrefix}.caCert: '{ca.Declared}' could not be read as a certificate " +
                     $"({WithDeclaredPaths(ex.Message, ca)}).",
@@ -798,7 +804,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 // straight to the platform loader as its ReadOnlySpan<char> argument and never
                 // bound to a local, a Vars key or a diagnostic.
                 //
-                // MEASURED against the pinned net8.0 ref pack, because the two overloads do NOT
+                // MEASURED on net8.0, because the two overloads do NOT
                 // take their arguments in the same order and the mistake compiles:
                 //   CreateFromPemFile(string certPemFilePath, string? keyPemFilePath = null)
                 //   CreateFromEncryptedPemFile(string certPemFilePath, ReadOnlySpan<char> password,
@@ -868,8 +874,8 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 // private key sitting in a managed byte[] that nothing ever clears and the GC
                 // may copy while compacting. The password itself is a string and so cannot be
                 // zeroed — an accepted residual, and a far smaller one than the key: the
-                // X509Certificate2(byte[], string, ...) overload is the only portable entry
-                // point, its SecureString sibling is obsolete on non-Windows, and the password
+                // X509CertificateLoader.LoadPkcs12(byte[], string, ...) overload takes the
+                // password as a string (or a span of one), and the password
                 // protects a blob that lives for two statements.
                 var password = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
                 var pkcs12 = pemPair.Export(X509ContentType.Pkcs12, password);
@@ -887,7 +893,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                     // encrypted-key load has no reason to be exempt from any of this: skipping the
                     // round trip on that branch would ship a path that authenticates on Linux and
                     // fails on Windows.
-                    var leaf = new X509Certificate2(pkcs12, password, X509KeyStorageFlags.DefaultKeySet);
+                    var leaf = X509CertificateLoader.LoadPkcs12(pkcs12, password, X509KeyStorageFlags.DefaultKeySet);
                     var intermediates = new List<X509Certificate2>();
                     try
                     {
@@ -896,7 +902,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                         var bundle = ClientCertificateBundle.Parse(File.ReadAllText(_clientCert.Resolved), leaf.RawData);
                         foreach (var der in bundle.Skip(1))
                         {
-                            var candidate = new X509Certificate2(der);
+                            var candidate = X509CertificateLoader.LoadCertificate(der);
                             intermediates.Add(candidate);
                             if (!candidate.Extensions.OfType<X509BasicConstraintsExtension>().Any(extension => extension.CertificateAuthority))
                             {
@@ -994,13 +1000,15 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 }
 
                 // ISSUE #375's SIBLING GAP, AND THIS IS THE ONE THAT WAS MEASURED LEAKING.
-                // Unlike LoadCa's CryptoAPI constructor, `X509Certificate2.CreateFromPemFile`
-                // opens the files through System.IO, so a missing one throws
-                // `FileNotFoundException` — an `IOException`, which this filter admits — carrying
-                // .NET's own text: "Could not find file 'C:\...\client-key.pem'." Measured on this
-                // host, 2026-08-31, alongside the LoadCa cases tabulated above; the two constructors
-                // genuinely differ, which is why the fix is applied at both catches rather than at
-                // whichever one an author happened to hit.
+                // `X509Certificate2.CreateFromPemFile` opens the files through System.IO, so a
+                // missing one throws `FileNotFoundException` — an `IOException`, which this filter
+                // admits — carrying .NET's own text: "Could not find file 'C:\...\client-key.pem'."
+                // Measured on Windows, 2026-08-31. The same Windows measurement found LoadCa's
+                // then-current `new X509Certificate2(string)` constructor path-free (it went
+                // through CryptoAPI); LoadCa now uses X509CertificateLoader, which has not been
+                // measured on Windows (see the comment in LoadCa). The fix is applied at both
+                // catches, rather than at whichever one an author happened to hit, so neither
+                // site depends on how its loader reports a missing file.
                 //
                 // It is REACHABLE, not hypothetical: EnvironmentSecurityValidator existence-checks
                 // both files pre-topology, so arriving here means the file changed between that

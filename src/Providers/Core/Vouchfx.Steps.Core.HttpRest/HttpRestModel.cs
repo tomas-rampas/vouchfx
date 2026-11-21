@@ -71,7 +71,9 @@ public sealed record HttpExpect(
 /// <param name="Body">
 /// An optional request body, stored as a raw template string.  A YAML scalar
 /// body is kept as its literal string; a YAML mapping/sequence body is
-/// serialised to a JSON string at <see cref="HttpRestProvider.Bind"/> time.
+/// serialised to a JSON string at <see cref="HttpRestProvider.Bind"/> time,
+/// following YAML's meaning for merge keys, block scalars, empty values and
+/// explicit core-schema tags (DSL §5.1).
 /// The template is emitted RAW (never pre-resolved): <c>{placeholder}</c> and
 /// <c>${secret:source/path}</c> tokens are resolved at step-execution time
 /// inside the emitted helper's guarded region (§17), exactly like the path and
@@ -80,10 +82,20 @@ public sealed record HttpExpect(
 /// <param name="Expect">
 /// An optional assertion block applied to the HTTP response.
 /// </param>
+/// <param name="BodyRefusal">
+/// Why a structured <c>body</c> could not be converted — it nests or expands past the
+/// bounds, carries a merge key that cannot be applied, or carries a tag that is unsupported
+/// or does not fit its value — or <see langword="null"/> when it converted or no body is
+/// declared. When set, <see cref="Body"/> is <see langword="null"/>; <c>Validate</c>
+/// reports this ASCII message as an authoring refusal naming the step, so
+/// <see cref="HttpRestProvider.Bind"/> never throws for a body the author got wrong. The
+/// message never quotes a body value.
+/// </param>
 public sealed record HttpRestModel(
     string Target,
     string Method,
     string Path,
     IReadOnlyDictionary<string, string>? Headers,
     string? Body,
-    HttpExpect? Expect) : IStepModel;
+    HttpExpect? Expect,
+    string? BodyRefusal = null) : IStepModel;

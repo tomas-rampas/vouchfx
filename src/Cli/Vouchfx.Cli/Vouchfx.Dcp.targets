@@ -41,7 +41,7 @@
     <!-- Distro-built SDKs report a non-portable RID (ubuntu.24.04-x64); match its portable form. -->
     <_VouchfxDcpHostRid>$(NETCoreSdkPortableRuntimeIdentifier)</_VouchfxDcpHostRid>
     <_VouchfxDcpHostRid Condition="'$(_VouchfxDcpHostRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</_VouchfxDcpHostRid>
-    <!-- Aspire 13.4.2 validates DashboardPath as non-empty even when disabled.
+    <!-- Aspire validates DashboardPath as non-empty even when disabled (observed at 13.4.2).
          HeadlessTopology always disables the dashboard; retain that metadata
          contract without restoring or distributing unused dashboard binaries. -->
     <AspireDashboardPath>disabled-by-vouchfx-headless-host</AspireDashboardPath>

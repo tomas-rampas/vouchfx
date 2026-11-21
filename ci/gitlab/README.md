@@ -53,17 +53,19 @@ ready-to-run `vouchfx-run` job that `extends:` it.
 | `VOUCHFX_SCENARIO_PATH` | `.` | Directory (relative to the cloned project root) to search recursively for `*.e2e.yaml`. |
 | `VOUCHFX_REPO_URL` | `$CI_REPOSITORY_URL` | Git URL to clone vouchfx from for the build-from-source install (defaults to the including project, whose CI job token clones a private repo without extra credentials). |
 | `VOUCHFX_REF` | `$CI_COMMIT_SHA` | Git ref (branch, tag, or — recommended — a full commit SHA) of `VOUCHFX_REPO_URL` to build. |
-| `VOUCHFX_DOTNET_IMAGE` | `mcr.microsoft.com/dotnet/sdk:8.0` | SDK image the job runs in. The default is .NET 8. Current source also builds in the `9.0` and `10.0` SDK images because `global.json` uses `rollForward: major` and executables set `RollForward=Major`. Pin to a digest in production. |
+| `VOUCHFX_DOTNET_IMAGE` | `mcr.microsoft.com/dotnet/sdk:10.0` | SDK image the job runs in. The default is .NET 10, which current source (`net10.0`) needs; `global.json` selects a 10.0 SDK. The reusable workflow and the GitLab template now default to the .NET 10 SDK, and releases that target .NET 10 need it. Keep the workflow or include ref and `vouchfx-ref` / `VOUCHFX_REF` on the same release, or set the SDK explicitly: `10.0.x` / `sdk:10.0` for releases that target .NET 10, and `8.0.x` / `sdk:8.0` for releases up to 1.2.1. Releases up to 1.2.1 need a .NET 8 SDK; 1.4.0 and later need a .NET 10 SDK. Pin to a digest in production. |
 | `VOUCHFX_FAIL_ON_ENV_ERROR` | `"false"` | When truthy, append `--fail-on-env-error` (Environment-error verdict fails the job, exit 3). |
 | `VOUCHFX_FAIL_ON_INCONCLUSIVE` | `"false"` | When truthy, append `--fail-on-inconclusive` (Inconclusive verdict fails the job, exit 4). |
 | `VOUCHFX_PREWARM_IMAGES` | `""` | Optional whitespace/newline-separated list of images to `docker pull` before the run (best-effort, non-fatal). Pin each entry to a digest. |
+| `VOUCHFX_SETUP_SCRIPT` | `""` | Optional path (relative to the project root) of a shell script run before the suite, to produce fixture files the suite declares but does not ship. A named-but-missing script fails the job. |
+| `VOUCHFX_TELEMETRY_ENDPOINT`, `VOUCHFX_TELEMETRY_INSTALL_ID`, `VOUCHFX_TELEMETRY_TOKEN` | unset | Optional telemetry. All three must be set for telemetry from CI to activate; set the token as a masked variable and use one GUID per project as the install id. The template header documents them. |
 
 Truthy = `true` / `1` / `yes` / `on` (any case). Anything else (including the `"false"`
 default) contributes no flag.
 
 ## Docker is required (the topology) — and the privileged-runner caveat
 
-vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a Docker
+vouchfx stands up an Aspire container topology, so the job needs a Docker
 daemon. The template uses the standard GitLab **Docker-in-Docker (dind)** pattern: a
 `docker:dind` `services:` entry provides the daemon, and `DOCKER_HOST` + the TLS variables
 point the job's Docker client at it. The default SDK image lacks a Docker client, so
@@ -79,8 +81,8 @@ The template copies the prepared checkout into a second SDK container and builds
 runs vouchfx there with host networking and the daemon's Unix socket. Setup scripts run
 before that copy, so generated fixture paths remain available at the same absolute paths
 inside the runner. Aspire/DCP's loopback proxy endpoints then share the daemon's network
-namespace; merely setting `TESTCONTAINERS_HOST_OVERRIDE` in the sibling job does not
-provide this. The outer connection keeps TLS verification enabled. The inner runner
+namespace. A Testcontainers-style `TESTCONTAINERS_HOST_OVERRIDE` is not needed and has no
+effect on vouchfx. The outer connection keeps TLS verification enabled. The inner runner
 receives the job's exported environment through a private temporary file, resets Docker
 access to the local socket, and is removed when the script exits. The build runs before
 the suite in its own `docker exec`; if it fails, the job exits with the build's code,
@@ -114,12 +116,15 @@ in the GitHub template. A consumer tracking a released engine pins `VOUCHFX_REF`
 tag (e.g. the stable `v1.0.0` baseline), still as a source build. A packaged-tool install could become an
 optional mode later; the install step is intentionally the only thing that would change.
 
-The default image is .NET 8. Set `VOUCHFX_DOTNET_IMAGE` to
-`mcr.microsoft.com/dotnet/sdk:9.0` or `mcr.microsoft.com/dotnet/sdk:10.0` (pinned to a digest in
-production) to build current source on that SDK. The image is the whole runtime boundary: unlike
+The default image is .NET 10 (pin it to a digest in production). The image is the whole runtime
+boundary: unlike
 [the GitHub workflow](../../docs/ci-integration.md#isolated-sdk-on-github-actions), this template
-does not remove an extra major that the image already contains. A `net8.0` executable uses .NET 8
-when that runtime is present and rolls forward only when it is absent.
+does not remove an extra major that the image already contains. Because the template builds
+vouchfx from source, the image must contain a .NET 10 SDK (10.0.100 or a later 10.0 feature
+band): `global.json` refuses an image that has only a newer-major SDK. Roll-forward applies only
+to running the built CLI: the `net10.0` executable uses .NET 10 when that runtime is present and
+rolls forward to a newer major only when it is absent. In this template the image always contains
+the .NET 10 SDK, so the built CLI always runs on the image's .NET 10 runtime.
 
 ## Exit-code gating (verdict taxonomy §12.1)
 
@@ -152,7 +157,7 @@ GitLab pipeline / MR test report. `expire_in: 7 days` mirrors the GitHub `retent
 - **Pin the `include:` `ref:` to a full commit SHA**, not a moving branch/tag.
 - **Pin `VOUCHFX_REF` to a commit SHA or release tag**, never a branch.
 - **Pin every `VOUCHFX_PREWARM_IMAGES` entry to an image digest** (`name@sha256:…`).
-- **Pin `VOUCHFX_DOTNET_IMAGE` to a digest** (`mcr.microsoft.com/dotnet/sdk:8.0@sha256:…`).
+- **Pin `VOUCHFX_DOTNET_IMAGE` to a digest** (`mcr.microsoft.com/dotnet/sdk:10.0@sha256:…`). A digest of an `sdk:8.0` image, pinned for an older `VOUCHFX_REF`, must be replaced by an `sdk:10.0` digest when `VOUCHFX_REF` moves to a release that targets .NET 10. The reusable workflow and the GitLab template now default to the .NET 10 SDK, and releases that target .NET 10 need it. Keep the workflow or include ref and `vouchfx-ref` / `VOUCHFX_REF` on the same release, or set the SDK explicitly: `10.0.x` / `sdk:10.0` for releases that target .NET 10, and `8.0.x` / `sdk:8.0` for releases up to 1.2.1. Releases up to 1.2.1 need a .NET 8 SDK; 1.4.0 and later need a .NET 10 SDK.
 
 (The defaults in the template use tags only to stay legible; production callers should
 supply digests — mirroring the GitHub header guidance.)
@@ -166,7 +171,7 @@ supply digests — mirroring the GitHub header guidance.)
 | Scenario path | `scenario-path` (default `.`) | `VOUCHFX_SCENARIO_PATH` (default `.`) |
 | vouchfx source | `vouchfx-repo` (default `${{ github.repository }}`) | `VOUCHFX_REPO_URL` (default `$CI_REPOSITORY_URL`) |
 | vouchfx ref | `vouchfx-ref` (default `${{ github.sha }}`) | `VOUCHFX_REF` (default `$CI_COMMIT_SHA`) |
-| .NET SDK | `dotnet-version` (default `8.0.x`; .NET 8, 9 or 10) installed by `setup-dotnet` into an isolated tree, then reduced to that major | `VOUCHFX_DOTNET_IMAGE` (default `mcr.microsoft.com/dotnet/sdk:8.0`; `9.0` and `10.0` images also build current source). The image is the boundary; extra majors inside it are left in place |
+| .NET SDK | `dotnet-version` (default `10.0.x`; `8.0` and `9.0` are accepted for an older `vouchfx-ref`) installed by `setup-dotnet` into an isolated tree, then reduced to that major | `VOUCHFX_DOTNET_IMAGE` (default `mcr.microsoft.com/dotnet/sdk:10.0`, which current source needs). The image is the boundary; extra majors inside it are left in place |
 | Docker for topology | runner provides Docker (`ubuntu-latest`) | `docker:dind` service + `DOCKER_HOST`/TLS for the job; the engine runs in an owned SDK container on the daemon's network and Unix socket (privileged runner; socket-bind alternative) |
 | Install | checkout vouchfx → `dotnet build -c Release` | `git clone` vouchfx → `dotnet build -c Release` |
 | Image pre-warm | `prewarm-images`, per-image `docker pull \|\| echo` (best-effort) | `VOUCHFX_PREWARM_IMAGES`, per-image `docker pull \|\| echo` (best-effort) |
@@ -216,9 +221,11 @@ supply digests — mirroring the GitHub header guidance.)
   its own `docker exec` before the suite, so a failed build keeps its exit code and prints
   no verdict legend; and no longer sets `TESTCONTAINERS_HOST_OVERRIDE`, which the runner
   script already cleared before starting the engine. These three post-release changes
-  remain under `Unreleased`; the live acceptance below does not make them part of Core 1.2.0.
+  shipped in Core 1.2.1; the live acceptance below exercised them before that release.
 
 ### Live verification, 23 October 2026 (UTC)
+
+This measurement used the `sdk:8.0` image and predates the .NET 10 default image, which has not been measured on GitLab SaaS.
 
 Template and engine source were both pinned to
 `93881722b5ccba2631814394d76f10e7dd36568e`; the private acceptance consumer was

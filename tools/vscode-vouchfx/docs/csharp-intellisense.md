@@ -10,9 +10,9 @@ recorded").
 
 | Capability | v1 | How |
 | --- | --- | --- |
-| YAML schema autocomplete / hover / validation | ✅ Shipped | Frozen v1 JSON Schema bound via `contributes.yamlValidation`, served by the Red Hat YAML language server (delivered in T6). |
-| **C# syntax highlighting** inside `code:` blocks | ✅ Shipped (this task) | A TextMate **injection** grammar (`syntaxes/csharp-in-e2eyaml.injection.json`) embeds VSCode's built-in C# grammar (`source.cs`) into the YAML block scalar that follows a `code:` key. Colours keywords, strings, member access, etc. |
-| **In-block C# IntelliSense** (completion, hover, diagnostics, go-to-def) | ❌ Deferred fast-follow | See below. Target: a later sprint (e.g. **S10**). |
+| YAML schema autocomplete / hover / validation | ✅ Shipped | Frozen v1 JSON Schema bound via `contributes.yamlValidation`, served by the Red Hat YAML language server. |
+| **C# syntax highlighting** inside `code:` blocks | ✅ Shipped | A TextMate **injection** grammar (`syntaxes/csharp-in-e2eyaml.injection.json`) embeds VSCode's built-in C# grammar (`source.cs`) into the YAML block scalar that follows a `code:` key. Colours keywords, strings, member access, etc. |
+| **In-block C# IntelliSense** (completion, hover, diagnostics, go-to-def) | ❌ Deferred fast-follow | See below. Planned for a later release. |
 
 Syntax highlighting is colour only — it runs entirely inside the TextMate
 tokeniser and needs no language service, no project, and no network. It does
@@ -49,7 +49,7 @@ This is deferred for concrete, current reasons:
   between the two coordinate spaces, including the synthetic preamble offset.
 - **A custom Roslyn LSP (Option B)** — hosting our own Roslyn workspace seeded
   with the engine reference and serving completion/diagnostics over the embedded
-  range — is the robust long-term answer, but it is a **multi-sprint effort**
+  range — is the robust long-term answer, but it is a **larger effort**
   (workspace lifecycle, incremental parse, the same position-mapping, packaging
   the Roslyn host with the extension).
 

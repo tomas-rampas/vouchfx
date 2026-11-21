@@ -135,7 +135,7 @@ public sealed class StorageAssertS3ProtocolTests
         Assert.Equal(expected, result.Outcome.Verdict);
         Assert.Equal(getRequests, peer.Requests.Count(x => x.Method == "GET"));
         if (expected == Verdict.Fail)
-            Assert.Equal("bodyCap", JsonDocument.Parse(result.Outcome.Observation!).RootElement.GetProperty("field").GetString());
+            Assert.Equal("bodyCap", JsonElement.Parse(result.Outcome.Observation!).GetProperty("field").GetString());
     }
 
     [Fact]
@@ -148,7 +148,7 @@ public sealed class StorageAssertS3ProtocolTests
         Trace(peer, result);
         Assert.Equal(Verdict.Fail, result.Outcome.Verdict);
         Assert.DoesNotContain("canary", result.Outcome.Observation!, StringComparison.Ordinal);
-        Assert.Equal(18, JsonDocument.Parse(result.Outcome.Observation!).RootElement.GetProperty("bodyLength").GetInt32());
+        Assert.Equal(18, JsonElement.Parse(result.Outcome.Observation!).GetProperty("bodyLength").GetInt32());
         Assert.Equal(s_headGetMethods, peer.Requests.Select(x => x.Method));
     }
 

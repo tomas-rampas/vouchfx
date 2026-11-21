@@ -15,8 +15,8 @@ spec.loader.exec_module(checker)
 
 class DistributionTests(unittest.TestCase):
     def fixture(self, path):
-        root = "tools/net8.0/any/dcp/13.4.2/"
-        files = {"tools/net8.0/any/dcp/supported-rids.txt": "\n".join(sorted(checker.SUPPORTED_RIDS)).encode()}
+        root = "tools/net10.0/any/dcp/13.4.2/"
+        files = {"tools/net10.0/any/dcp/supported-rids.txt": "\n".join(sorted(checker.SUPPORTED_RIDS)).encode()}
         for rid in checker.SUPPORTED_RIDS:
             tools = root + rid + "/tools/"
             executable = "dcp.exe" if rid == "win-x64" else "dcp"
@@ -59,7 +59,7 @@ class DistributionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "tool.nupkg"
             files = self.fixture(path)
-            name = "tools/net8.0/any/dcp/13.4.2/linux-x64/tools/dcp"
+            name = "tools/net10.0/any/dcp/13.4.2/linux-x64/tools/dcp"
             files[name] += b"corruption"
             self.write(path, files)
             with self.assertRaisesRegex(checker.InvalidDistribution, "SHA256 mismatch"):
@@ -79,7 +79,7 @@ class DistributionTests(unittest.TestCase):
             cache = root / "nuget"
             files = self.fixture(path)
             for rid in checker.SUPPORTED_RIDS:
-                prefix = f"tools/net8.0/any/dcp/13.4.2/{rid}/tools/"
+                prefix = f"tools/net10.0/any/dcp/13.4.2/{rid}/tools/"
                 source = cache / f"aspire.hosting.orchestration.{rid}" / "13.4.2" / "tools"
                 for name, data in files.items():
                     if name.startswith(prefix):
@@ -87,7 +87,7 @@ class DistributionTests(unittest.TestCase):
                         target.parent.mkdir(parents=True, exist_ok=True)
                         target.write_bytes(data)
             checker.validate_package(path, "13.4.2", cache)
-            name = "tools/net8.0/any/dcp/13.4.2/osx-arm64/tools/NOTICE"
+            name = "tools/net10.0/any/dcp/13.4.2/osx-arm64/tools/NOTICE"
             files[name] = b"changed notice"
             self.write(path, files)
             with self.assertRaisesRegex(checker.InvalidDistribution, "differs from restored NuGet"):
@@ -97,7 +97,7 @@ class DistributionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "tool.nupkg"
             files = self.fixture(path)
-            prefix = "tools/net8.0/any/dcp/13.4.2/linux-x64/tools/"
+            prefix = "tools/net10.0/any/dcp/13.4.2/linux-x64/tools/"
             files[prefix + "dcp"] = b"wrong binary format"
             manifest_path = prefix + "_manifest/spdx_2.2/manifest.spdx.json"
             manifest = json.loads(files[manifest_path])

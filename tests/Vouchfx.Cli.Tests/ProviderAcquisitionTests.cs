@@ -93,6 +93,24 @@ public sealed class ProviderAcquisitionTests
         Assert.Contains(installed.PackageSha256!.Keys, key => key.Contains(dependency + ".2.0.0", StringComparison.OrdinalIgnoreCase));
     }
 
+    // Provider packages are resolved for net8.0 only, even though the CLI itself runs on
+    // net10.0: a provider built for the frozen net8.0 contract loads in older and current
+    // CLIs alike. A package carrying only lib/net10.0 assets is therefore refused, not
+    // silently installed. Unlike the net9.0-only dependency test above, which covers a
+    // skipped dependency version on the success path, this covers the refusal of the root
+    // package itself: the exact dependency-graph diagnostic and no store or transaction residue.
+    [Fact]
+    public async Task Net10_only_provider_package_is_refused_with_the_dependency_graph_diagnostic_and_nothing_installed()
+    {
+        var feed = Temp(); var root = Temp(); var id = Unique();
+        Package(feed, id, "1.0.0", Compile(Temp(), id, Provider), framework: "net10.0");
+        var store = new ProviderStore(root);
+        var refusal = await Assert.ThrowsAsync<ProviderLoadException>(() => store.InstallAsync(id, null, feed, CancellationToken.None));
+        Assert.Equal("Provider dependency graph has incompatible version ranges, host assemblies or lib assets for the net8.0 provider contract framework.", refusal.Message);
+        Assert.Empty(store.List());
+        Assert.Empty(Directory.GetFileSystemEntries(Transactions(root)));
+    }
+
     [Fact]
     public async Task Failed_promotion_restores_previous_version_and_removes_transaction_files()
     {
@@ -571,7 +589,7 @@ public sealed class ProviderAcquisitionTests
     private static string Compile(string directory, string name, string source, params string[] extra)
     {
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
-            .Append(typeof(IStepProvider).Assembly.Location).Concat(extra).Distinct().Select(path => MetadataReference.CreateFromFile(path));
+            .Append(typeof(IStepProvider).Assembly.Location).Concat(extra).Distinct().Select(PlatformMetadataReferences.Get);
         var compilation = CSharpCompilation.Create(name, new[] { CSharpSyntaxTree.ParseText(source) }, references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         var path = Path.Combine(directory, name + ".dll"); var emitted = compilation.Emit(path);

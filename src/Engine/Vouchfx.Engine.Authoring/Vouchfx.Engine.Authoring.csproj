@@ -2,6 +2,9 @@
 
   <PropertyGroup>
     <RootNamespace>Vouchfx.Engine.Authoring</RootNamespace>
+    <!-- Published provider-facing closure: stays on the v1.x net8.0 baseline
+         (see Directory.Build.props). -->
+    <TargetFramework>$(VouchfxProviderContractTargetFramework)</TargetFramework>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- Opts OUT of the repo-wide CS1591/CS1573 suppression (Directory.Build.targets):
          this project enforced both as build errors before that default existed, and its

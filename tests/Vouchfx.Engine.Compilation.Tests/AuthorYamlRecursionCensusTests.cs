@@ -21,7 +21,17 @@ namespace Vouchfx.Engine.Compilation.Tests;
 public sealed class AuthorYamlRecursionCensusTests
 {
     private const string ProvidersRoot = "src/Providers";
-    private const string KnownWalk = "Core/Vouchfx.Steps.Core.HttpRest/HttpRestProvider.cs:HttpRestProvider.YamlToJsonElement";
+
+    // ZEB-67: the http.rest body conversion lives in its own shared-source file (also linked
+    // into Vouchfx.Engine.Runtime for the secret-reference census) and has TWO reviewed
+    // recursive walks: the JSON walk, and merge-key resolution, which recurses through
+    // merged mappings. Both carry the depth bound and draw on the one node budget.
+    private const string BodyFile = "Core/Vouchfx.Steps.Core.HttpRest/HttpRestBodyConversion.cs:HttpRestBodyConversion.";
+    private static readonly string[] s_knownWalks =
+    {
+        BodyFile + "ResolveEntries",
+        BodyFile + "ToJsonNode",
+    };
 
     [Fact]
     public void AuthorYamlRecursiveWalks_AreExactlyTheReviewedBoundedMethods()
@@ -40,20 +50,20 @@ public sealed class AuthorYamlRecursionCensusTests
                 Path.GetRelativePath(root, path).Replace('\\', '/')))
             .ToArray();
 
-        Assert.Equal(new[] { KnownWalk }, walks.Select(walk => walk.Identity).OrderBy(name => name));
+        Assert.Equal(s_knownWalks, walks.Select(walk => walk.Identity).OrderBy(name => name, StringComparer.Ordinal));
         foreach (var walk in walks)
         {
             Assert.True(HasBoundParameters(walk.Method), $"{walk.Identity} must carry int depth and ref int budget parameters.");
-        }
 
-        // Pin the existing backstop's use of the counters as well as its signature. These
-        // assertions are deliberately specific to the sole reviewed walk, not a generic claim
-        // that a similarly named counter in an unknown provider is actually enforced.
-        var body = Assert.Single(walks).Method.Body!.ToString();
-        Assert.Contains("depth > MaxBodyDepth", body, StringComparison.Ordinal);
-        Assert.Contains("--budget < 0", body, StringComparison.Ordinal);
-        Assert.Contains("depth + 1", body, StringComparison.Ordinal);
-        Assert.Contains("ref budget", body, StringComparison.Ordinal);
+            // Pin each reviewed walk's use of the counters as well as its signature. These
+            // assertions are deliberately specific to the reviewed walks, not a generic claim
+            // that a similarly named counter in an unknown provider is actually enforced.
+            var body = walk.Method.Body!.ToString();
+            Assert.Contains("depth > MaxBodyDepth", body, StringComparison.Ordinal);
+            Assert.Contains("--budget < 0", body, StringComparison.Ordinal);
+            Assert.Contains("depth + 1", body, StringComparison.Ordinal);
+            Assert.Contains("ref budget", body, StringComparison.Ordinal);
+        }
     }
 
     [Theory]

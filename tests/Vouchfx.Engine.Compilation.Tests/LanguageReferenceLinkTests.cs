@@ -185,7 +185,7 @@ public sealed class LanguageReferenceLinkTests
 
         Assert.True(dir is not null, "No ancestor of the test output directory contains vouchfx.sln.");
 
-        var path = Path.Combine(dir!.FullName, Path.Combine(relativePath));
+        var path = Path.Combine(relativePath.Prepend(dir!.FullName).ToArray());
         Assert.True(File.Exists(path), $"{string.Join('/', relativePath)} was not found under the repository root.");
         return File.ReadAllText(path).ReplaceLineEndings("\n");
     }

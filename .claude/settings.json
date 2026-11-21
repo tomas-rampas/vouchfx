@@ -14,18 +14,5 @@
       "mcp__Linear__share_issue",
       "mcp__Linear__delete_*"
     ]
-  },
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start.sh",
-            "timeout": 600
-          }
-        ]
-      }
-    ]
   }
 }

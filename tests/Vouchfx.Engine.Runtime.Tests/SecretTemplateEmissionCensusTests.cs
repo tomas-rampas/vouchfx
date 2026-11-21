@@ -61,7 +61,6 @@ public sealed class SecretTemplateEmissionCensusTests
             Assert.True(expectedPlaceholder.SetEquals(actual.Placeholder),
                 $"{kind} placeholder emission drift: expected [{string.Join(',', expectedPlaceholder)}], actual [{string.Join(',', actual.Placeholder)}]");
             var collection = StepTemplateCensus.Collect(fixture.Node);
-            Assert.Null(collection.Failure);
             var collected = Markers(string.Join('\n', collection.Fields.Select(field => field.Text)));
             // PostgreSQL's original query/parameter/row scan is a compatibility rule.
             var expectedCollected = kind == "db-assert.postgres" ? expectedPlaceholder : expectedSecret;

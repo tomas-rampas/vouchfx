@@ -1,8 +1,8 @@
 # Security Policy
 
 vouchfx compiles declarative `.e2e.yaml` integration tests into C#, runs them
-through Roslyn, and orchestrates container topologies (.NET Aspire +
-Testcontainers) to test distributed .NET systems end-to-end. Because it executes
+through Roslyn, and orchestrates container topologies (.NET Aspire)
+to test distributed .NET systems end-to-end. Because it executes
 generated code in privileged CI and handles references to secrets, we take
 security reports seriously and aim to respond quickly and transparently.
 
@@ -25,8 +25,7 @@ Report privately by **either** of these routes:
 
 2. **Email.** Write to **`security@vouchfx.invalid`**.
    > ⚠️ **Placeholder address.** `security@vouchfx.invalid` is a deliberate
-   > placeholder — no mailbox is provisioned yet (vouchfx is pre-1.0 adoption
-   > stage). Until a real security contact and monitored inbox exist, **use the
+   > placeholder — no mailbox is provisioned yet. Until a real security contact and monitored inbox exist, **use the
    > GitHub private-advisory route above**, which works today. Replacing this
    > placeholder with a real, monitored address is a tracked governance item.
 
@@ -46,7 +45,7 @@ A good report lets us reproduce and triage fast. Please include, where possible:
 - Any **proof-of-concept**, logs, or stack traces (redact your own secrets
   first — see the secrets note below).
 - The **configuration** in play: OS, .NET SDK version, Aspire/Docker versions,
-  and whether you ran locally, in CI, or against a SaaS/on-prem fabric.
+  and whether you ran locally or in CI.
 - Your assessment of **severity** and any known mitigations or workarounds.
 
 > 🔐 **Redact secrets before sending.** vouchfx references secrets by reference
@@ -91,10 +90,7 @@ golden-file CI gates. Security fixes land on the latest v1.x release.
 | Version | Supported          | Notes |
 | ------- | ------------------ | ----- |
 | 1.x     | :white_check_mark: | Active development; security fixes land here. |
-| < 1.0   | :x:                | Pre-release/adoption builds — upgrade to the latest 1.x. |
-
-When a `0.x`/pre-1.0 series is published, only the latest minor receives security
-fixes; please upgrade rather than relying on an older pre-release.
+| < 1.0   | :x:                | Alpha and release-candidate builds of 1.0.0 — upgrade to the latest 1.x. |
 
 ## Published 1.2.1 tool and GHSA-473q-m89c-ghf8
 
@@ -122,7 +118,7 @@ setting was found under `Vouchfx.Steps.DbAssert.Mysql`; connection strings may
 come from the suite or the system under test.
 
 On 1.2.1, avoid `VerifyCA` or `VerifyFull` without a configured CA (set
-`SslCa`), or upgrade to 1.3.0 or later once published (those releases include
+`SslCa`), or upgrade to 1.4.0 or later once published (those releases include
 MySqlConnector >= 2.6.1).
 
 This notice records the library version inside that published package and the
@@ -135,8 +131,8 @@ Every published `vouchfx` tool in the v1.x series bundles the
 `Aspire.Hosting` and `Aspire.Hosting.AppHost` DLLs at the 13.4.x release
 pinned at its release tag, and every 13.4.x release is inside the advisory's
 range. Releases up to and including v1.2.1 bundle 13.4.2; the published
-packages for v1.0.4, v1.1.0, v1.2.0 and v1.2.1 were inspected. The first
-release that includes the Aspire 13.4.6 update recorded in `CHANGELOG.md`
+packages for v1.0.4, v1.1.0, v1.2.0 and v1.2.1 were inspected. v1.4.0, the
+first release that includes the Aspire 13.4.6 update recorded in `CHANGELOG.md`,
 bundles 13.4.6, a patch update that does not fix this advisory; later v1.x
 releases bundle the 13.4.x release pinned at their tag. The tool bundles no
 Aspire dashboard binaries. 13.4.2 and 13.4.6 are inside
@@ -223,11 +219,10 @@ audit suppression for this advisory.
 Security issues in the parts of this repository the project maintains:
 
 - **The engine** (`Vouchfx.Engine.*`): compilation (parser → AST → CSX →
-  Roslyn), orchestration (Aspire AppHost / Testcontainers), execution (the
+  Roslyn), orchestration (Aspire AppHost), execution (the
   collectible `AssemblyLoadContext` host, Polly resilience), and reporting.
-- **The Core providers** (`Vouchfx.Steps.*` under `src/Providers/Core`):
-  `http.rest`, `db-assert.postgres`, `script.csharp`, `mq-publish.kafka`,
-  `mq-expect.kafka`, `webhook-listen.http`.
+- **The Core providers**: all twenty-five (`Vouchfx.Steps.*` under
+  `src/Providers/Core`).
 - **The Provider SDK** (`src/Sdk`) — the frozen v1 interface contract.
 - **The CI templates and release workflow** we publish for consumers
   (`.github/workflows/`, `ci/`) — a software-supply-chain surface reviewed as
@@ -238,7 +233,7 @@ Security issues in the parts of this repository the project maintains:
 
 Representative concerns we want to hear about: code-injection through the
 YAML→CSX compilation path, escaping the collectible `AssemblyLoadContext`
-sandboxing/assembly-graph hygiene, a customer DLL bridging the
+(it is not a sandbox) or the assembly-graph hygiene rules, a customer DLL bridging the
 `ScriptGlobalVariables` boundary, secret-value leakage into logs/the
 reproducibility envelope, container-teardown flaws that orphan resources or
 networks, and supply-chain weaknesses in the CI/release templates.
@@ -291,4 +286,4 @@ highest-impact (every-consumer) and supply-chain surfaces.
 
 _This policy is a living document. The security contact address, the team
 handles in CODEOWNERS, and the disclosure SLAs will be confirmed as the project
-moves from adoption stage to a stable v1 release._
+matures within the stable v1 series._

@@ -8,7 +8,7 @@ vouchfx providers emit source fragments that the engine compiles into the suite.
 
 ### Getting Started
 
-**Install the Provider SDK.** Reference the [`Vouchfx.Sdk`](https://www.nuget.org/packages/Vouchfx.Sdk) NuGet package in your project. This package is the frozen v1 contract — all interfaces and types you need to implement. Stable SDK packages are published on NuGet.org; the snippets below use the `1.0.0` provider-contract baseline.
+**Install the Provider SDK.** Reference the [`Vouchfx.Sdk`](https://www.nuget.org/packages/Vouchfx.Sdk) NuGet package in a class library that targets `net8.0`, the frozen contract target framework (a new project defaults to the SDK's own target framework, so set it explicitly; `vouchfx providers install` selects `net8.0`-compatible assets (a `net10.0`-only package is refused), and a `net8.0` provider loads into the .NET 10 CLI). This package is the frozen v1 contract — all interfaces and types you need to implement. Stable SDK packages are published on NuGet.org; the snippets below use the `1.0.0` provider-contract baseline.
 
 ```xml
 <PackageReference Include="Vouchfx.Sdk" Version="1.0.0" />
@@ -66,7 +66,7 @@ The reflective `StepKindRegistry` discovers your provider at suite startup by sc
 
 ### The Hard Rules: CsxFragment Composition (§13.3.1 of the Blueprint)
 
-When your `IStepCompiler<TModel>` emits a `CsxFragment`, three strict rules prevent collisions between providers and keep the memory model sound:
+When your `IStepCompiler<TModel>` emits a `CsxFragment`, five strict rules prevent collisions between providers and keep the memory model sound:
 
 **1. Three fields only.**
 
@@ -206,6 +206,8 @@ dotnet test YourProvider.Tests -c Release --filter "requires!=docker"
 
 **Include Docker integration tests** if your provider uses infrastructure. You would author those tests against the engine's topology in the repository's own test suite, or ship your provider as a separate repository with its own Docker-based integration fixture.
 
+Pull requests to this repository do not run the Docker suites automatically. If your change touches a provider or the topology, run them before you ask for merge. If you work from a fork, run the `requires=docker` tests locally, or run the `CI` and `.NET compatibility` workflows from your own fork's Actions tab once Actions is enabled there (select **Run workflow** and pick your branch). Maintainers with write access can dispatch them on a branch of this repository.
+
 ### Governance Tiers
 
 All vouchfx providers are governed in two tiers, all Apache-2.0. This is how the community grows the platform without the platform team implementing every database or broker.
@@ -257,6 +259,8 @@ Refer to:
 ## Contributing to the Platform
 
 If you want to contribute to the vouchfx engine itself (rather than writing a provider), start with the [public roadmap](docs/roadmap.md) for where the project is heading, and the architecture and specification documents in [`docs/`](docs/) for how the system is built. [`GOVERNANCE.md`](GOVERNANCE.md) describes how decisions are made.
+
+The Docker integration suites no longer run on pull requests or pushes; they run daily on `main` and on manual dispatch. If your change touches orchestration, topology or the engine, run them on your branch before merging. [This repository's own CI layout](docs/ci-integration.md#this-repositorys-own-ci-layout) explains how.
 
 All contributions must honour the hard invariants in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
 

@@ -16,7 +16,7 @@ implementation, not a claim that every release requirement or open defect is res
 
 - **The compile-once memory model** — `.e2e.yaml` compiles through Roslyn exactly once into a collectible
   `AssemblyLoadContext`; a memory-leak regression test over the full provider closure is a permanent CI gate.
-- **Health-gated orchestration** — headless .NET Aspire + Testcontainers topologies, started deterministically
+- **Health-gated orchestration** — headless .NET Aspire topologies, started deterministically
   and torn down cleanly.
 - **Twenty-five Core providers across eleven step families** — `http.rest`, `http.soap`; `db-assert` for PostgreSQL, MySQL,
   SQL Server, MongoDB and DynamoDB; `mq-publish`/`mq-expect` for Kafka, RabbitMQ, NATS, Azure Service Bus and
@@ -39,9 +39,9 @@ implementation, not a claim that every release requirement or open defect is res
   confirmation probe connects with the same material a step will and reports a named level —
   `TransportConfirmed`, or `AuthenticatedRoundTrip` where the engine can complete a protocol round trip
   and, under `mtls`, show that the peer *refused* an anonymous client. A declaration the engine cannot
-  confirm breaks CI with no gating flags set — one of four deliberate exceptions to "only `Fail` breaks
-  CI by default" (the others are a parse failure, a suite refused before anything ran, and a scenario
-  refused at a provider- or engine-surface guard; see
+  confirm breaks CI with no gating flags set — one of five deliberate exceptions to "only `Fail` breaks
+  CI by default" (the others are a parse failure, a suite refused before anything ran, a scenario
+  refused at a provider- or engine-surface guard, and a typed authoring, schema or compilation refusal; see
   [CI integration](ci-integration.md)). Which technologies this reaches, and which it does not, is set out per integration in the
   [security compatibility matrix](security-matrix.md).
 - **Frozen public contracts** — golden files guard the language schema, provider SDK surface and
@@ -65,7 +65,8 @@ implementation, not a claim that every release requirement or open defect is res
   ambiguity. Every gap finding carries structured hints the `scaffold` tool consumes. Docker-free; human-readable summary and JSON output;
   configurable health thresholds; taxonomy-aware exit codes including exit 5 for gaps (with `--fail-on-gap`).
 - **A headless CLI** with tag/owner/path/change-set selection, taxonomy-aware exit codes (only `Fail` breaks
-  CI by default), parallel topology-per-scenario runs, and watch mode.
+  CI by default), parallel topology-per-scenario runs, watch mode, and an opt-in `--isolate-compile`
+  mode that compiles each scenario in a one-shot child process while execution stays in the CLI.
 - **Editor tooling** — a VSCode extension with schema-driven validation and autocomplete, C# highlighting in
   `script.csharp` blocks, and Test Explorer integration.
 - **CI integration** — a reusable GitHub Actions workflow and an `include`-able GitLab CI template.

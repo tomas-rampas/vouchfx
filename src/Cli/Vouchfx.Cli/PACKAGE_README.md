@@ -2,7 +2,7 @@
 
 **End-to-end integration testing for distributed systems, authored in YAML.**
 
-vouchfx compiles declarative `.e2e.yaml` tests into memory-safe C# (via Roslyn), orchestrates the container topology your system needs with **.NET Aspire + Testcontainers**, and executes one business transaction as it crosses a REST call, a message-broker event, a database mutation and an outbound webhook — the seams where distributed systems actually break. It is not a unit-test framework and not a UI/browser tool.
+vouchfx compiles declarative `.e2e.yaml` tests into memory-safe C# (via Roslyn), orchestrates the container topology your system needs with **.NET Aspire**, and executes one business transaction as it crosses a REST call, a message-broker event, a database mutation and an outbound webhook — the seams where distributed systems actually break. It is not a unit-test framework and not a UI/browser tool.
 
 ## Install
 
@@ -17,8 +17,9 @@ dotnet tool update --global vouchfx
 
 These commands select the latest stable release. For intentional preview validation, select the matching prerelease version explicitly.
 
-Requires the .NET 8, 9 or 10 SDK and a running Docker engine with Linux containers. The tool keeps
-a `net8.0` binary baseline and rolls forward when only a newer supported runtime is installed.
+Requires the .NET 10 runtime or SDK (or a newer major, to which the tool rolls forward when
+.NET 10 is absent) and a running Docker engine with Linux containers. Releases built before the
+move to .NET 10 target .NET 8.
 This package includes
 the matching Aspire DCP tools for Windows x64, Linux x64 (glibc), macOS x64 and macOS ARM64;
 no source checkout or Aspire restore is required. Keep the complete installed payload. An explicit

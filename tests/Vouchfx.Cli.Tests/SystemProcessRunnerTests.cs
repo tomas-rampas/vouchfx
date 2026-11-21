@@ -929,7 +929,9 @@ public sealed class SystemProcessRunnerTests
                     // The elapsed figure is reported rather than the window, because the window is
                     // not what was waited: WaitForPid above may already have spent up to
                     // grace + PidSettleWindow, and this race then adds up to grace on top of it.
-                    var finished = await Task.WhenAny(work, Task.Delay(grace)) == work;
+                    using var delayCts = new CancellationTokenSource();
+                    var finished = await Task.WhenAny(work, Task.Delay(grace, delayCts.Token)) == work;
+                    delayCts.Cancel();
                     Assert.True(
                         finished,
                         FormattableString.Invariant(
@@ -1069,7 +1071,9 @@ public sealed class SystemProcessRunnerTests
 
                     // Before the premise is judged, exactly as in row 1 and for the same reason,
                     // including the elapsed figure rather than the window.
-                    var finished = await Task.WhenAny(work, Task.Delay(grace)) == work;
+                    using var delayCts = new CancellationTokenSource();
+                    var finished = await Task.WhenAny(work, Task.Delay(grace, delayCts.Token)) == work;
+                    delayCts.Cancel();
                     Assert.True(
                         finished,
                         FormattableString.Invariant(
@@ -1359,7 +1363,9 @@ public sealed class SystemProcessRunnerTests
 
             cancellation.Cancel();
 
-            var finished = await Task.WhenAny(work, Task.Delay(RunUnwindSlack)) == work;
+            using var delayCts = new CancellationTokenSource();
+            var finished = await Task.WhenAny(work, Task.Delay(RunUnwindSlack, delayCts.Token)) == work;
+            delayCts.Cancel();
             Assert.True(
                 finished,
                 FormattableString.Invariant(
@@ -2612,8 +2618,10 @@ public sealed class SystemProcessRunnerTests
                     WriteCompletingTheLine(pidFile, ProbePid.ToString(CultureInfo.InvariantCulture) + "\n");
             });
 
+            using var delayCts = new CancellationTokenSource();
             var arrivingSettled =
-                await Task.WhenAny(arriving, Task.Delay(LateReadWindow * 3)) == arriving;
+                await Task.WhenAny(arriving, Task.Delay(LateReadWindow * 3, delayCts.Token)) == arriving;
+            delayCts.Cancel();
             Assert.True(
                 arrivingSettled,
                 FormattableString.Invariant(
@@ -2632,7 +2640,9 @@ public sealed class SystemProcessRunnerTests
             var clock = Stopwatch.StartNew();
 
             var look = ReclaimPidForTeardownQuietlyAsync(pidFile, never.Task);
-            var settled = await Task.WhenAny(look, Task.Delay(LateReadWindow * 3)) == look;
+            using var lookDelayCts = new CancellationTokenSource();
+            var settled = await Task.WhenAny(look, Task.Delay(LateReadWindow * 3, lookDelayCts.Token)) == look;
+            lookDelayCts.Cancel();
             Assert.True(
                 settled,
                 FormattableString.Invariant(
@@ -2768,7 +2778,9 @@ public sealed class SystemProcessRunnerTests
             // blocking gate instead of reddening it.
             var clock = Stopwatch.StartNew();
             var quiet = ReclaimPidForTeardownQuietlyAsync(pidFile, never.Task);
-            var settled = await Task.WhenAny(quiet, Task.Delay(LateReadWindow * 3)) == quiet;
+            using var delayCts = new CancellationTokenSource();
+            var settled = await Task.WhenAny(quiet, Task.Delay(LateReadWindow * 3, delayCts.Token)) == quiet;
+            delayCts.Cancel();
             Assert.True(
                 settled,
                 FormattableString.Invariant(
@@ -5009,7 +5021,9 @@ public sealed class SystemProcessRunnerTests
     private static async Task DrainAsync(Task<ProcessResult> work)
     {
         _ = work.ContinueWith(static settled => _ = settled.Exception, TaskScheduler.Default);
-        await Task.WhenAny(work, Task.Delay(DrainWindow)).ConfigureAwait(false);
+        using var delayCts = new CancellationTokenSource();
+        await Task.WhenAny(work, Task.Delay(DrainWindow, delayCts.Token)).ConfigureAwait(false);
+        delayCts.Cancel();
     }
 
     /// <summary>Creates a per-row scratch directory outside the repository.</summary>

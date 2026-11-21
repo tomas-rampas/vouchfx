@@ -41,7 +41,7 @@
 #
 # ── How vouchfx is installed (build-from-source here; a packaged tool also exists) ──
 # vouchfx IS published as a NuGet global tool since the 1.0.0-alpha series
-# (`dotnet tool install --global vouchfx --prerelease`) — the recommended way to run
+# (`dotnet tool install --global vouchfx`; omit `--prerelease`, stable releases exist) — the recommended way to run
 # suites locally; it is not published as a container image. This template nevertheless
 # DELIBERATELY installs by building from source: it clones the vouchfx repository at a
 # pinned ref (VOUCHFX_REPO_URL / VOUCHFX_REF) into a sub-path, runs
@@ -49,12 +49,12 @@
 #   Pinning the `include:` ref and VOUCHFX_REF together keeps the engine and this
 #   template definition in lock-step, and a SHA/tag-pinned source build is an immutable
 #   supply-chain reference — exactly as in the GitHub template. A consumer tracking a
-#   released engine pins VOUCHFX_REF to the release tag (e.g. `v1.0.0-alpha.9`) — still
+#   released engine pins VOUCHFX_REF to the release tag (e.g. `v1.2.1`) — still
 #   a source build. A packaged-tool install could become an optional mode later; the
 #   install step is intentionally the only thing that would change.
 #
 # ── Docker is REQUIRED (the topology) — and the privileged-runner caveat ────────────
-# vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a
+# vouchfx stands up an Aspire container topology, so the job needs a
 # Docker daemon. This template uses the standard GitLab Docker-in-Docker (dind) pattern:
 # a `docker:dind` `services:` entry provides the daemon, and DOCKER_HOST / the TLS vars
 # below point the job's Docker client at it. The engine builds and runs inside a second
@@ -80,8 +80,8 @@
 #   • PIN every entry in VOUCHFX_PREWARM_IMAGES to an immutable image DIGEST
 #     (name@sha256:...), NOT a floating tag — a digest guarantees you pull the exact image
 #     you reviewed; `:latest` can change.
-#   • PIN VOUCHFX_DOTNET_IMAGE to a digest (mcr.microsoft.com/dotnet/sdk:8.0@sha256:...)
-#     rather than the floating `:8.0` tag for a fully repeatable build image.
+#   • PIN VOUCHFX_DOTNET_IMAGE to a digest (mcr.microsoft.com/dotnet/sdk:10.0@sha256:...)
+#     rather than the floating `:10.0` tag for a fully repeatable build image.
 #     (The defaults below use tags only to stay legible in this reference; production
 #     callers should supply digests.)
 #
@@ -101,9 +101,9 @@
 #                              commit's SHA)    a full commit SHA) of VOUCHFX_REPO_URL to build
 #                                              vouchfx from. Defaults to $CI_COMMIT_SHA so the
 #                                              engine and this template stay in lock-step.
-#   VOUCHFX_DOTNET_IMAGE       (default          The .NET 8 SDK container image the job runs in
+#   VOUCHFX_DOTNET_IMAGE       (default          The .NET 10 SDK container image the job runs in
 #                              mcr.microsoft.com  (and that carries the `dotnet` CLI used to build
-#                              /dotnet/sdk:8.0)   and run vouchfx). vouchfx targets .NET 8 LTS.
+#                              /dotnet/sdk:10.0)  and run vouchfx). vouchfx targets .NET 10 LTS.
 #   VOUCHFX_FAIL_ON_ENV_ERROR  (default "false") When truthy, pass --fail-on-env-error so an
 #                                              Environment-error verdict (unhealthy container,
 #                                              image-pull / seed / tunnel failure) fails the job
@@ -155,11 +155,11 @@
 # A consumer can `extends: .vouchfx-run`, or just configure the concrete `vouchfx-run`
 # job declared at the bottom (which itself `extends:` this).
 .vouchfx-run:
-  # The .NET 8 SDK image carries the `dotnet` CLI used to build and run vouchfx. Pin to a
+  # The .NET 10 SDK image carries the `dotnet` CLI used to build and run vouchfx. Pin to a
   # digest in production (see the supply-chain note in the header).
   image: "$VOUCHFX_DOTNET_IMAGE"
 
-  # Docker-in-Docker: the `docker:dind` service provides the daemon the Aspire/Testcontainers
+  # Docker-in-Docker: the `docker:dind` service provides the daemon the Aspire
   # topology talks to. REQUIRES a privileged runner (see the dind caveat in the header).
   services:
     - name: "docker:27-dind"
@@ -172,24 +172,20 @@
     VOUCHFX_SCENARIO_PATH: "."
     VOUCHFX_REPO_URL: "$CI_REPOSITORY_URL"
     VOUCHFX_REF: "$CI_COMMIT_SHA"
-    VOUCHFX_DOTNET_IMAGE: "mcr.microsoft.com/dotnet/sdk:8.0"
+    VOUCHFX_DOTNET_IMAGE: "mcr.microsoft.com/dotnet/sdk:10.0"
     VOUCHFX_FAIL_ON_ENV_ERROR: "false"
     VOUCHFX_FAIL_ON_INCONCLUSIVE: "false"
     VOUCHFX_PREWARM_IMAGES: ""
     VOUCHFX_SETUP_SCRIPT: ""
 
     # ── Docker-in-Docker wiring. The dind service listens on TCP with TLS on :2376; the
-    #    build's Docker client + Testcontainers/Aspire/DCP reach it via DOCKER_HOST. ──────
+    #    build's Docker client + Aspire/DCP reach it via DOCKER_HOST. ──────
     DOCKER_HOST: "tcp://docker:2376"
     DOCKER_TLS_CERTDIR: "/certs"
     DOCKER_TLS_VERIFY: "1"
     DOCKER_CERT_PATH: "/certs/client"
-    # No TESTCONTAINERS_HOST_OVERRIDE: it did not make Aspire/DCP's loopback proxy endpoints
-    # reachable from this sibling job, and the engine now runs on the daemon's own network,
-    # where mapped ports are on localhost. The runner script clears any value a consumer sets.
-    # Skip Ryuk's reaper: in dind it cannot reliably reach back, and we tear topology down
-    # ourselves (HeadlessTopology.DisposeAsync). Harmless on a fresh, ephemeral dind.
-    TESTCONTAINERS_RYUK_DISABLED: "true"
+    # No host override is needed: the engine runs on the daemon's own network, where mapped
+    # ports are on localhost, so Aspire/DCP's loopback proxy endpoints are reachable.
 
     # ── .NET CLI quality-of-life (mirrors the GH workflow env). ─────────────────────────
     DOTNET_NOLOGO: "true"
@@ -255,7 +251,7 @@
         sleep 1
       done
 
-    # 2. Install the .NET 8 SDK's tooling sanity check (the image already ships it).
+    # 2. Install the .NET 10 SDK's tooling sanity check (the image already ships it).
     - dotnet --info
 
     # 3. Clone the vouchfx SOURCE at the requested repo/ref into a sub-path. A shallow,
@@ -402,7 +398,7 @@
         set -eu
         source /tmp/vouchfx-environment.sh
         rm /tmp/vouchfx-environment.sh
-        unset DOCKER_TLS_CERTDIR DOCKER_TLS_VERIFY DOCKER_CERT_PATH TESTCONTAINERS_HOST_OVERRIDE
+        unset DOCKER_TLS_CERTDIR DOCKER_TLS_VERIFY DOCKER_CERT_PATH
         export DOCKER_HOST=unix:///var/run/docker.sock
         cd "$CI_PROJECT_DIR"
         dotnet build "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" -c Release
@@ -417,7 +413,7 @@
         set -eu
         source /tmp/vouchfx-environment.sh
         rm /tmp/vouchfx-environment.sh
-        unset DOCKER_TLS_CERTDIR DOCKER_TLS_VERIFY DOCKER_CERT_PATH TESTCONTAINERS_HOST_OVERRIDE
+        unset DOCKER_TLS_CERTDIR DOCKER_TLS_VERIFY DOCKER_CERT_PATH
         export DOCKER_HOST=unix:///var/run/docker.sock
         cd "$CI_PROJECT_DIR"
         dotnet run --project "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" \

@@ -8,7 +8,7 @@ This 60-minute guide walks you through your first end-to-end integration test: f
 
 vouchfx tests **distributed systems end-to-end** by letting you author tests in declarative YAML. A test describes a system under test (REST services, databases, message brokers in Docker containers), then orchestrates their topology, runs ordered steps (HTTP calls, database assertions, scripts) against discovered endpoints, and reports a clear verdict: **Pass**, **Fail**, **Environment error** (infrastructure breakage), or **Inconclusive** (timeout / unmet condition).
 
-The pipeline is: `.e2e.yaml` → validate vs JSON Schema → compile YAML→AST→C#→Roslyn (once) → orchestrate containers via Aspire/Testcontainers → execute steps → collect verdict → unload & reset.
+The pipeline is: `.e2e.yaml` → validate vs JSON Schema → compile YAML→AST→C#→Roslyn (once) → orchestrate containers via Aspire → execute steps → collect verdict → unload & reset.
 
 This guide focuses on the essentials. For architecture, the provider model, secrets, and advanced features, see the [Technical Architecture Blueprint](01_Technical_Architecture_and_Engineering_Blueprint.md).
 
@@ -16,43 +16,45 @@ This guide focuses on the essentials. For architecture, the provider model, secr
 
 **What you need on your machine.**
 
-### .NET 8, 9 or 10 SDK
+### .NET 10 SDK
 
-Current source retains a **.NET 8** binary baseline and supports building and running with
-the **.NET 8, 9 and 10 SDKs**. The repository selects its build SDK separately in `global.json`.
-Check the SDKs and runtimes installed on your machine:
+Current source targets **.NET 10** (`net10.0`). The global tool needs a .NET 10 or later
+runtime, and building from source needs a .NET 10 SDK. Check the SDKs and runtimes installed
+on your machine:
 
 ```bash
 dotnet --list-sdks
 dotnet --list-runtimes
 ```
 
-Use SDK 8.0.424 or a later stable .NET 8, 9 or 10 SDK. `global.json` prefers a compatible
-.NET 8 SDK when installed and permits a higher major when it is absent. Executables built from
-this source use runtime `RollForward=Major`, so they also run on .NET 9 or 10 without .NET 8.
-Library packages continue to expose `net8.0` assets, which .NET 9 and 10 projects can reference.
-Older published tools retain their original runtime requirements; install .NET 8 alongside a
-newer SDK when using a release that predates this policy.
+`global.json` selects SDK 10.0.100 or a later 10.0 feature band. Executables built from this
+source use runtime `RollForward=Major`, so they also run on a newer major runtime when .NET 10
+is absent, but never on .NET 8 or 9. The provider SDK packages (`Vouchfx.Sdk`,
+`Vouchfx.Sdk.Testing` and the engine libraries they depend on) keep their `net8.0` assets for
+the v1.x series, so providers built against them keep working. Older published tools retain
+their original runtime requirements; releases up to v1.2.1 target .NET 8, so the .NET 10 requirement
+applies to builds of current source and to the first release built from it.
 
 Run `dotnet --version` from the repository to check the selected SDK. See Microsoft's
 [SDK selection rules](https://learn.microsoft.com/en-us/dotnet/core/tools/global-json#rollforward).
 
-### .NET 8, 9 and 10 compatibility
+### .NET compatibility
 
 The runtime used by vouchfx and the runtime used by your application are separate:
 
-| Use case | .NET 8 | .NET 9 and 10 |
-|----------|--------|---------------|
-| Run a global tool built from current source | Uses the installed .NET 8 runtime. | Rolls forward to the installed .NET 9 or 10 runtime when .NET 8 is absent. Older published packages retain their original runtime policy. |
-| Run a self-contained archive or native installer | Uses its bundled runtime. | Uses its bundled runtime; no machine-wide .NET installation is required for the CLI. |
-| Build vouchfx from source | Use SDK 8.0.424 or later. | `global.json` permits SDK 9 or 10 when a compatible .NET 8 SDK is absent. |
-| Test an application packaged as a container image | The image supplies the application's runtime. | The image supplies the application's runtime, independently of vouchfx's runtime. |
-| Test an application through `environment.services[].project` | Install the SDK/runtime required by that application. | Install the matching SDK/runtime and ensure the application's SDK selection allows its target framework. |
+| Use case | Requirement |
+|----------|-------------|
+| Run a global tool built from current source | A .NET 10 runtime, or a newer major runtime when .NET 10 is absent. A machine with only .NET 8 or 9 cannot run it. Older published packages retain their original runtime policy. |
+| Run a self-contained archive or native installer | Uses its bundled runtime; no machine-wide .NET installation is required for the CLI. |
+| Build vouchfx from source | SDK 10.0.100 or a later 10.0 feature band, as `global.json` selects. |
+| Build an external provider | Reference `Vouchfx.Sdk` and target `net8.0`, the frozen contract target framework. `vouchfx providers install` selects `net8.0`-compatible assets (a `net10.0`-only package is refused), and a `net8.0` provider loads into the .NET 10 CLI. A new class library defaults to the SDK's own target framework, so set `net8.0` explicitly. |
+| Test an application packaged as a container image | The image supplies the application's runtime, independently of vouchfx's runtime. |
+| Test an application through `environment.services[].project` | Install the SDK/runtime required by that application and ensure the application's SDK selection allows its target framework. |
 
-For applications targeting .NET 8, 9 or 10, container images keep the application's build and runtime requirements inside its image. This is the same protocol-based testing model used for applications written in other languages. A `project:` service instead runs through Aspire's project hosting and needs the application's toolchain on the host; the CLI's bundled runtime does not provide that toolchain. A `global.json` selecting SDK 8 cannot build a `net9.0` or `net10.0` application.
+For applications targeting any .NET version, container images keep the application's build and runtime requirements inside its image. This is the same protocol-based testing model used for applications written in other languages. A `project:` service instead runs through Aspire's project hosting and needs the application's toolchain on the host; the CLI's bundled runtime does not provide that toolchain.
 
-The engine keeps one `net8.0` asset baseline. Compatibility workflows test the SDKs and runtimes
-in isolation; the separate .NET 10 analyser job remains advisory. Microsoft's
+Compatibility workflows test the .NET 10 SDK and runtime in isolation; the separate analyser
+job, which builds with the next major SDK, remains advisory. Microsoft's
 [runtime selection rules](https://learn.microsoft.com/en-us/dotnet/core/versions/selection)
 describe the explicit major roll-forward policy used by executables built from current source.
 
@@ -96,9 +98,9 @@ The global-tool installer places the `vouchfx` command in `~/.dotnet/tools` (`%U
 connections whose connection string uses `VerifyCA` or `VerifyFull`, omits `SslCa`, and
 carries a non-empty password are affected; the
 [security policy](https://github.com/tomas-rampas/vouchfx/blob/main/SECURITY.md#published-121-tool-and-ghsa-473q-m89c-ghf8)
-lists every exclusion. On 1.2.1, set `SslCa`, or use 1.3.0 once it is published.
+lists every exclusion. On 1.2.1, set `SslCa`, or use 1.4.0 once it is published.
 
-**Using vouchfx-mcp?** Keep its CLI at the version required by the installed MCP package. Published MCP 1.1.0 [pins Core 1.2.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN), whose full version is `1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8`; it does not accept Core 1.2.1. If you also need another Core version, install the MCP-compatible CLI in a separate tool directory and put that directory first on `PATH` for the MCP server process.
+**Using vouchfx-mcp?** Keep its CLI at the version required by the installed MCP package. Published MCP 1.1.0 [pins Core 1.2.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN), whose full version is `1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8`; it does not accept any other Core version, including 1.2.1 and a later release, until an MCP release pins it. If you also need another Core version, install the MCP-compatible CLI in a separate tool directory and put that directory first on `PATH` for the MCP server process.
 
 ### Native installers
 
@@ -139,21 +141,18 @@ contains all four native trees; an archive or installer contains its own platfor
 distributions need no source checkout, Aspire workload or warmed NuGet cache. The engine selects the
 bundle beside its host assembly, so changing directories does not change the executable it uses.
 
-**Legacy rc.6:** `1.0.0-rc.6` lacks this bundled payload; on a clean machine its container topology
-fails before Docker starts. Upgrade the global tool to the latest stable release. If you must retain
-that package, supply its Aspire **13.4.2** tools through `ASPIRE_DCP_PATH`. Set it to the directory
-containing `dcp`/`dcp.exe`, not the executable:
+**Legacy rc.6 and source/custom AppHosts:** `1.0.0-rc.6` lacks this bundled payload; on a clean machine
+its container topology fails before Docker starts. Upgrade the global tool to the latest stable release.
+If you must retain the legacy package or use an unbundled custom AppHost, supply the exact Aspire tools that build pins
+(13.4.2 for rc.6; for a source build, the Aspire version in `Directory.Packages.props`)
+through `ASPIRE_DCP_PATH`. Set it to the directory containing `dcp`/`dcp.exe`, not the executable:
 
 ```powershell
-$env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/13.4.2/tools"
+$env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/<aspire-version>/tools"
 ```
 
-**Source and custom AppHosts** keep Aspire's metadata and NuGet-cache fallback. The cache probe uses
-the `Aspire.Hosting` version that build restored. Published releases through v1.2.1, and the `1.0.0`
-bundle, use 13.4.2. Current main pins `VouchfxDcpVersion`, `Aspire.Hosting` and `Aspire.AppHost.Sdk`
-at **13.4.6**, so the fallback looks for
-`aspire.hosting.orchestration.<rid>/13.4.6/tools`. A 13.4.2 directory does not satisfy that probe.
-`dotnet restore` of this repository populates the matching package. The retired
+This override requires those matching tools to exist; setting a path does not install them. Older
+AppHost-based source/custom runners retain their metadata and NuGet-cache fallback. The retired
 `dotnet workload install aspire` command is not a remedy. See [DCP troubleshooting](troubleshooting.md#the-aspire-orchestration-component-is-not-installed-could-not-be-located).
 
 ## Building vouchfx from source
@@ -174,7 +173,8 @@ dotnet build vouchfx.sln
 This compiles the engine, providers, and the CLI runner. The build takes a minute or two and should produce zero warnings.
 Restore also fetches the native DCP tools at `VouchfxDcpVersion` (13.4.6 on current main) into the
 NuGet cache. A source CLI uses the path embedded by `Aspire.AppHost.Sdk` when that file exists, and
-otherwise probes that same version under `aspire.hosting.orchestration.<rid>`. See
+otherwise probes that same version under `aspire.hosting.orchestration.<rid>`; a 13.4.2 cache entry
+does not satisfy the probe. See
 [DCP troubleshooting](troubleshooting.md#the-aspire-orchestration-component-is-not-installed-could-not-be-located)
 when topology start reports the component missing.
 
@@ -194,7 +194,7 @@ A source build admits providers against the `VouchfxEngineVersion` fallback in `
 
 A test file has four top-level sections; only `steps` is mandatory:
 
-- **`metadata`** — name, owner, tags, description. Used for reporting and filtering; no execution effect.
+- **`metadata`** — name, owner, tags, description. Used for reporting and for selecting scenarios (`--tag`, `--owner`); it does not change how a step runs.
 - **`environment`** — inline `services` (containers under test), `dependencies` (managed Aspire resources like databases), optional `seed` (SQL/fixtures applied after topology is healthy); or an exclusive `source` selecting an owned Compose environment.
 - **`variables`** — optional constants pre-loaded into the shared context, available to all steps.
 - **`steps`** — the ordered list of actions and assertions (HTTP calls, database queries, scripts, listeners).
@@ -317,12 +317,12 @@ dotnet build src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release
 **Run the example from the built binary:**
 
 ```bash
-src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx run examples/getting-started
+src/Cli/Vouchfx.Cli/bin/Release/net10.0/vouchfx run examples/getting-started
 ```
 
-(On Windows the binary is `vouchfx.exe`, so the command is `…\net8.0\vouchfx.exe run examples\getting-started`.)
+(On Windows the binary is `vouchfx.exe`, so the command is `…\net10.0\vouchfx.exe run examples\getting-started`.)
 
-**Tip:** Add the `src/Cli/Vouchfx.Cli/bin/Release/net8.0` directory to your PATH (or create an alias `vouchfx`) so you can type just `vouchfx run <path>`. Alternatively, if you prefer to use `dotnet run`, you must pass an **absolute** scenario path (because `dotnet run` executes from the project directory):
+**Tip:** Add the `src/Cli/Vouchfx.Cli/bin/Release/net10.0` directory to your PATH (or create an alias `vouchfx`) so you can type just `vouchfx run <path>`. Alternatively, if you prefer to use `dotnet run`, you must pass an **absolute** scenario path (because `dotnet run` executes from the project directory):
 
 ```bash
 dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- run "$(pwd)/examples/getting-started"
@@ -677,16 +677,16 @@ Now that you have a passing test, here's where to go:
 
 ### Recipes & cookbook
 
-The `docs/recipes.md` file collects common testing patterns: capturing and reusing values across steps, waiting for eventual consistency with `verifyMode: RETRY`, seeding databases, calling webhooks, and publishing/consuming Kafka events. Also see `docs/common-patterns.md` for authoring patterns and `docs/troubleshooting.md` for failure modes and fixes.
+The [Recipes](recipes.md) page collects common testing patterns: capturing and reusing values across steps, waiting for eventual consistency with `verifyMode: RETRY`, seeding databases, calling webhooks, and publishing/consuming Kafka events. Also see [Common patterns](common-patterns.md) for authoring patterns and [Troubleshooting](troubleshooting.md) for failure modes and fixes.
 
 ### Full DSL specification
 
-For step types beyond `http.rest` (database assertions, scripts, message queues, webhooks), see [`docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md`](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md). It covers:
+For step types beyond `http.rest` (database assertions, scripts, message queues, webhooks), see the [YAML DSL specification](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md). It covers:
 
 - Every step family across twenty-five Core providers — eleven families: HTTP calls (`http`: REST, SOAP), database assertions (`db-assert`: PostgreSQL, MySQL, SQL Server, MongoDB, DynamoDB), message publishing (`mq-publish`) and message expectations (`mq-expect`) — both over Kafka, RabbitMQ, NATS, Azure Service Bus, and Redis Streams — cache assertions (`cache-assert`: Redis, Elasticsearch), email (`mail-expect`: SMTP), metrics (`metrics-assert`: Prometheus), storage (`storage-assert`: S3), distributed tracing (`trace-expect`: OTLP), webhooks (`webhook-listen`), and scripts (`script`: C#).
 - Capture and placeholder syntax: threading state forward.
 - Verifymode: `IMMEDIATE` (assert now) vs. `RETRY` (engine-owned polling with backoff).
-- Secrets: reference-only syntax (`${secret:env/NAME}` / `${secret:vault/path}`), resolved at execution time.
+- Secrets: reference-only syntax (`${secret:env/NAME}` / `${secret:vault/<kvPath>#<field>}`), resolved at run time, never at compile time.
 - Seed: SQL fixtures and warm-up logic applied before the first step.
 
 ### Real-world sample applications
@@ -695,7 +695,7 @@ For worked end-to-end examples with real C#, Python, and Java services, see the 
 
 ### Architecture Blueprint
 
-For deep understanding of how the platform is built, memory safety, orchestration, and the provider model, read [`docs/01_Technical_Architecture_and_Engineering_Blueprint.md`](01_Technical_Architecture_and_Engineering_Blueprint.md).
+For deep understanding of how the platform is built, memory safety, orchestration, and the provider model, read the [architecture blueprint](01_Technical_Architecture_and_Engineering_Blueprint.md).
 
 ### CI integration
 

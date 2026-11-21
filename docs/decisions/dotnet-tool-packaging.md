@@ -2,7 +2,18 @@
 
 **Status:** published in stable Core `1.0.0`; legacy `1.0.0-rc.6` remains cache-dependent.
 
-**Updated:** 2026-11-15. Original tool decision: 2026-06-25.
+**Updated:** 2026-10-25. Original tool decision: 2026-06-25.
+
+> **Superseded in part, 2026-11-15 (the `net10.0` move).** The target framework below is
+> historical. Current source builds the global tool and self-contained distributions for
+> `net10.0`; major roll-forward now lets the tool run on a newer major runtime when .NET 10 is
+> absent, never on .NET 8 or 9. The provider-contract libraries keep `net8.0` for the v1.x series.
+> Releases published before the move remain `net8.0` tools. The choice of a framework-dependent
+> `PackAsTool` global tool alongside self-contained archives, without single-file publishing, is
+> unchanged. The text below is kept as recorded. The same applies to the Aspire version and the
+> `dcp/13.4.2/<rid>/tools/` path it names: they describe the build as decided (up to v1.2.1). The
+> bundled version is whichever Aspire release `Directory.Packages.props` pins, and the directory is
+> `dcp/<aspire-version>/<rid>/tools/`.
 
 ## Problem and evidence
 
@@ -30,16 +41,12 @@ external attributes and comment, plus the archive comment, are verified before a
 replacement. Signed packages are refused; signing and attestation happen after packing.
 Ordinary `dotnet pack` applies the same target without requiring a separate compression tool.
 
-The tool contains the complete pinned Aspire native tools trees for `win-x64`, glibc
+The tool contains the complete pinned Aspire 13.4.2 native tools trees for `win-x64`, glibc
 `linux-x64`, `osx-x64` and `osx-arm64`. RID-specific publications contain only their own tree.
-The path is `dcp/<VouchfxDcpVersion>/<rid>/tools/`, beside the host assembly; manifests, tunnel
-helpers, licences and notices travel with the binaries. Published releases from `1.0.0` through
-`1.2.1` use 13.4.2. Current source pins `VouchfxDcpVersion`, `Aspire.Hosting`, `Aspire.Hosting.AppHost`
-and every `Aspire.AppHost.Sdk` at 13.4.6. `AspireVersionLockstepGuardTests` fails the unit-test
-run when `VouchfxDcpVersion`, the Aspire.Hosting package versions and the AppHost SDK versions
-diverge. `Aspire.Hosting.Elasticsearch` stays at 13.3.0 and is not part of the DCP bundle.
-Private CLI-only package references avoid changing the provider SDK dependency or ABI. Ordinary
-source builds keep their build-host metadata without copying four large native trees into test output.
+The path is `dcp/13.4.2/<rid>/tools/`, beside the host assembly; manifests, tunnel helpers, licences
+and notices travel with the binaries. Private CLI-only package references avoid changing the
+provider SDK dependency or ABI. Ordinary source builds keep their build-host metadata without
+copying four large native trees into test output.
 
 Resolution stays lazy inside inline Aspire startup. Priority is explicit `ASPIRE_DCP_PATH`, then
 the host-relative installed bundle, then legacy source/custom-runner metadata and cache fallback.
@@ -51,9 +58,9 @@ bits only in its selected bundle; archives/installers preserve those bits during
 
 - `scripts/check_distribution.py` checks the exact pinned version, RID set, executable platform,
   required files and native checksums. With `--nuget-cache`, it compares every shipped tools file
-  with the restored package at `VouchfxDcpVersion`. The checker comment records an incorrect NOTICE
-  checksum in the osx-arm64 13.4.2 upstream SBOM; the original notice and manifest are preserved,
-  and the byte comparison above is what verifies the pinned version's payload.
+  with the exact restored upstream payload. The upstream osx-arm64 13.4.2 SBOM contains an incorrect
+  NOTICE checksum; the original notice and manifest are preserved unchanged and checked against
+  the restored package instead.
 - NuGet.org documents a [250 MB maximum](https://learn.microsoft.com/en-us/nuget/nuget-org/nuget-org-faq).
   This repository enforces **250,000,000 bytes**, a conservative decimal ceiling. Exceeding it
   requires a reviewed distribution strategy; required native files must not be removed.

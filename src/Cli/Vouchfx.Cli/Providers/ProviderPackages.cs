@@ -66,7 +66,7 @@ internal sealed class ProviderPackages : IDisposable
         { [id] = new() { new VersionRange(chosen, true, chosen, true) } };
         var resolved = await SearchAsync(constraints, new(StringComparer.OrdinalIgnoreCase), token);
         return resolved?.Values.OrderBy(package => package.Identity.Id, StringComparer.OrdinalIgnoreCase).ToArray()
-            ?? throw new ProviderLoadException("Provider dependency graph has incompatible version ranges or host assemblies for .NET 8.");
+            ?? throw new ProviderLoadException("Provider dependency graph has incompatible version ranges, host assemblies or lib assets for the net8.0 provider contract framework.");
     }
 
     private async Task<NuGetVersion?> LatestStableAsync(string id, NuGetVersion[] available, CancellationToken token)
@@ -214,7 +214,7 @@ internal static class ProviderArchive
         var selected = groups.FirstOrDefault(group => group.TargetFramework.Equals(nearest))?.Items
             .Where(name => name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)).ToArray() ?? Array.Empty<string>();
         if (groups.Length > 0 && nearest is null)
-            throw new ProviderLoadException($"Package '{package.Identity}' has no compatible .NET 8 runtime assets.");
+            throw new ProviderLoadException($"Package '{package.Identity}' has no lib assets compatible with the net8.0 provider contract framework; build it for net8.0.");
         foreach (var name in selected)
         {
             token.ThrowIfCancellationRequested();

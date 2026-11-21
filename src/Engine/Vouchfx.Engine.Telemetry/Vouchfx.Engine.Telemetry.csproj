@@ -4,12 +4,12 @@
     <RootNamespace>Vouchfx.Engine.Telemetry</RootNamespace>
   </PropertyGroup>
 
-  <!-- Plain net8.0 library (no Aspire host, no Docker).  It references only the
+  <!-- Plain net10.0 library (no Aspire host, no Docker).  It references only the
        Abstractions leaf for the frozen event-payload records it READS from the
        buffered event stream to derive the privacy-allowlisted TelemetryEvent.  It
        NEVER references a frozen golden file, the schema, or any provider — it only
        consumes the existing v1 event stream.  System.Text.Json ships in-box with
-       net8.0 (no PackageReference needed, §5.7). -->
+       net10.0 (no PackageReference needed, §5.7). -->
   <ItemGroup>
     <ProjectReference Include="..\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
   </ItemGroup>

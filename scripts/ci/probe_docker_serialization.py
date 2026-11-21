@@ -1,6 +1,6 @@
-"""Measure the workflow's assembly scheduling with two real .NET 8 test hosts.
+"""Measure the workflow's assembly scheduling with two real .NET 10 test hosts.
 
-Python 3.12, yq 4.53.2 and the .NET 8 SDK are mandatory. Uses cached test packages
+Python 3.12, yq 4.53.2 and the .NET 10 SDK are mandatory. Uses cached test packages
 at this repository's exact versions, no feeds or Docker. Retains all TEMP evidence.
 """
 
@@ -52,7 +52,7 @@ def main():
     print(f"Retained real .NET scheduling evidence: {scratch}", flush=True)
     dotnet = shutil.which("dotnet")
     if not dotnet:
-        raise AssertionError(".NET 8 SDK is mandatory")
+        raise AssertionError(".NET 10 SDK is mandatory")
     workflow_command = step(TEST_NAME)["run"]
     arguments = shlex.split(workflow_command)
     if arguments[:3] != ["dotnet", "test", "vouchfx.sln"] or arguments.count("-m:1") != 1:
@@ -75,9 +75,9 @@ def main():
         return result
 
     sdk = run("sdk", [dotnet, "--version"]).stdout.decode().strip()
-    if not sdk.startswith("8.0."):
-        raise AssertionError(f"Expected actual .NET 8 SDK, got {sdk}")
-    run("solution", [dotnet, "new", "sln", "--name", "Scheduling"])
+    if not sdk.startswith("10.0."):
+        raise AssertionError(f"Expected actual .NET 10 SDK, got {sdk}")
+    run("solution", [dotnet, "new", "sln", "--format", "sln", "--name", "Scheduling"])
     projects = []
     for name in ["ProbeA", "ProbeB"]:
         folder = scratch / name
@@ -87,7 +87,7 @@ def main():
                                for p in ["Microsoft.NET.Test.Sdk", "xunit", "xunit.runner.visualstudio", "coverlet.collector"])
         project.write_text(f'''<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings>
+    <TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable><IsTestProject>true</IsTestProject><IsPackable>false</IsPackable>
     <NuGetAudit>false</NuGetAudit>
     <VSTestLogger>trx%3bLogFilePrefix=$(MSBuildProjectName)</VSTestLogger>

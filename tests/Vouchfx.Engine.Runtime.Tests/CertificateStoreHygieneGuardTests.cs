@@ -168,7 +168,7 @@ public sealed class CertificateStoreGuardTeethTests
         using var signed = request.CreateSelfSigned(now.AddDays(-1), now.AddDays(1));
 
         // Re-created from its own DER so nothing with a private key is written to a store.
-        using var planted = new X509Certificate2(signed.Export(X509ContentType.Cert));
+        using var planted = X509CertificateLoader.LoadCertificate(signed.Export(X509ContentType.Cert));
         var thumbprint = planted.Thumbprint;
 
         string? census;

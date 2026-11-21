@@ -31,6 +31,17 @@
     </AssemblyAttribute>
   </ItemGroup>
 
+  <!-- ZEB-67: the http.rest body conversion, compiled from the provider's OWN source file rather
+       than referenced. StepTemplateCensus must check exactly the body text the binder sends
+       (the secret-reference check before acquisition, provenance and the reproducibility
+       envelope all read it), and the engine may not reference a provider assembly. Linking
+       the one source file gives both assemblies a private (internal) copy of one
+       implementation; it adds nothing to any public surface. The file states the
+       constraints that keep it compilable here. -->
+  <ItemGroup>
+    <Compile Include="..\..\Providers\Core\Vouchfx.Steps.Core.HttpRest\HttpRestBodyConversion.cs" Link="Shared\HttpRestBodyConversion.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
     <ProjectReference Include="..\Vouchfx.Engine.Authoring\Vouchfx.Engine.Authoring.csproj" />

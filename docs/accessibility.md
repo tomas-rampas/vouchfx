@@ -211,9 +211,9 @@ The remaining open step is a **formally-commissioned external accessibility audi
 ## 7. References
 
 - **WCAG 2.1** — W3C Web Content Accessibility Guidelines 2.1, [https://www.w3.org/WAI/WCAG21/quickref/](https://www.w3.org/WAI/WCAG21/quickref/)
-- **vouchfx blueprint §12.1** — The verdict taxonomy (docs/01).
-- **vouchfx blueprint §14** — Reporting architecture (docs/01).
-- **vouchfx blueprint §14.2a** — Terminal renderer accessibility (docs/01).
-- **vouchfx blueprint §17** — Secrets and redaction (docs/01).
+- **vouchfx blueprint [§12.1](01_Technical_Architecture_and_Engineering_Blueprint.md#121-the-verdict-taxonomy)** — The verdict taxonomy.
+- **vouchfx blueprint [§14](01_Technical_Architecture_and_Engineering_Blueprint.md#14-result-reporting-and-the-verdict-lifecycle)** — Reporting architecture.
+- **vouchfx blueprint [§14.2a](01_Technical_Architecture_and_Engineering_Blueprint.md#142a-terminal-renderer-accessibility-wcag-141)** — Terminal renderer accessibility.
+- **vouchfx blueprint [§17](01_Technical_Architecture_and_Engineering_Blueprint.md#17-secrets-and-configuration-management)** — Secrets and redaction.
 - **TerminalRendererAccessibilityTests.cs** — CI gate for terminal renderer text-distinctness.
 - **HtmlRendererWcagTests.cs** — CI gate for HTML contrast and structure.

@@ -306,13 +306,15 @@ public sealed class SecurityPathDisclosureLedgerTests
     /// well as that the message is clean.
     /// </para>
     /// <para>
-    /// <strong>LoadClient and NOT LoadCa, and the difference was measured rather than assumed.</strong>
-    /// The investigation that framed this fix named <c>LoadCa</c>. On this host (.NET 8,
-    /// Windows 10.0.26200) <c>LoadCa</c>'s <c>new X509Certificate2(string)</c> goes through CryptoAPI
-    /// and its message is path-free for every reachable cause — missing file, locked file, path is a
-    /// directory — so a test written against it would have passed on the UNFIXED tree and guarded
-    /// nothing. <c>CreateFromPemFile</c> is the one that leaks. The fix is applied at both catches
-    /// (their filters admit the same three exception types), but only this arm can prove it.
+    /// <strong>Why this arm was written against LoadClient first.</strong> The investigation that
+    /// framed this fix named <c>LoadCa</c>. When it was measured (.NET 8, Windows 10.0.26200)
+    /// <c>LoadCa</c> used <c>new X509Certificate2(string)</c>, which went through CryptoAPI with a
+    /// path-free message for every reachable cause — missing file, locked file, path is a
+    /// directory — so a test against it would have passed on the UNFIXED tree.
+    /// <c>CreateFromPemFile</c> is the one measured to leak. The fix is applied at both catches
+    /// (their filters admit the same three exception types). That constructor has since been
+    /// replaced by <c>X509CertificateLoader.LoadCertificateFromFile</c>, so <c>LoadCa</c> now has
+    /// its own arm below.
     /// </para>
     /// <para>
     /// The run-scoped ledger is deliberately NOT passed. <c>LoadClient</c> reaches the files through
@@ -351,6 +353,77 @@ public sealed class SecurityPathDisclosureLedgerTests
             AssertNoAbsoluteHostPath("SecurityMaterialException.Message", ex.Message, bed.SuiteDirectory);
             Assert.Contains(
                 TestCertificateAuthority.ClientKeyFileName, ex.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            (accessor as IDisposable)?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// The trust-anchor sibling of the arm above: a <c>caCert</c> that vanishes after validation,
+    /// or is replaced by a directory, produces the existing <c>caCert</c> diagnostic naming only
+    /// the DECLARED path.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why this arm exists now and did not before.</strong> The anchor used to be read by
+    /// <c>new X509Certificate2(string)</c>, whose messages were measured path-free on Windows, so
+    /// the arm above deliberately targeted <c>LoadClient</c> instead. Since the net10.0 move the
+    /// anchor is read by <c>X509CertificateLoader.LoadCertificateFromFile</c>, whose failure text
+    /// is the platform's and was not measured on Windows; the substitution in <c>LoadCa</c>'s
+    /// catch is the only thing standing between that text and the diagnostic, so it is pinned
+    /// here rather than argued in a comment.
+    /// </para>
+    /// <para>
+    /// <strong>What this proves on which platform.</strong> MEASURED on Linux / .NET 10.0.15: a
+    /// missing anchor raises a <c>CryptographicException</c> reading
+    /// "error:10000080:BIO routines::no such file", and a directory raises one reading "ASN1
+    /// corrupted data." Neither names the path, so on Linux this arm pins the diagnostic's shape
+    /// and the absence of a host path rather than exercising the substitution itself. It runs on
+    /// the Windows unit lane as well, which is where a path-bearing platform message would be
+    /// caught. No inner-message assertion is made for that reason: one that required the path in
+    /// the platform text would fail on Linux, and one that forbade it would fail on any platform
+    /// whose text does carry it.
+    /// </para>
+    /// <para>
+    /// As above, the run-scoped ledger is deliberately NOT passed: <c>LoadCa</c> reaches the file
+    /// through the certificate view, which never calls <c>ResolvedIfContained</c>.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LoadCa_WhenTheAnchorVanishesAfterValidation_NamesOnlyTheDeclaredPath(bool replacedByDirectory)
+    {
+        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
+
+        var accessor = SecurityConfigurationAccessor.Build(
+            AstWithSecuredService("events", MtlsSecurity()),
+            bed.SuiteDirectory,
+            secrets: null,
+            pathDisclosures: null);
+        try
+        {
+            var certificates = accessor.For("events")!.Certificates!;
+
+            // The TOCTOU window: the anchor existed when the validator checked it, and is now
+            // either gone or a directory.
+            File.Delete(bed.CaPath);
+            if (replacedByDirectory)
+            {
+                Directory.CreateDirectory(bed.CaPath);
+            }
+
+            var ex = Assert.Throws<SecurityMaterialException>(() => _ = certificates.CaCertificate);
+
+            // The existing caCert diagnostic, naming the declared path the author wrote.
+            Assert.StartsWith(
+                $"environment.services.events.security.caCert: '{TestCertificateAuthority.CaFileName}' could not be read as a certificate (",
+                ex.Message,
+                StringComparison.Ordinal);
+            AssertNoAbsoluteHostPath("SecurityMaterialException.Message", ex.Message, bed.SuiteDirectory);
+            Assert.NotNull(ex.InnerException);
         }
         finally
         {
@@ -656,7 +729,9 @@ public sealed class SecurityPathDisclosureLedgerTests
         Assert.Equal(2, ledger.Count);   // not vacuous: the empty form really is recorded
 
         var worker = Task.Run(() => ledger.Scrub("could not open /host/x/ca.pem"));
-        var finished = await Task.WhenAny(worker, Task.Delay(TimeSpan.FromSeconds(10)));
+        using var delayCts = new CancellationTokenSource();
+        var finished = await Task.WhenAny(worker, Task.Delay(TimeSpan.FromSeconds(10), delayCts.Token));
+        delayCts.Cancel();
 
         Assert.True(
             ReferenceEquals(finished, worker),

@@ -11,7 +11,7 @@
 **End-to-end integration testing for distributed systems, authored in YAML.**
 
 vouchfx compiles declarative `.e2e.yaml` tests into Turing-complete C# (CSX), runs them memory-safely
-through Roslyn, and orchestrates inline environments with **.NET Aspire + Testcontainers** or independently
+through Roslyn, and orchestrates inline environments with **.NET Aspire** or independently
 authored environments with **Docker Compose**.
 It tests one business transaction as it crosses a REST call, a Kafka event, a database mutation and an
 outbound webhook — the seams where distributed systems actually break.
@@ -29,11 +29,14 @@ It is **not** a unit-test framework and **not** a UI/browser tool.
 
 ## .NET compatibility
 
-Current source builds with .NET 8, 9 and 10 SDKs and retains a `net8.0` binary baseline.
-Framework-dependent executables use major-version roll-forward when .NET 8 is absent;
-SDK libraries can be consumed by .NET 8, 9 and 10 projects. The
-[compatibility matrix](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/dotnet-compatibility.yml) builds and runs
-Docker-free tests with each SDK/runtime installed in isolation. Previously published
+Current source targets .NET 10 (`net10.0`) and builds with the .NET 10 SDK.
+Framework-dependent executables need a .NET 10 runtime and use major-version roll-forward
+only to a newer runtime. The provider SDK packages keep their `net8.0` assets for the v1.x
+series, so providers built against them still load. The
+[compatibility workflow](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/dotnet-compatibility.yml) builds and runs
+tests with the .NET 10 SDK/runtime installed in isolation. Its roll-forward lane installs the
+packed tool, removes .NET 10 and checks that the tool starts and runs a script step on the
+.NET 11 runtime; it runs no test suite on .NET 11. Previously published
 packages retain the runtime policy with which they were built.
 
 ## Install
@@ -42,17 +45,17 @@ packages retain the runtime policy with which they were built.
 dotnet tool install --global vouchfx
 ```
 
-Current source supports the [.NET 8, 9 and 10 SDKs](https://dotnet.microsoft.com/download/dotnet).
+Current source needs the [.NET 10 runtime or SDK](https://dotnet.microsoft.com/download/dotnet).
 Previously published packages may still require .NET 8. Running a suite also
 needs a Docker daemon, since vouchfx starts real containers — but `vouchfx validate` and `vouchfx list`
 are Docker-free, so authoring and checking suites works on a machine without one. Machines without a
 .NET SDK can use the self-contained per-OS archives and MSI/deb/pkg installers available from the
 [latest stable release](https://github.com/tomas-rampas/vouchfx/releases/latest).
 
-**Testing .NET 8, 9 or 10 applications:** the CLI targets `net8.0`, while containerised applications
-carry their own runtimes. For the global tool, keep the .NET 8 runtime alongside SDK 9/10;
-self-contained distributions bundle it. Source builds use the .NET 8 SDK selected by `global.json`.
-See the [.NET compatibility table](https://vouchfx.io/getting-started/#net-8-9-and-10-compatibility)
+**Testing applications on any .NET version:** the CLI targets `net10.0`, while containerised
+applications carry their own runtimes. The global tool needs a .NET 10 (or newer) runtime;
+self-contained distributions bundle it. Source builds use the .NET 10 SDK selected by `global.json`.
+See the [.NET compatibility table](https://vouchfx.io/getting-started/#net-compatibility)
 for host, application and project-service requirements.
 
 Core `1.0.0` introduced bundled Aspire DCP tools for Windows x64, Linux x64 (glibc),
@@ -104,7 +107,7 @@ For inline services, run `docker build` first and reference the resulting image 
 
 | Section | Purpose |
 |---|---|
-| `metadata` | Name, owner, tags, description — drives runner selection and reporting. No execution effect. |
+| `metadata` | Name, owner, tags, description. `owner` and `tags` select scenarios (`--owner`, `--tag`); `name` labels the scenario in reports. With `schemaVersion: v2`, `telemetry: false` suppresses telemetry export for the invocation. Nothing in `metadata` changes how a step runs. |
 | `environment` | Inline `services`, managed `dependencies`, optional `seed` and image defaults; or an exclusive `source` selecting a driver/configuration such as Compose. |
 | `variables` | Constants pre-loaded into the shared context. |
 | `steps` | Ordered; each has an `id`, `type`, and optional `capture`, `verifyMode`, `timeout`, `continueOnFailure`. |
@@ -117,7 +120,7 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
 
 - **Compile once, isolate, unload.** `CSharpScript.EvaluateAsync` leaks an uncollectable assembly per
   call. vouchfx compiles each suite exactly once into a collectible `AssemblyLoadContext` and unloads
-  it — verified at 5,000 load-unload cycles with ~1.3 KB net heap delta, and guarded permanently by a
+  it — verified at 5,000 load-unload cycles with a net heap delta far below the 2 MB gate, and guarded permanently by a
   [CI memory-leak job](https://vouchfx.io/memory-harness/).
 - **Four verdicts, never three.** **Pass**, **Fail**, **Environment error** (unhealthy container,
   image-pull or seed failure) and **Inconclusive** (timeout, unmet capture) stay distinct through the
@@ -151,7 +154,7 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
   the legacy helper stays frozen and existing providers need no rebuild to compose with V2.
 - **Topological parity.** The compiled delegate depends *only* on a typed `ScriptGlobalVariables`, and
   orchestration is its sole producer. That one contract is what lets a suite run unchanged on a laptop,
-  in CI, or against a remote fabric.
+  or in CI; remote execution fabrics are future design (see the [roadmap](https://vouchfx.io/roadmap/)).
 - **Secrets as references.** `${secret:env/…}` and `${secret:vault/…}` resolve at run time,
   never at compile time, and return a typed `SecretString` with no value-returning `ToString()`. The
   reproducibility envelope hashes the reference, never the value. The redaction path has passed a
@@ -204,12 +207,13 @@ vouchfx run ./tests --html ./report.html --junit ./results.xml
 Five Docker-free subcommands round out the loop: `vouchfx validate` runs the full compile-time pipeline
 (schema, parse, AST, provider binding, Roslyn) without starting anything; `vouchfx list` prints the
 startup-sealed step-type catalogue, including configured external providers (with shape-level fields on `--json`); `vouchfx schema` emits the
-composed v1 JSON Schema; `vouchfx scaffold` generates machine-drafted `.e2e.yaml` skeletons from a structured JSON intent; and `vouchfx plan` performs coverage-and-gap analysis over your declared suites,
+composed JSON Schema (v1 by default, `--schema-version v2` for v2, `--environment-driver compose` for the Compose configuration schema); `vouchfx scaffold` generates machine-drafted `.e2e.yaml` skeletons from a structured JSON intent; and `vouchfx plan` performs coverage-and-gap analysis over your declared suites,
 run history, and available providers, emitting findings for coverage gaps (suite never run, step never
 exercised, dependency not asserted, vocabulary missing, service missing HTTP step), history-health signals
 (stale, flaky, fragile, inconclusive-prone), and identity ambiguity. Most take `--json` for tooling;
-in-process hosts can use the public library APIs (`EngineExport`, `PlanExport`, `SuiteScaffolder`)
-in `Vouchfx.Engine.Compilation` and `Vouchfx.Engine.Planning` instead of shelling out.
+in-process hosts can use the public library APIs `EngineExport` and `SuiteScaffolder` in
+`Vouchfx.Engine.Compilation` instead of shelling out. `PlanExport` is available in-tree
+(`Vouchfx.Engine.Planning`) and is not yet a published package.
 
 **Exit codes follow the verdict taxonomy:**
 
@@ -249,7 +253,7 @@ fails.
 ```yaml
 jobs:
   vouchfx-e2e:
-    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@v1-rc
+    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@v1  # convenience tag; pin a full SHA for production (see CI integration)
     with:
       scenario-path: ./tests/e2e
 ```
@@ -262,7 +266,10 @@ template's privileged-runner caveat, the floating-tag contract and the supply-ch
 The [VSCode extension](https://github.com/tomas-rampas/vouchfx/tree/main/tools/vscode-vouchfx) binds
 the frozen v1 JSON Schema to `*.e2e.yaml` files, giving step-type-aware **autocomplete, hover and
 inline validation** as you author. A CI gate keeps the editor's schema byte-for-byte in step with what
-the compiler accepts, so the editor can never suggest a construct the engine would reject. It also
+the compiler accepts, so the editor can never suggest a construct the engine would reject. A schema v2
+suite needs an explicit `# yaml-language-server: $schema=` modeline pointing at a
+`vouchfx schema --schema-version v2` export (see the extension README); without it the editor flags the
+v2 `metadata` fields. The extension also
 provides **C# syntax highlighting** inside `script.csharp` blocks and **Test Explorer integration**
 with per-step verdicts and failing-line decoration. Full in-block C# IntelliSense is a
 [documented fast-follow](https://github.com/tomas-rampas/vouchfx/blob/main/tools/vscode-vouchfx/docs/csharp-intellisense.md).
@@ -327,7 +334,7 @@ storage locations.
 
 ## Building from source
 
-**Prerequisites:** a .NET 8, 9 or 10 SDK (`global.json` sets the minimum and roll-forward policy) and, for the integration tests only, a
+**Prerequisites:** a .NET 10 SDK (`global.json` sets the minimum and roll-forward policy) and, for the integration tests only, a
 running Docker daemon. The unit tests require the SDK but do not need Docker.
 
 ```bash
@@ -385,17 +392,12 @@ To decline the sweep — when deliberately holding a CLI host under a debugger, 
 `VOUCHFX_DRILL_SWEEP=0`. Nothing is then inspected or killed at either end of the lane, and that is
 recorded in the same log.
 
-CI (`.github/workflows/build.yml`) defines a blocking Linux **build** job (build + format + unit
-tests), a blocking **windows-unit** job (restore + Release build + Docker-free unit tests), a
-blocking **memory-leak** job over 5,000 load-unload cycles, a blocking Linux **integration** job
-for Docker/Aspire tests, and a blocking **documentation** job that builds the site and checks its
-publication boundary. The **analyser-forward** job is advisory (`continue-on-error`): it rebuilds
-with the .NET 10 SDK's recommended analysers. It runs from a scratch directory outside the
-checkout and writes its own `global.json` (`10.0.100`, `rollForward: latestFeature`) there. The
-muxer walks upward from the working directory, so that pin governs the job while the repository's
-.NET 8 `global.json` stays in force for every other job. Hosted images that also carry a newer
-major (measured: .NET 11) would otherwise win, and the job's own `10.*` version guard would fail
-before the rebuild. Deleting that scratch `global.json` reproduces the failure.
+CI (`.github/workflows/build.yml`) runs a set of blocking build, test, memory-leak, TLS, documentation
+and workflow-contract jobs on each pull request; they are described in
+[CI integration](https://vouchfx.io/ci-integration/#this-repositorys-own-ci-layout). The Linux
+**integration** job for Docker/Aspire tests runs daily on `main` and on manual dispatch from any branch
+(Actions tab, CI, Run workflow, choose the branch) rather than on each pull request or push, so a
+failure there surfaces on the next daily run, not before merge.
 
 <details>
 <summary><strong>Repository layout</strong></summary>
@@ -445,7 +447,9 @@ contract — consumed by providers, not part of the engine internals.
 for the step-type model, the frozen v1 contract in `Vouchfx.Sdk`, and the composition rules.
 [`Example.Steps.Hello`](https://github.com/tomas-rampas/vouchfx/tree/main/examples/Example.Steps.Hello)
 is a minimal template; [`Example.Steps.Echo`](https://github.com/tomas-rampas/vouchfx/tree/main/examples/Example.Steps.Echo)
-demonstrates all four mandatory interfaces. The hub's
+demonstrates all four mandatory interfaces. Both templates build the provider for .NET 8 (`net8.0`),
+the frozen contract's framework, so it loads in current .NET 10 CLIs and in earlier .NET 8 CLIs alike;
+their test projects run on .NET 10. The hub's
 [`Vouchfx.Community.JsonRpc`](https://github.com/tomas-rampas/vouchfx-providers/tree/main/community/Vouchfx.Community.JsonRpc)
 is the canonical full reference implementation.
 

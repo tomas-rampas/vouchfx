@@ -16,18 +16,30 @@ public sealed partial class EventContractFreezeTests
         var cliDirectory = Path.Combine(AppContext.BaseDirectory, "EventContractCliRuntime");
         var cliBinary = Path.Combine(cliDirectory, "System.Text.Json.dll");
         var loaded = typeof(JsonSerializer).Assembly;
-        var cliIdentity = AssemblyName.GetAssemblyName(cliBinary);
         var cliPackage = ReadSystemTextJsonPackage(Path.Combine(cliDirectory, "vouchfx.deps.json"));
         var testPackage = ReadSystemTextJsonPackage(Path.Combine(
             AppContext.BaseDirectory, "Vouchfx.Engine.Abstractions.Tests.deps.json"));
         var loadedHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(loaded.Location)));
-        var cliHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(cliBinary)));
         _output.WriteLine($"Loaded STJ: {loaded.FullName}; {loaded.Location}; SHA256 {loadedHash}");
-        _output.WriteLine($"CLI STJ: {cliIdentity.FullName}; {cliBinary}; SHA256 {cliHash}");
         _output.WriteLine($"Resolved deps packages: CLI={cliPackage ?? "<in-box>"}; test={testPackage ?? "<in-box>"}");
-        Assert.NotNull(cliPackage);
         Assert.Equal(cliPackage, testPackage);
-        Assert.Equal(cliIdentity.FullName, loaded.FullName);
+        if (cliPackage is null)
+        {
+            // net10.0 prunes the System.Text.Json package (the shared framework carries the
+            // same line), so neither host bundles one. Both must then load the shared
+            // framework's own copy, and the CLI must not ship a stray file beside it.
+            Assert.False(File.Exists(cliBinary), $"The CLI bundles {cliBinary} without a deps.json entry.");
+            var frameworkDirectory = Path.TrimEndingDirectorySeparator(
+                System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory());
+            Assert.Equal(frameworkDirectory, Path.GetDirectoryName(loaded.Location));
+        }
+        else
+        {
+            var cliIdentity = AssemblyName.GetAssemblyName(cliBinary);
+            var cliHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(cliBinary)));
+            _output.WriteLine($"CLI STJ: {cliIdentity.FullName}; {cliBinary}; SHA256 {cliHash}");
+            Assert.Equal(cliIdentity.FullName, loaded.FullName);
+        }
         // A newer runtime may service the package with its in-box assembly. Compare
         // the CLI's actual loaded serializer, rather than assuming its bundled file wins.
         var cliOutput = await ProbeCliSerializerAsync();

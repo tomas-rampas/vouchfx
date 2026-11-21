@@ -5,12 +5,13 @@ This guide covers real failure modes, what they mean, and how to fix them.
 **Quick index:**
 - [Docker is not running or not reachable](#docker-is-not-running-or-not-reachable)
 - [Transient image pull corruption: "short read" or "unexpected EOF"](#transient-image-pull-corruption-short-read-or-unexpected-eof)
+- [The Aspire orchestration component is not installed / could not be located](#the-aspire-orchestration-component-is-not-installed-could-not-be-located)
 - [EnvironmentError: HealthGate timeout of 00:00:20](#environmenterror-healthgate-timeout-of-000020)
 - [Every port-publishing container fails at startup ("should have valid address at this point")](#every-port-publishing-container-fails-at-startup-should-have-valid-address-at-this-point)
 - [Private registry and air-gapped operation](#private-registry-and-air-gapped-operation)
 - [Discovery root does not exist (dotnet run path resolution gotcha)](#discovery-root-does-not-exist-dotnet-run-path-resolution-gotcha)
 - [Script body, document, and YAML expansion limits](#script-body-document-and-yaml-expansion-limits)
-- [Isolated script compilation (`--isolate-compile`)](#isolated-script-compilation---isolate-compile)
+- [Isolated script compilation (`--isolate-compile`)](#isolated-script-compilation-isolate-compile)
 - [GitHub Actions rejects the requested .NET SDK](#github-actions-rejects-the-requested-net-sdk)
 - [Understanding the four verdicts](#understanding-the-four-verdicts)
 - [Secret leakage in exception messages](#secret-leakage-in-exception-messages)
@@ -19,6 +20,14 @@ This guide covers real failure modes, what they mean, and how to fix them.
 - [Steps run but assertions fail](#steps-run-but-assertions-fail)
 - [Capture fails or placeholder is empty](#capture-fails-or-placeholder-is-empty)
 - [Kafka messages not consumed (ordering or timing)](#kafka-messages-not-consumed-ordering-or-timing)
+- [RabbitMQ: message not in queue (ownership, durability, publish-after-declare)](#rabbitmq-message-not-in-queue-ownership-durability-publish-after-declare)
+- [NATS: Inconclusive verdict on mq-expect.nats (stream created after publish — lost message)](#nats-inconclusive-verdict-on-mq-expectnats-stream-created-after-publish-lost-message)
+- [Azure Service Bus: entity not declared in dependency config → EnvironmentError](#azure-service-bus-entity-not-declared-in-dependency-config-environmenterror)
+- [Redis: AuthenticationError from the SUT (missing password credential)](#redis-authenticationerror-from-the-sut-missing-password-credential)
+- [SQL Server: slow cold start; EnvironmentError on first pull](#sql-server-slow-cold-start-environmenterror-on-first-pull)
+- [SMTP/Mailpit: mail not found (wrong target key — HTTP API vs. SMTP endpoint)](#smtpmailpit-mail-not-found-wrong-target-key-http-api-vs-smtp-endpoint)
+- [Cross-scenario state bleed on non-reset stores (DynamoDB, MinIO, S3)](#cross-scenario-state-bleed-on-non-reset-stores-dynamodb-minio-s3)
+- [State reset failed (environment error naming a dependency)](#state-reset-failed-environment-error-naming-a-dependency)
 - [Validation errors at authoring time](#validation-errors-at-authoring-time)
 - [Git selection diagnostics](#git-selection-diagnostics)
 - [Provider requires a newer engine](#provider-requires-a-newer-engine)
@@ -39,7 +48,7 @@ Cannot connect to the Docker daemon at unix:///var/run/docker.sock
 ```
 
 **What it means:**
-vouchfx orchestrates containers via Docker (Aspire + Testcontainers). If the Docker daemon is not running or not reachable, the topology cannot start.
+vouchfx orchestrates containers via Docker (Aspire). If the Docker daemon is not running or not reachable, the topology cannot start.
 
 **Fix:**
 
@@ -113,35 +122,31 @@ vouchfx runs at all.
 
 ## The Aspire orchestration component is not installed / could not be located
 
-**Symptom:** the message names a concrete tools path. Published tools through v1.2.1 (the latest
-GitHub release) still name Aspire **13.4.2**:
-
+**Symptom** (sample messages from legacy rc.6 and older builds; the version in a path or message is the one that build pinned):
 ```
 System.IO.FileNotFoundException: The Aspire orchestration component is not installed
 at "/home/runner/.nuget/packages/aspire.hosting.orchestration.linux-x64/13.4.2/tools/dcp".
 ```
-
-A cache miss on an unbundled source or custom AppHost names the package version it probed:
-
+or, from legacy cache-based builds and unbundled source/custom AppHosts:
 ```
 EnvironmentError: The Aspire DCP orchestration component could not be located. …
 no 'aspire.hosting.orchestration.<rid>' version '13.4.2' package was found at '…'.
 ```
 
-That version is the one to restore. `DcpPathResolver.ResolveVersion` takes the loaded
-`Aspire.Hosting` informational version, truncated at `+`, and falls back to the version segment
-of the stale `DcpCliPath` metadata. A source build of current main loads Aspire.Hosting **13.4.6**,
-so the same sentence names `13.4.6`. A 13.4.2 cache entry does not satisfy that probe.
+The version in that message is the one to restore. `DcpPathResolver.ResolveVersion` takes the
+informational version of the loaded `Aspire.Hosting` assembly, truncated at `+`, and falls back to
+the version segment of the stale `DcpCliPath` metadata. A source build of current main loads
+Aspire.Hosting **13.4.6**, so the same sentence names `13.4.6`, and a 13.4.2 cache entry does not
+satisfy that probe.
 
 **What it means:** the inline Aspire environment could not locate a matching native DCP tool.
-Stable releases from `1.0.0` through `1.2.1` bundle Aspire 13.4.2 under `dcp/13.4.2/<rid>/tools/`,
-beside the CLI. Current source pins `Aspire.Hosting`, `Aspire.Hosting.AppHost`, `Aspire.AppHost.Sdk`
-and `VouchfxDcpVersion` together at 13.4.6 (`Directory.Packages.props`; `AspireVersionLockstepGuardTests`
-refuses a partial bump). The next package bundles that tree at `dcp/13.4.6/<rid>/tools/`.
-`Aspire.Hosting.Elasticsearch` stays at 13.3.0 and is not the DCP package. Supported process
-platforms are `win-x64`, glibc `linux-x64`, `osx-x64` and `osx-arm64`.
+Published `1.0.0` and later distributions bundle the pinned Aspire DCP tools under `dcp/<aspire-version>/<rid>/tools/`, beside the CLI (13.4.2 up to v1.2.1; later releases bundle the 13.4.x release pinned at their tag).
+Current main pins `Aspire.Hosting`, `Aspire.Hosting.AppHost`, `Aspire.AppHost.Sdk` and
+`VouchfxDcpVersion` together at 13.4.6, and `AspireVersionLockstepGuardTests` fails when they
+diverge. `Aspire.Hosting.Elasticsearch` stays at 13.3.0 and is not the DCP package.
+Supported process platforms are `win-x64`, glibc `linux-x64`, `osx-x64` and `osx-arm64`.
 
-**Fix for a published bundled distribution:** reinstall the complete matching package/archive. Keep the `dcp/`
+**Fix for published 1.0.0 distributions:** reinstall the complete matching package/archive. Keep the `dcp/`
 tree with the CLI; copying only the executable is insufficient. An incomplete declared bundle
 fails explicitly, even when another DCP happens to exist in a local NuGet cache. On Unix, archives
 and installers must preserve executable permissions on `dcp` and `dcptun_c`; global-tool startup
@@ -149,27 +154,27 @@ repairs those bits in its selected bundle. A read-only installation with missing
 repair by its owner. Unsupported RIDs require a supported distribution or an explicit matching
 DCP override.
 
-**Legacy published rc.6:** the native tools are not bundled. A fresh-cache
+**Legacy published rc.6 and older cache-based builds:** the native tools are not bundled. A fresh-cache
 `1.0.0-rc.6` installation was measured on 2026-10-10 to fail before Docker starts; an earlier cache
-fallback did not eliminate this prerequisite. That release probes Aspire **13.4.2**. Supply that
-platform's tools and set `ASPIRE_DCP_PATH` to their **directory**, or upgrade to the latest stable CLI.
-Do not infer the installed CLI version from a packaging runner's stale path: the version in the
-`no '…' version '…'` clause is the probe. Restoring an AppHost at the exact version populates tools
-for source builds, but is not a prerequisite for installed stable distributions. The retired Aspire
-workload does not provide these NuGet tools.
+fallback did not eliminate this prerequisite. Supply the exact platform's Aspire tools (13.4.2 for rc.6; for a source build, the version in
+`Directory.Packages.props`) and set `ASPIRE_DCP_PATH` to their **directory**, or upgrade to the latest stable CLI.
+Do not infer the installed version from its error path: even newer legacy packages can display a
+packaging runner's stale path. Restoring an AppHost at the exact version populates tools for source
+builds, but is not a prerequisite for installed `1.0.0` distributions. The retired Aspire workload does not
+provide these NuGet tools.
 
 ```powershell
-$env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/13.4.2/tools"
+$env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/<aspire-version>/tools"
 ```
 
 **Source builds and custom AppHosts from current main:** `dotnet restore` of this repository
 populates `aspire.hosting.orchestration.<rid>` **13.4.6**. When the path baked into AppHost metadata
-is absent on this machine, the fallback probes exactly
-`<nuget-packages>/aspire.hosting.orchestration.<rid>/13.4.6/tools/dcp` (or `dcp.exe` on Windows).
-Point `ASPIRE_DCP_PATH` at that tools **directory** when you must override:
+is absent on this machine, the fallback probes
+`<nuget-packages>/aspire.hosting.orchestration.<rid>/13.4.6/tools/dcp` (`dcp.exe` on Windows).
+When you must override, point `ASPIRE_DCP_PATH` at that tools **directory**:
 
 ```powershell
-$env:ASPIRE_DCP_PATH = "$env:USERPROFILE\.nuget\packages\aspire.hosting.orchestration.win-x64\13.4.6\tools"
+$env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/13.4.6/tools"
 ```
 
 The explicit override remains authoritative; unset it to use the installed bundle. DCP provisioning
@@ -489,9 +494,9 @@ Use one of these approaches:
    dotnet build src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release
 
    # Run the built binary
-   src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx run ./tests/e2e
+   src/Cli/Vouchfx.Cli/bin/Release/net10.0/vouchfx run ./tests/e2e
    ```
-   (On Windows: `src\Cli\Vouchfx.Cli\bin\Release\net8.0\vouchfx.exe run .\tests\e2e`)
+   (On Windows: `src\Cli\Vouchfx.Cli\bin\Release\net10.0\vouchfx.exe run .\tests\e2e`)
 
    The binary runs from your current directory, so relative paths work as expected.
 
@@ -501,7 +506,7 @@ Use one of these approaches:
    ```
    (On Windows: `dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- run $((Get-Location).Path)/tests/e2e`)
 
-**Best practice:** For running container-backed vouchfx test suites, use the packaged CLI, Docker running Linux containers and its [version-specific DCP prerequisites](getting-started.md#installing-vouchfx). A global tool built from current source runs on .NET 8, or on .NET 9 or 10 when .NET 8 is absent; an older published tool keeps that release's runtime requirement. Self-contained installers bundle their own runtime. Published `1.0.0` bundles matching DCP tools without a source checkout, Aspire workload or warmed NuGet cache. Legacy rc.6 requires externally provisioned matching tools. The packaged CLI runs from your current directory without path-resolution workarounds. If you are working on vouchfx itself from source, build the CLI once and run the binary directly — it is faster (skips compilation) and avoids `dotnet run` quirks altogether.
+**Best practice:** For running container-backed vouchfx test suites, use the packaged CLI, Docker running Linux containers and its [version-specific DCP prerequisites](getting-started.md#installing-vouchfx). A global tool built from current source runs on .NET 10, or on a newer major runtime when .NET 10 is absent, but never on .NET 8 or 9; an older published tool keeps that release's runtime requirement. Self-contained installers bundle their own runtime. Published `1.0.0` bundles matching DCP tools without a source checkout, Aspire workload or warmed NuGet cache. Legacy rc.6 requires externally provisioned matching tools. The packaged CLI runs from your current directory without path-resolution workarounds. If you are working on vouchfx itself from source, build the CLI once and run the binary directly — it is faster (skips compilation) and avoids `dotnet run` quirks altogether.
 
 ---
 
@@ -613,23 +618,23 @@ A later check can also fail because `dotnet` on `PATH` is not the copy under `$R
 
 **What it means:**
 
-`.github/workflows/vouchfx-run.yml` installs `dotnet-version` into its own directory and then deletes every SDK and shared-framework line other than the requested major. `actions/setup-dotnet` v6 first installs the latest LTS runtime (`--channel LTS`); that major can change without a workflow update, and the selector removes it when it is not the selected major. Leaving that extra runtime in place would let the `net8.0` CLI start even when the job asked for a different major. The selector runs under PowerShell 7. Accepted values begin with `8.0`, `9.0` or `10.0` and then either end or continue with a version suffix (`8.0.x`, `10.0.401`). `actions/setup-dotnet` runs before that selector and can fail first, with its own error. If the selector is reached, a value outside the accepted form is refused with `The isolated workflow supports .NET 8, 9 and 10 SDKs.` before anything is deleted.
+`.github/workflows/vouchfx-run.yml` installs `dotnet-version` into its own directory and then deletes every SDK and shared-framework line other than the requested major. `actions/setup-dotnet` v6 first installs the latest LTS runtime (`--channel LTS`); that major can change without a workflow update, and the selector removes it when it is not the selected major. Leaving that extra runtime in place would let the CLI start on it even when the job asked for a different major. The selector runs under PowerShell 7. Accepted values begin with `8.0`, `9.0` or `10.0` and then either end or continue with a version suffix (`8.0.x`, `10.0.401`). `actions/setup-dotnet` runs before that selector and can fail first, with its own error. If the selector is reached, a value outside the accepted form is refused with `The isolated workflow supports .NET 8, 9 and 10 SDKs.` before anything is deleted.
 
 The following `dotnet --version` check runs inside the vouchfx checkout, so the caller's `global.json` is not what selects the SDK. See [Isolated SDK on GitHub Actions](ci-integration.md#isolated-sdk-on-github-actions).
 
 **Fix:**
 
-1. Pass `8.0.x`, `9.0.x` or `10.0.x` (or an explicit `8.0` / `9.0` / `10.0` patch). The default is `8.0.x`.
+1. Pass `10.0.x` (or an explicit `10.0` patch), the default, which current source needs. `8.0.x` and `9.0.x` are accepted only for an older `vouchfx-ref` built for .NET 8.
 2. Use a runner that provides `pwsh` (PowerShell 7). GitHub-hosted runners do.
 3. Do not point `DOTNET_INSTALL_DIR` at a shared or pre-warmed SDK for this workflow. The selector only accepts a physical directory directly under `RUNNER_TEMP` named `vouchfx-suite-dotnet`.
 4. If the selected shared frameworks are missing, the requested SDK channel did not install both `Microsoft.NETCore.App` and `Microsoft.AspNetCore.App`. Retry with a complete `8.0.x`, `9.0.x` or `10.0.x` channel.
-5. On GitLab, choose the SDK with `VOUCHFX_DOTNET_IMAGE` instead. That template does not run this selector; an image that still contains .NET 8 will run the CLI on .NET 8.
+5. On GitLab, choose the SDK with `VOUCHFX_DOTNET_IMAGE` instead. That template does not run this selector. It builds vouchfx from source, so the image must contain a .NET 10 SDK; `global.json` refuses an image that has only a newer-major SDK. Roll-forward applies only to running the built CLI.
 
 ---
 
 ## Understanding the four verdicts
 
-vouchfx distinguishes four outcomes (see `docs/01` §12.1 for the full taxonomy):
+vouchfx distinguishes four outcomes (see blueprint [§12.1](01_Technical_Architecture_and_Engineering_Blueprint.md#121-the-verdict-taxonomy) for the full taxonomy):
 
 | Verdict | Meaning | Example | Default CI exit code |
 |---------|---------|---------|----------------------|
@@ -681,7 +686,7 @@ A `script.csharp` step throws an exception with a secret value in the message. T
 - id: validate-token
   type: script.csharp
   code: |
-    var token = Vars.Secrets.Resolve("vault/api-token").Reveal();
+    var token = Secrets.Resolve("vault/secrets/api-keys#api-token").Reveal();
     if (!token.StartsWith("sk_test_"))
       throw new Exception($"Invalid token: {token}");  // DANGER: reveals the token
 ```
@@ -703,13 +708,13 @@ The `--events` JSON Lines stream passes through the same scrubbing as the termin
 
 2. **The only deliberate escape hatch is `SecretString.Reveal()`.** Call it only at the moment you inject the value into a sink (e.g. an HTTP Authorization header), never write the revealed value back into `Vars` or any logged/serialised structure:
    ```csharp
-   var token = Vars.Secrets.Resolve("vault/api-token").Reveal();
+   var token = Secrets.Resolve("vault/secrets/api-keys#api-token").Reveal();
    // Use token here at the injection point only; never store or log the revealed value
    if (!IsValidToken(token))
      throw new Exception("Token validation failed");  // No secret in the message
    ```
 
-3. **Understand the three tiers of secret protection** (see `docs/01` §17):
+3. **Understand the three tiers of secret protection** (see blueprint [§17](01_Technical_Architecture_and_Engineering_Blueprint.md#17-secrets-and-configuration-management)):
    - **Tier 1: No bake into IL** — The secret value is never compiled into the C# source or IL (verified by SecretResolutionPipelineTests).
    - **Tier 2: Redaction in output** — Terminal output, HTML report, JUnit XML, and `--events` JSON Lines all redact secret values and substitute declared paths (values appear as `***REDACTED***`; resolved paths appear as the author's original declared text).
    - **Tier 3: Author discipline** — Beyond the engine's automated redaction, authors must still avoid embedding secrets in exception messages because the scrub cannot catch deliberately transformed values (base64, HMAC, substrings).
@@ -1255,7 +1260,7 @@ ERR invalid password
 ```
 
 **What it means:**
-The managed Redis dependency (provided by Aspire/Testcontainers) has authentication enabled, and your SUT is either:
+The managed Redis dependency (provided by Aspire) has authentication enabled, and your SUT is either:
 1. Not providing the password at all.
 2. Using the wrong password or username.
 
@@ -1646,7 +1651,7 @@ Provider registration refused: Provider 'rpc.json-rpc' requires engine 1.2.0; th
 
 The CLI compares `MinEngineVersion` with `VouchfxEngineVersion` metadata on `Vouchfx.Engine.Runtime` before the provider contributes a schema. Comparison is strict SemVer 2. A prerelease sorts before the matching stable version, and build metadata is ignored.
 
-`Directory.Build.props` copies `-p:Version` into that stamp when release packaging sets it. A plain source build, including the main CI build, omits `-p:Version` and uses the checked-in fallback. A stale fallback refuses providers the source can host; see the 1.3.0 entry in the [changelog](changelog.md). Adding a newer changelog heading without raising the fallback fails `HostProviderAdmissionTests.SourceCapabilityStamp_IsAtLeastTheNewestChangelogVersion` in the unit-test run, not in the build.
+`Directory.Build.props` copies `-p:Version` into that stamp when release packaging sets it. A plain source build, including the main CI build, omits `-p:Version` and uses the checked-in fallback. A stale fallback refuses providers the source can host; see the 1.4.0 entry in the [changelog](changelog.md). Adding a newer changelog heading without raising the fallback fails `HostProviderAdmissionTests.SourceCapabilityStamp_IsAtLeastTheNewestChangelogVersion` in the unit-test run, not in the build.
 
 `vouchfx --version` and JSON `engineVersion` report the informational version. A build or pack without `-p:Version` reports `1.0.0-0.local` plus a `+<commit>` suffix. That string is not the capability stamp.
 

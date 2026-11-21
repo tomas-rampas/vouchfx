@@ -21,8 +21,8 @@ One coherent business transaction spanning:
 
 ## Prerequisites
 
-- **.NET 8 SDK** (pinned in `global.json`).
-- **Docker** running locally (for the Aspire/Testcontainers topology).
+- **.NET 10 SDK** (pinned in `global.json`).
+- **Docker** running locally (for the Aspire topology).
 - **`VOUCHFX_REF_BEARER_TOKEN`** environment variable set to a test value (any non-empty string; the whoami service ignores it, but it must be present to resolve the secret).
 
 ## Running the scenario
@@ -80,7 +80,7 @@ The scenario stands up:
 
 ## Interpreting the verdict
 
-The scenario has four steps, each with a distinct intent:
+The scenario has seven steps, each with a distinct intent:
 
 1. **rest-get-whoami** — Succeeds if the REST call returns 200 and the hostname is successfully captured.
 2. **db-insert-row** — Succeeds if the C# script executes without exception.

@@ -2,8 +2,9 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <!-- Exercise the centrally resolved serializer the CLI deploys, not net8.0's inbox copy. -->
-    <PackageReference Include="System.Text.Json" />
+    <!-- No System.Text.Json PackageReference: on net10.0 the package is pruned in favour
+         of the shared framework's own copy (NU1510 otherwise), which is the serializer the
+         net10.0 CLI runs on as well. -->
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -47,7 +48,11 @@
       <EventContractCliOutput>$(MSBuildProjectDirectory)\..\..\src\Cli\Vouchfx.Cli\bin\$(Configuration)\$(TargetFramework)</EventContractCliOutput>
     </PropertyGroup>
     <ItemGroup>
-      <EventContractCliRuntime Include="$(EventContractCliOutput)\System.Text.Json.dll;$(EventContractCliOutput)\vouchfx.deps.json;$(EventContractCliOutput)\vouchfx.runtimeconfig.json" />
+      <EventContractCliRuntime Include="$(EventContractCliOutput)\vouchfx.deps.json;$(EventContractCliOutput)\vouchfx.runtimeconfig.json" />
+      <!-- Present only when the CLI bundles the System.Text.Json package. On net10.0 the
+           package is pruned and the CLI runs the shared framework's copy, which
+           EventContractRuntimeTests then checks instead. -->
+      <EventContractCliRuntime Include="$(EventContractCliOutput)\System.Text.Json.dll" Condition="Exists('$(EventContractCliOutput)\System.Text.Json.dll')" />
     </ItemGroup>
     <Copy SourceFiles="@(EventContractCliRuntime)" DestinationFolder="$(OutDir)EventContractCliRuntime" />
   </Target>
