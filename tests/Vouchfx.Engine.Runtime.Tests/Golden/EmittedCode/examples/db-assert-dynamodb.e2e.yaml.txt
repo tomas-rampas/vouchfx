@@ -23,7 +23,8 @@ timeout-ms: none
     "Json": null,
     "BodyContains": null
   },
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "StructuredBody": false
 }
 @@@@ step 1 host-resources
 []
@@ -35,7 +36,7 @@ System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
 @@@@ step 1 helpers
-HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_Helpers sha256=e81dfd8379907b58c590d242effafc87cd56713dbd7071ddcc68527cc3048647
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
@@ -53,6 +54,7 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         "POST",
         "/orders",
         "{\u0022orderId\u0022:\u00221001\u0022,\u0022customerId\u0022:\u0022cust-1\u0022,\u0022amount\u0022:49.99}",
+        false,
         new string[] { },
         new string[] { },
         200,
@@ -293,7 +295,7 @@ using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Amazon.Runtime;
 
-// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_Helpers sha256=e81dfd8379907b58c590d242effafc87cd56713dbd7071ddcc68527cc3048647: body elided, recorded by name and hash]
 // [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
 // [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
 // [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
@@ -321,6 +323,7 @@ var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var 
         "POST",
         "/orders",
         "{\u0022orderId\u0022:\u00221001\u0022,\u0022customerId\u0022:\u0022cust-1\u0022,\u0022amount\u0022:49.99}",
+        false,
         new string[] { },
         new string[] { },
         200,

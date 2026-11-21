@@ -79,6 +79,12 @@ public sealed record HttpExpect(
 /// inside the emitted helper's guarded region (§17), exactly like the path and
 /// header values.  <see langword="null"/> when no body is declared.
 /// </param>
+/// <param name="StructuredBody">
+/// <see langword="true"/> when <see cref="Body"/> is the JSON of a YAML mapping or sequence.
+/// The helper then JSON-escapes each resolved token so a value cannot change the shape of
+/// the body. A scalar body is <see langword="false"/>: the author owns those bytes, and the
+/// helper substitutes into them as text.
+/// </param>
 /// <param name="Expect">
 /// An optional assertion block applied to the HTTP response.
 /// </param>
@@ -98,4 +104,5 @@ public sealed record HttpRestModel(
     IReadOnlyDictionary<string, string>? Headers,
     string? Body,
     HttpExpect? Expect,
-    string? BodyRefusal = null) : IStepModel;
+    string? BodyRefusal = null,
+    bool StructuredBody = false) : IStepModel;

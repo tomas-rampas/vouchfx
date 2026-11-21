@@ -21,6 +21,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Fixed
+
+- An `http.rest` body written as a YAML mapping or sequence no longer changes a `${secret:...}` or `{placeholder}` token before resolving it, and no longer splices the resolved value into the JSON without escaping it. A reference such as `${secret:env/a+b}` now requests the path `a+b` (the default JSON encoder had rewritten `+` as `\u002B`, and the same for `<`, `>`, `&` and non-ASCII). A resolved value that contains a quote, a backslash or a control character is written with JSON string escaping, so it stays inside its string and cannot add or close a member. A scalar `body` is still the author's own text and is substituted as text. Characters that JSON does not require to be escaped are now sent as themselves in a structured body; a JSON parser reads the same value either way.
+
 ## [1.4.0] — 2026-11-21
 
 1.4.0 is the first release that targets .NET 10. 1.3.0 was not published; the changes that were prepared under that number ship in this release and are included below.
