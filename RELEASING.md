@@ -48,8 +48,8 @@ after publication:
   section 5.7 and the `NuGetAuditSuppress` comment in `Directory.Build.props`. Check that the
   `scripts/check_distribution.py` and `Vouchfx.Dcp.targets` comments still match the pinned Aspire.
 - Update texts that say "once published": `SECURITY.md` and `docs/getting-started.md` (the
-  `SslCa` advice for 1.2.1) and the vouchfx-mcp paragraph in `docs/getting-started.md` (until an MCP
-  release pins the new Core, the MCP rejects it, because its engine pin is an exact match).
+  `SslCa` advice for 1.2.1). Re-read the vouchfx-mcp paragraph in `docs/getting-started.md`: it
+  states the exact-pin rule and names no version, so it needs an edit only if that rule changes.
 - Confirm `move-floating-tag.yml` moved the floating `v1` tag, and that `docs/ci-integration.md` still
   describes the tags truthfully.
 - In `vouchfx-mcp`, bump `ENGINE_PIN` and run `scripts/sync-vendored.ps1 -Update`; `docs/recipes.md`,

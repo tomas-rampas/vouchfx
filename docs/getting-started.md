@@ -100,7 +100,7 @@ carries a non-empty password are affected; the
 [security policy](https://github.com/tomas-rampas/vouchfx/blob/main/SECURITY.md#published-121-tool-and-ghsa-473q-m89c-ghf8)
 lists every exclusion. On 1.2.1, set `SslCa`, or use 1.4.0 or later.
 
-**Using vouchfx-mcp?** Keep its CLI at the version required by the installed MCP package. Published MCP 1.1.0 [pins Core 1.2.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN), whose full version is `1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8`; it does not accept any other Core version, including 1.2.1 and a later release, until an MCP release pins it. If you also need another Core version, install the MCP-compatible CLI in a separate tool directory and put that directory first on `PATH` for the MCP server process.
+**Using vouchfx-mcp?** Keep its CLI at the version required by the installed MCP package. Each MCP release pins exactly one Core version and accepts no other, because its engine pin is an exact match; a newer Core release is not accepted until an MCP release pins it. The [install guide](https://vouchfx-mcp.vouchfx.io/docs/install.html) names the Core version for each MCP release it covers, and the `ENGINE_PIN` file in each MCP release records it exactly. If you also need another Core version, install the MCP-compatible CLI in a separate tool directory and put that directory first on `PATH` for the MCP server process.
 
 ### Native installers
 

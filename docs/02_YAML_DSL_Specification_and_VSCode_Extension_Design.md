@@ -503,6 +503,9 @@ Four rules apply to the values; the second and the fourth differ from a service'
   When that refusal is the run's only outcome, nothing has executed and the run exits 4 with or
   without either gating flag. A passing sibling cannot hide this authoring refusal; an already-selected
   non-zero code is preserved. See the [exit-code policy](01_Technical_Architecture_and_Engineering_Blueprint.md#164-exit-codes).
+  The MCP server's `validate_suite` at the `semantic` or `full` level reports the same mistake
+  before a run, as diagnostic
+  [`VFX-D-1213`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1213.html).
 
 Variables set by Aspire internally, rather than by the engine, are not detected and will silently take
 the author's value instead; a dependency's own image may also read variables neither the engine nor
