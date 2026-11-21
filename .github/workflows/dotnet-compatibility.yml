@@ -1,8 +1,8 @@
 # The source targets net10.0 (the published provider SDK libraries keep a net8.0
-# asset, which loads in the net10.0 host). The .NET 10 lanes install ONE SDK major
-# into an isolated directory and remove every other shared framework, so no
+# asset, which loads in the net10.0 host). The .NET 10 lane installs ONE SDK major
+# into an isolated directory and removes every other shared framework, so no
 # preinstalled runtime can satisfy a build, test host or the packed tool. .NET 8
-# and .NET 9 cannot run net10.0 code, so those lanes hold .NET 10 only.
+# and .NET 9 cannot run net10.0 code, so that lane holds .NET 10 only.
 #
 # The roll-forward job proves RollForward=Major, which the README, the
 # getting-started guide and the changelog promise: it builds and packs the CLI
@@ -26,8 +26,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # Scheduled workflows run only on the default branch. The daily run also
-  # repeats the per-PR jobs; offset from build.yml so the two do not start together.
+  # Scheduled workflows run only on the default branch. The daily run repeats the
+  # per-PR jobs: setup-dotnet takes the newest 10.0.x and 11.0.x builds, so it
+  # catches a new runtime build that breaks the isolated or the roll-forward lane
+  # on a day with no pull request. Offset from build.yml so the two do not start
+  # together.
   schedule:
     - cron: "47 6 * * *"
   workflow_dispatch:

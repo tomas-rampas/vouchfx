@@ -669,7 +669,9 @@ and the workflow contract, all from `build.yml`. `dotnet-compatibility.yml` adds
 `build.yml` does not have: the Docker-free .NET 10 compatibility lane, which builds and tests with
 only a .NET 10 SDK and runtime installed, and the .NET 11 roll-forward lane (the packed tool started
 with only a .NET 11 runtime present). The compatibility workflow holds no Docker, memory or TLS lane,
-because `build.yml` already runs those on the same .NET 10 runtime.
+because `build.yml` already runs those on the same .NET 10 runtime. It also runs daily on `main`,
+scheduled for 06:47 UTC, so that a new .NET 10 or .NET 11 runtime build that breaks either lane is
+noticed on a day with no pull request.
 
 The Docker integration suite (the `integration` job in `build.yml`) does not run on pull requests or
 pushes. It runs daily on `main`, scheduled for 06:17 UTC, and on manual dispatch from any branch. A

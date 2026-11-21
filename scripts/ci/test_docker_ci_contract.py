@@ -211,12 +211,12 @@ source "$1"
         compatibility = workflow(COMPATIBILITY_WORKFLOW)
         self.assertEqual([{"cron": "47 6 * * *"}], compatibility["on"]["schedule"])
         self.assertIn("workflow_dispatch", compatibility["on"])
-        # The Docker, memory and TLS lanes live only in build.yml; repeating them here
-        # would run each twice on the same runtime.
+        # The Docker, memory and TLS lanes are run only from build.yml; repeating them
+        # here would run each twice on the same runtime.
         self.assertEqual(["compatibility", "roll-forward"], sorted(compatibility["jobs"]))
         self.assertEqual(["main"], compatibility["on"]["pull_request"]["branches"])
         self.assertEqual(["main"], compatibility["on"]["push"]["branches"])
-        for always_job in ["build", "windows-unit", "memory-leak", "docs-build"]:
+        for always_job in ["build", "windows-unit", "memory-leak", "tls-transport", "docs-build"]:
             with self.subTest(job=always_job):
                 self.assertNotIn("if", data["jobs"][always_job])
         self.assertEqual("build", data["jobs"]["memory-leak"]["needs"])
