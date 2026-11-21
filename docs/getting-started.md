@@ -32,8 +32,8 @@ source use runtime `RollForward=Major`, so they also run on a newer major runtim
 is absent, but never on .NET 8 or 9. The provider SDK packages (`Vouchfx.Sdk`,
 `Vouchfx.Sdk.Testing` and the engine libraries they depend on) keep their `net8.0` assets for
 the v1.x series, so providers built against them keep working. Older published tools retain
-their original runtime requirements; releases up to v1.2.1 target .NET 8, so the .NET 10 requirement
-applies to builds of current source and to the first release built from it.
+their original runtime requirements: releases up to v1.2.1 target .NET 8, and the .NET 10 requirement
+applies to v1.4.0 and later and to builds of current source.
 
 Run `dotnet --version` from the repository to check the selected SDK. See Microsoft's
 [SDK selection rules](https://learn.microsoft.com/en-us/dotnet/core/tools/global-json#rollforward).
