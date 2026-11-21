@@ -94,8 +94,8 @@ public sealed class YamlDecimalIntegerParityTests
         Assert.Equal(1.25, root.GetProperty("number").GetDouble());
         Assert.Equal(100, root.GetProperty("exponential").GetDouble());
         Assert.Equal(JsonValueKind.Null, root.GetProperty("missing").ValueKind);
-        // The existing type resolver also infers tagged scalars; keep that policy.
-        Assert.Equal(83, root.GetProperty("explicitString").GetInt64());
+        // An explicit string tag is honoured: the text is kept as written.
+        Assert.Equal("0123", root.GetProperty("explicitString").GetString());
         // Explicit tags retain YamlDotNet's existing interpretation; the bridge
         // changes only its own implicit decimal-integer inference.
         Assert.Equal(83, root.GetProperty("explicitInteger").GetInt64());

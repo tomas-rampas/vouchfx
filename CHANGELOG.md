@@ -21,6 +21,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Fixed
+
+- Schema validation no longer refuses a suite that contains a plain `NaN`, `Infinity`, `-Infinity` (in any letter case), `1e400`, `!!str NaN` or `!!int 0o17`, which used to stop with a generic "Failed to parse YAML: Exception during deserialization" and no location. A plain value must now read as a finite number to be typed as one, an explicit `!!str` tag gives a string (so `!!str 17` validates as text, as DSL §5.1 describes), and `!!int`, `!!float` or `!!bool` on text that YAML cannot read as that type validates as the text written. Every other scalar that validated before, including `!!int 0x1F`, `!!bool yes` and `!!float .inf`, keeps its type and value; `!!int 200` stays an integer and `!!float 1.5` a number. This supersedes the 1.4.0 limit that schema validation still refuses a plain `NaN` or `Infinity`; quoting is no longer needed.
+
 ## [1.4.0] — 2026-11-21
 
 1.4.0 is the first release that targets .NET 10. 1.3.0 was not published; the changes that were prepared under that number ship in this release and are included below.

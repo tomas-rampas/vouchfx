@@ -626,14 +626,36 @@ internal static class SchemaResources
     // ── YamlScalarTypeResolver — infers integer and float types ──────────────
 
     /// <summary>
-    /// A YamlDotNet node-type resolver that recognises plain (untagged) scalar
-    /// values that represent integers or floating-point numbers and returns their
-    /// CLR type (<see cref="long"/> or <see cref="double"/>) instead of the
-    /// default <see cref="string"/>.  This preserves the JSON Schema <c>type:
+    /// A YamlDotNet node-type resolver that recognises plain scalar values that
+    /// represent integers, floating-point numbers or booleans and returns their CLR
+    /// type (<see cref="long"/>, <see cref="double"/> or <see cref="bool"/>) instead of
+    /// the default <see cref="string"/>.  This preserves the JSON Schema <c>type:
     /// integer</c> / <c>type: number</c> constraints during YAML→JSON conversion.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A plain, untagged value is typed as a number only when it is a <em>finite</em>
+    /// one: <c>NaN</c>, <c>Infinity</c> and <c>1e400</c> stay text, as JSON has no such
+    /// number and YamlDotNet's own scalar parse would otherwise throw, refusing the whole
+    /// suite with an unlocated "Failed to parse YAML".  <c>!!str</c> is always a string.
+    /// </para>
+    /// <para>
+    /// Every other tagged scalar keeps the type this resolver always gave it from its text
+    /// (<see cref="long"/>, <see cref="double"/> or <see cref="bool"/>, or none, leaving
+    /// YamlDotNet to type it from the tag, as <c>!!int 0x1F</c> or <c>!!bool yes</c> are).
+    /// For a core <c>!!int</c>, <c>!!float</c> or <c>!!bool</c> tag, or an application tag
+    /// on text typed as above, the scalar is first probe-parsed by YamlDotNet itself with
+    /// exactly that type.  If the probe succeeds the answer is unchanged; if it throws, the
+    /// value is the text written.  So no scalar that parsed before changes type or value,
+    /// and only one that used to refuse the suite (<c>!!int 0o17</c>, <c>!!float NaN</c>,
+    /// <c>!!int abc</c>) is accepted as text.  The binder that owns the value decides what
+    /// that text means, and refuses a tag it cannot honour.
+    /// </para>
+    /// </remarks>
     private sealed class YamlScalarTypeResolver : INodeTypeResolver
     {
+        private const string CoreTagPrefix = "tag:yaml.org,2002:";
+
         bool INodeTypeResolver.Resolve(
             NodeEvent? nodeEvent,
             ref Type currentType)
@@ -643,37 +665,178 @@ internal static class SchemaResources
                 && currentType == typeof(object))
             {
                 var value = scalar.Value;
+                var tag = scalar.Tag.IsEmpty ? string.Empty : scalar.Tag.Value;
 
-                // Prefer long for integer-shaped values (covers status codes,
-                // port numbers, counts, etc.).
-                if (long.TryParse(value, System.Globalization.NumberStyles.Integer,
-                        System.Globalization.CultureInfo.InvariantCulture, out _))
+                if (tag.Length == 0)
                 {
-                    currentType = typeof(long);
+                    var plain = PlainType(value);
+                    if (plain is null)
+                    {
+                        return false;
+                    }
+
+                    currentType = plain;
                     return true;
                 }
 
-                // Fall back to double for floating-point values.
-                if (double.TryParse(value, System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out _))
+                var coreName = tag.StartsWith(CoreTagPrefix, StringComparison.Ordinal)
+                    ? tag.Substring(CoreTagPrefix.Length)
+                    : null;
+
+                if (coreName == "str")
                 {
-                    currentType = typeof(double);
+                    currentType = typeof(string);
                     return true;
                 }
 
-                // Recognise plain true/false (case-insensitive) as CLR bool so
-                // that the JSON Schema validator receives a JSON boolean literal
-                // (true/false, unquoted) rather than the string "true"/"false".
-                // Only strict true/false — YAML 1.1 aliases (yes/no/on/off) are
-                // deliberately excluded to avoid coercing unrelated string fields.
-                if (bool.TryParse(value, out _))
+                // The type this resolver has always chosen for a tagged scalar: from the
+                // text alone, with no finiteness test (the tag is not consulted).
+                var previous = TaggedType(value);
+                var probed = previous is not null
+                    || coreName is "int" or "float" or "bool";
+                if (!probed)
                 {
-                    currentType = typeof(bool);
+                    // An application tag, or a core tag such as !!null, on text that
+                    // is not a number or boolean: unchanged, YamlDotNet decides.
+                    return false;
+                }
+
+                if (!YamlDotNetAccepts(scalar, previous))
+                {
+                    currentType = typeof(string);
                     return true;
                 }
+
+                if (previous is null)
+                {
+                    return false;
+                }
+
+                currentType = previous;
+                return true;
             }
 
             return false;
         }
+
+        private static Type? PlainType(string value)
+        {
+            // Prefer long for integer-shaped values (covers status codes, port numbers,
+            // counts, etc.), then finite doubles.
+            if (IsLong(value))
+            {
+                return typeof(long);
+            }
+
+            if (IsFiniteDouble(value))
+            {
+                return typeof(double);
+            }
+
+            // Recognise plain true/false (case-insensitive) as CLR bool so that the JSON
+            // Schema validator receives a JSON boolean literal (true/false, unquoted)
+            // rather than the string "true"/"false".  Only strict true/false: YAML 1.1
+            // aliases (yes/no/on/off) are deliberately excluded to avoid coercing
+            // unrelated string fields.
+            return bool.TryParse(value, out _) ? typeof(bool) : null;
+        }
+
+        private static Type? TaggedType(string value)
+        {
+            if (IsLong(value))
+            {
+                return typeof(long);
+            }
+
+            if (double.TryParse(value, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out _))
+            {
+                return typeof(double);
+            }
+
+            return bool.TryParse(value, out _) ? typeof(bool) : null;
+        }
+
+        /// <summary>
+        /// Runs YamlDotNet's own scalar deserialisation over this one scalar, typed as the
+        /// production deserialiser would type it (<paramref name="forcedType"/>, or from
+        /// the tag when null), and reports whether it completes.  Only the exception
+        /// YamlDotNet wraps a failed scalar conversion in is caught.  The probe parses one
+        /// scalar already read by the parser: nothing is recursive and nothing grows.
+        /// </summary>
+        private static bool YamlDotNetAccepts(Scalar scalar, Type? forcedType)
+        {
+            var builder = new DeserializerBuilder()
+                .WithNamingConvention(NullNamingConvention.Instance);
+            if (forcedType is not null)
+            {
+                builder = builder.WithNodeTypeResolver(new FixedTypeResolver(forcedType));
+            }
+
+            try
+            {
+                builder.Build().Deserialize(new SingleScalarParser(scalar), typeof(object));
+                return true;
+            }
+            catch (YamlException)
+            {
+                return false;
+            }
+        }
+
+        private sealed class FixedTypeResolver : INodeTypeResolver
+        {
+            private readonly Type _type;
+
+            public FixedTypeResolver(Type type) => _type = type;
+
+            bool INodeTypeResolver.Resolve(NodeEvent? nodeEvent, ref Type currentType)
+            {
+                if (nodeEvent is Scalar && currentType == typeof(object))
+                {
+                    currentType = _type;
+                    return true;
+                }
+
+                return false;
+            }
+        }
+
+        private sealed class SingleScalarParser : IParser
+        {
+            private readonly ParsingEvent[] _events;
+            private int _index = -1;
+
+            public SingleScalarParser(Scalar scalar) =>
+                _events = new ParsingEvent[]
+                {
+                    new StreamStart(),
+                    new DocumentStart(null, null, true),
+                    scalar,
+                    new DocumentEnd(true),
+                    new StreamEnd(),
+                };
+
+            public ParsingEvent? Current => _index >= 0 && _index < _events.Length ? _events[_index] : null;
+
+            public bool MoveNext()
+            {
+                if (_index < _events.Length)
+                {
+                    _index++;
+                }
+
+                return _index < _events.Length;
+            }
+        }
+
+        private static bool IsLong(string value) =>
+            long.TryParse(value, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out _);
+
+        private static bool IsFiniteDouble(string value) =>
+            double.TryParse(value, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            && double.IsFinite(parsed);
     }
 }
