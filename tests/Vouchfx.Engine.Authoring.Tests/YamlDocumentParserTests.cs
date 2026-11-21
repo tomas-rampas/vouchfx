@@ -223,6 +223,125 @@ public sealed class YamlDocumentParserTests
         Assert.NotEmpty(ex.Message);
     }
 
+    [Fact]
+    public void Parse_SelfReferentialSequenceKey_ThrowsYamlParseException()
+    {
+        const string yaml = """
+            body: { ? &k [ *k ] : v }
+            """;
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("alias to anchor 'k'", ex.Message, StringComparison.Ordinal);
+        Assert.True(ex.Line >= 1);
+    }
+
+    [Fact]
+    public void Parse_SelfReferentialBlockSequenceKey_ThrowsYamlParseException()
+    {
+        const string yaml = """
+            body:
+              ? &cycle
+                - *cycle
+              : v
+            """;
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("alias to anchor 'cycle'", ex.Message, StringComparison.Ordinal);
+        Assert.True(ex.Line >= 1);
+    }
+
+    [Fact]
+    public void Parse_KeyReachingItselfThroughAnUnanchoredSequence_ThrowsYamlParseException()
+    {
+        const string yaml = """
+            body: { ? &k { a: [*k] } : v }
+            """;
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("alias to anchor 'k'", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_SequenceAliasUsedAsALaterKey_ThrowsYamlParseException()
+    {
+        const string yaml = """
+            seq: &s
+              - *s
+            body:
+              ? *s
+              : v
+            """;
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("alias to anchor 's'", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_MergeKey_Parses()
+    {
+        const string yaml = """
+            defaults: &d
+              a: 1
+            use:
+              <<: *d
+              b: 2
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        Assert.NotNull(doc);
+    }
+
+    [Fact]
+    public void Parse_SequenceKey_Parses()
+    {
+        const string yaml = """
+            body:
+              ? [a, b]
+              : v
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        Assert.NotNull(doc);
+    }
+
+    [Fact]
+    public void Parse_AnchoredValueCycle_Parses()
+    {
+        const string yaml = """
+            node: &n
+              self: *n
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        Assert.NotNull(doc);
+    }
+
+    [Fact]
+    public void Parse_AnchorRedefinedInsideSequenceKey_Parses()
+    {
+        const string yaml = """
+            body:
+              ? &k
+                - &k x
+                - *k
+              : v
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        Assert.NotNull(doc);
+    }
+
+    [Fact]
+    public void Parse_NullValue_Parses()
+    {
+        const string yaml = """
+            image:
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        Assert.NotNull(doc);
+    }
+
     // -------------------------------------------------------------------------
     // Line information is retained on the RawNode
     // -------------------------------------------------------------------------

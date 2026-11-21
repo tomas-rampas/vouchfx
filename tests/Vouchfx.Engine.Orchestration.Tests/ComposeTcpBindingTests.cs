@@ -91,6 +91,15 @@ public sealed class ComposeTcpBindingTests : IDisposable
         Assert.Throws<NotSupportedException>(() => ((IList<string>)first.Declarations.Services["broker"].EndpointNames)[0] = "changed");
     }
 
+    [Fact]
+    public void CyclicMappingKey_IsRefusedAsInvalidYaml()
+    {
+        var path = Path.Combine(_directory, "environment.compose.yaml");
+        File.WriteAllText(path, "body: { ? &k [ *k ] : v }\n");
+        var error = Assert.Throws<ArgumentException>(() => ComposeConfiguration.Load(path));
+        Assert.Contains("invalid YAML", error.Message, StringComparison.Ordinal);
+    }
+
     private string WriteConfiguration(string services, string dependencies = "{}")
     {
         File.WriteAllText(Path.Combine(_directory, "compose.yaml"), "services: { kafka: { image: broker }, web: { image: app }, db: { image: postgres } }");
