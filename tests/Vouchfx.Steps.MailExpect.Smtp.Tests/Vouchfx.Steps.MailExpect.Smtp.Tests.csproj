@@ -18,6 +18,7 @@
     <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Compilation\Vouchfx.Engine.Compilation.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MailExpect.Smtp\Vouchfx.Steps.MailExpect.Smtp.csproj" />
     <ProjectReference Include="..\..\src\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
+    <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
   </ItemGroup>
 
 </Project>

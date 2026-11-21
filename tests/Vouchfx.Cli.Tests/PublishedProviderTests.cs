@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using Vouchfx.Cli;
@@ -52,10 +51,9 @@ public sealed class PublishedProviderTests
         var directory = ProviderDirectoryTests.Temp(); var providers = CopyPublishedProvider(directory);
         using var scope = new ProviderRegistryScope(ProviderDirectoryScanner.Load(new[] { providers }));
         using var compiler = isolated ? new ScriptCompilerScope(CompileWorkerMode.Compile) : null;
-        using var listener = new HttpListener();
-        var portProbe = new TcpListener(IPAddress.Loopback, 0); portProbe.Start();
-        var port = ((IPEndPoint)portProbe.LocalEndpoint).Port; portProbe.Stop();
-        listener.Prefixes.Add($"http://127.0.0.1:{port}/"); listener.Start();
+        // One Close() ends the listener (no Stop() before it): see LoopbackHttpListener.
+        using var bound = LoopbackHttpListener.Start();
+        var listener = bound.Listener; var port = bound.Port;
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         var server = Task.Run(async () =>
         {
@@ -110,8 +108,12 @@ public sealed class PublishedProviderTests
         }
         finally
         {
-            cancellation.Cancel(); listener.Stop();
-            try { await server; } catch (Exception exception) when (exception is OperationCanceledException or HttpListenerException) { }
+            // Cancel first so a pending GetContextAsync ends as OperationCanceledException, then close once.
+            // ObjectDisposedException: Cancel() and the close can both land between the loop check and
+            // the next GetContextAsync(), whose BeginGetContext then throws it. A server fault before
+            // teardown already fails the run assertion above.
+            cancellation.Cancel(); bound.Dispose();
+            try { await server; } catch (Exception exception) when (exception is OperationCanceledException or HttpListenerException or ObjectDisposedException) { }
         }
     }
 
