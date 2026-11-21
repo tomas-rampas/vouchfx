@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.YamlSafety;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
@@ -223,6 +224,11 @@ internal static class SchemaResources
         // Step 1 — parse YAML to a plain object graph using the type-inferring
         // deserialiser so that untagged integer scalars (e.g. status: 200) are
         // returned as long/int rather than string.
+        // The deserialiser walks nested collections by recursion, and a document of a
+        // few tens of thousands of levels overflows the stack before the serialiser's
+        // own recursion ceiling can refuse it. Refuse that shape first.
+        YamlNestingLimit.Reject(yamlText);
+
         var deserializer = new DeserializerBuilder()
             .WithNamingConvention(NullNamingConvention.Instance)
             .WithNodeTypeResolver(new YamlScalarTypeResolver())

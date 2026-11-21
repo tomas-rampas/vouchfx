@@ -12,6 +12,7 @@
 // unparseable, the pointer targets the root, or a numeric index is out of
 // range) the prefix is omitted rather than throwing.
 using System.Linq;
+using Vouchfx.Engine.YamlSafety;
 using Vouchfx.Sdk;
 using YamlDotNet.RepresentationModel;
 
@@ -558,6 +559,9 @@ public static class DocumentValidator
     {
         try
         {
+            // Same refusal as YamlDocumentParser: deep collection nesting overflows
+            // the process stack inside Load, which this catch cannot turn into a diagnostic.
+            YamlNestingLimit.Reject(yamlText);
             var stream = new YamlStream();
             using var reader = new System.IO.StringReader(yamlText);
             stream.Load(reader);

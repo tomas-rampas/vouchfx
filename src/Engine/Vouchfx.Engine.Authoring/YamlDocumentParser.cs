@@ -18,6 +18,7 @@
 using System.Globalization;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Model;
+using Vouchfx.Engine.YamlSafety;
 using Vouchfx.Sdk;
 using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
@@ -83,10 +84,16 @@ public static class YamlDocumentParser
         // 367 MB) YamlStream.Load plus this method complete in under 1 ms at a 25 MB working
         // set. Providers that DO re-materialise a subtree carry their own bound —
         // see HttpRestProvider's MaxBodyNodes (#346).
+        //
+        // Nesting is a different unbound. Load parses collections by recursion, and a
+        // document of a few tens of thousands of levels overflows the process stack
+        // before this method, or the schema bridge, can report anything. The limit
+        // below is applied first and stops at the first collection past it.
         YamlStream stream;
         try
         {
             stream = new YamlStream();
+            YamlNestingLimit.Reject(yamlText);
             stream.Load(new StringReader(yamlText));
         }
         catch (YamlException ex)
