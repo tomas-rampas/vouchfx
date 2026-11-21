@@ -171,6 +171,12 @@ dotnet build vouchfx.sln
 ```
 
 This compiles the engine, providers, and the CLI runner. The build takes a minute or two and should produce zero warnings.
+Restore also fetches the native DCP tools at `VouchfxDcpVersion` (13.4.6 on current source) into the
+NuGet cache. A source CLI uses the path embedded by `Aspire.AppHost.Sdk` when that file exists, and
+otherwise probes that same version under `aspire.hosting.orchestration.<rid>`; a 13.4.2 cache entry
+does not satisfy the probe. See
+[DCP troubleshooting](troubleshooting.md#the-aspire-orchestration-component-is-not-installed-could-not-be-located)
+when topology start reports the component missing.
 
 Alternatively, if you want only the CLI (faster), build that project:
 

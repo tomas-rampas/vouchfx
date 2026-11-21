@@ -402,7 +402,9 @@ Published `1.0.0-rc.6` requires matching Aspire **13.4.2** native DCP tools prov
 the host platform, usually through an AppHost restore; set `ASPIRE_DCP_PATH` to their existing tools
 directory. Core `1.0.0` introduced bundled matching native tools for installed distributions on
 supported platforms; these need no warmed NuGet cache. Source AppHosts retain their restore/metadata
-fallback. See [version-specific installation prerequisites](getting-started.md#installing-vouchfx).
+fallback, and the version they probe is the `Aspire.Hosting` version that pinned ref restored: a
+workflow whose `vouchfx-ref` is a commit of current source looks for `aspire.hosting.orchestration.<rid>`
+13.4.6 when the embedded path is missing, while `vouchfx-ref: v1.2.1` still looks for 13.4.2. See [version-specific installation prerequisites](getting-started.md#installing-vouchfx).
 Current source targets `net10.0`. `global.json` selects SDK 10.0.100 or a later 10.0 feature
 band (`rollForward: latestFeature`) and executables set `RollForward=Major`, so building that
 source needs the .NET 10 SDK and running it needs a .NET 10 or newer runtime. A published global
@@ -678,6 +680,17 @@ cover the Docker suites of each: `CI` runs them on the .NET 10 SDK, and `.NET co
 again with only the .NET 10 SDK and runtime installed. Manual dispatch needs write access to
 this repository: a fork contributor runs the workflows from their own fork's Actions tab (once
 Actions is enabled there) or runs the `requires=docker` tests locally.
+
+The advisory **Analyser forward (.NET 11, non-blocking)** job in `build.yml` is `continue-on-error`.
+It rebuilds the solution in Release with `-warnaserror` on the .NET 11 SDK, one major ahead of the
+supported SDK, so the newer SDK's recommended analysers can report problems before the repository
+moves. The job installs the .NET 11 SDK and then runs from a scratch directory outside the checkout,
+where it writes its own `global.json` (`11.0.100`, `rollForward: latestFeature`). The muxer resolves
+`global.json` by walking up from the working directory, not from the solution, so that pin governs
+the version check and the build while the repository's .NET 10 `global.json` stays out of the way.
+Without it, a hosted image that also carries a newer major would select that SDK, and the job's
+`11.*` version guard would fail before the rebuild. `latestFeature` rolls only within 11.0, so the
+job fails closed when no 11.0 SDK is installed rather than drifting to another major.
 
 ## See also
 

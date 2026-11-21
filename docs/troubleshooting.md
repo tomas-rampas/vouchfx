@@ -135,6 +135,9 @@ no 'aspire.hosting.orchestration.<rid>' version '13.4.2' package was found at 'â
 
 **What it means:** the inline Aspire environment could not locate a matching native DCP tool.
 Published `1.0.0` and later distributions bundle the pinned Aspire DCP tools under `dcp/<aspire-version>/<rid>/tools/`, beside the CLI (13.4.2 up to v1.2.1; later releases bundle the 13.4.x release pinned at their tag).
+Current source pins `Aspire.Hosting`, `Aspire.Hosting.AppHost`, `Aspire.AppHost.Sdk` and
+`VouchfxDcpVersion` together at 13.4.6, and `AspireVersionLockstepGuardTests` fails when they
+diverge. `Aspire.Hosting.Elasticsearch` stays at 13.3.0 and is not the DCP package.
 Supported process platforms are `win-x64`, glibc `linux-x64`, `osx-x64` and `osx-arm64`.
 
 **Fix for published 1.0.0 distributions:** reinstall the complete matching package/archive. Keep the `dcp/`
@@ -156,6 +159,19 @@ provide these NuGet tools.
 
 ```powershell
 $env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/<aspire-version>/tools"
+```
+
+**Source builds and custom AppHosts from current source:** the version named in the error is the one to
+restore. `DcpPathResolver.ResolveVersion` takes the informational version of the loaded `Aspire.Hosting`
+assembly, truncated at `+`, and falls back to the version segment of the stale `DcpCliPath` metadata.
+`dotnet restore` of this repository populates `aspire.hosting.orchestration.<rid>` **13.4.6**, so a 13.4.2
+cache entry does not satisfy the probe. When the path baked into AppHost metadata is absent on this
+machine, the fallback probes
+`<nuget-packages>/aspire.hosting.orchestration.<rid>/13.4.6/tools/dcp` (`dcp.exe` on Windows).
+When you must override, point `ASPIRE_DCP_PATH` at that tools **directory**:
+
+```powershell
+$env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/13.4.6/tools"
 ```
 
 The explicit override remains authoritative; unset it to use the installed bundle. DCP provisioning
