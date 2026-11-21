@@ -57,8 +57,11 @@ public sealed class HostProviderAdmissionTests
         // 1.2.0), and a fallback ahead of the changelog would admit external providers
         // against a version the engine is not. The stamp therefore equals the newest
         // CHANGELOG.md version heading, which is the release being prepared or the latest
-        // published one. A separate release-only version property was considered and not
-        // added: it would touch about eight pack and publish invocations in release.yml.
+        // published one (the first versioned heading in the file; releases come from main
+        // only, so that is also the highest). A separate release-only version property was
+        // considered and not added: it would touch about eight pack and publish invocations
+        // in release.yml. This guard cannot tell when the heading and the fallback are both
+        // wrong together; review of the release-preparation commit covers that.
         var newest = NewestChangelogVersion();
         var actual = HostProviderRegistry.EngineVersion;
         AssertStampMatchesChangelog(actual, newest);
@@ -66,16 +69,24 @@ public sealed class HostProviderAdmissionTests
     }
 
     [Theory]
-    [InlineData("1.4.0", "1.4.0", true)]
-    [InlineData("9.9.9", "1.4.0", false)]
-    [InlineData("1.3.0", "1.4.0", false)]
-    public void StampGuard_RequiresExactChangelogVersion(string actual, string newest, bool passes)
+    [InlineData("1.4.0", "1.4.0", null)]
+    [InlineData("1.4.0+meta", "1.4.0", null)]
+    [InlineData("9.9.9", "1.4.0", "newer")]
+    [InlineData("1.3.0", "1.4.0", "older")]
+    [InlineData("1.4.0-rc.1", "1.4.0", "older")]
+    public void StampGuard_RequiresExactChangelogVersion(string actual, string newest, string? failsAs)
     {
         var call = () => AssertStampMatchesChangelog(actual, newest);
-        if (passes)
+        if (failsAs is null)
+        {
             call();
-        else
-            Assert.ThrowsAny<Exception>(call);
+            return;
+        }
+
+        var failure = Assert.ThrowsAny<Xunit.Sdk.XunitException>(call);
+        Assert.Contains($"'{actual}' is {failsAs} than", failure.Message, StringComparison.Ordinal);
+        Assert.Contains($"'{newest}'", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("move in the same commit", failure.Message, StringComparison.Ordinal);
     }
 
     private static void AssertStampMatchesChangelog(string actual, string newest)
