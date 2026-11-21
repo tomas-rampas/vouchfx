@@ -42,6 +42,10 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
+  <!--
+    Expose LoopbackHttpListener.Start(Func<int>) (the port-probe seam) to Vouchfx.Cli.Tests, whose
+    LoopbackHttpListenerTests drive the bind-collision retry deterministically.
+  -->
   <ItemGroup>
     <InternalsVisibleTo Include="Vouchfx.Cli.Tests" />
   </ItemGroup>

@@ -489,9 +489,9 @@ public sealed class ProviderAcquisitionTests
         finally
         {
             // Cancel first so a pending GetContextAsync ends as OperationCanceledException, then close once.
-            // ObjectDisposedException: Cancel() and the close can both land between the loop check and
-            // the next GetContextAsync(), whose BeginGetContext then throws it. Teardown-only, so a
-            // real server error still surfaces.
+            // ObjectDisposedException: Cancel() and the close can both land before the server reaches
+            // GetContextAsync(), whose BeginGetContext then throws it. A server fault before teardown
+            // already fails the run assertion above.
             cancellation.Cancel(); bound.Dispose();
             try { await serve; } catch (Exception exception) when (exception is OperationCanceledException or HttpListenerException or ObjectDisposedException) { }
         }
