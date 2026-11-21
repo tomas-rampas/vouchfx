@@ -164,15 +164,33 @@ The Linux Docker CI lane runs these ownership cases in the exclusive Compose acc
 
 ### Reading a teardown refusal
 
-When the gate refuses with `Case or fixture teardown did not complete`, the job log lists every case and fixture involved, so the log alone identifies the failing one. For each, it prints:
+When the gate refuses with `Case or fixture teardown did not complete`, the job log lists every case and fixture involved, so the log alone identifies the failing one. It is reported at the position it always had: if an earlier case has missing evidence, another checkout's evidence or a first-attempt failure, that refusal is reported first and the teardown one is not. For each case or fixture it prints:
 
 - which marker failed: `Completed` (the case did not finish) or `FixtureCleanupCompleted` (the fixture's own teardown did not finish), with both values, the cycle counters (`ExpectedCycles`, `CompletedCycles`, `AttemptedCycles`, `CurrentCycle`, `LastReleaseCompleted`) and the recorded `Failure` and `CleanupFailure` text, shortened to fit a log line;
 - the containers, networks and volumes present at the last closure check that were not in the baseline;
-- the last baseline wait (`LastClosureWait`) and each wait that did not converge (`FailedClosureWaits`): its `Purpose` (`cycle-release` or `fixture-disposal`), `Outcome`, `ElapsedMilliseconds` against `BoundMilliseconds`, what was still present when it ended, and the container states and network names Docker reported at that moment.
+- the last baseline wait (`LastClosureWait`) and each wait that did not converge (`FailedClosureWaits`): its `Purpose` (`cycle-release` or `fixture-disposal`), `Outcome`, `ElapsedMilliseconds` against `BoundMilliseconds`, `Polls` (how many inventories completed) and `LastInventoryUtc` (when the last one did, `null` if none did), what was still present, the container states and network names Docker reported when the wait ended, the `Error` that ended it, and up to 20 of the Docker events recorded for the wait's own window.
 
-`Outcome` separates the two readings that otherwise look identical. `bound-elapsed` means the 30-second baseline wait ran out; if the `StillPresent` lists are empty, or the container states show the resources already gone, the wait was too short for a slow teardown. If they name a container or an `aspire-session-network-*` network, that resource was genuinely left behind, which breaks the teardown invariant and is a product defect to investigate. `creation-identity-changed` means the resource names matched but a resource was recreated, `caller-cancelled` means the surrounding test deadline stopped the wait, and `error` means something else failed inside it. Evidence recorded before these fields existed is still judged as before, and the log says `not recorded` for the missing wait.
+If the evidence cannot be summarised, for example because a list holds unexpected values, the log says `diagnostics unavailable` with the exception type instead of a summary; the refusal itself is unchanged.
 
-On a failed run the `owned-environment-acceptance` artefact also holds a `docker-state` directory: `docker ps -a`, `docker network ls`, `docker volume ls`, per-container state, per-network membership and the last hour of Docker events. It deliberately omits container environments, which can hold the fixture's database password. The artefact is kept for 30 days, longer than the 7 days used elsewhere, because this failure is rare and the artefact is the only record of it.
+`Outcome` separates the readings that otherwise look identical:
+
+- `bound-elapsed` means the 30-second baseline wait ran out. The `StillPresent` lists come from the last inventory that completed (`Polls` of them), not from the moment the wait ended. If they are empty, or the container states show the resources already gone, the wait was too short for a slow teardown. If they name a container or an `aspire-session-network-*` network, and the container states and network names captured after the wait confirm it, that resource was left behind, which breaks the teardown invariant and is a product defect to investigate.
+- `error` means something other than the bound or the caller's deadline failed inside the wait, and the `StillPresent` lists must not be read as a finding. An `error` with a short elapsed time is a fixture failure first: read `Error`. A fixture Docker command that exits non-zero fails with `Owned topology fixture Docker operation failed (exit N) in <operation>; output withheld.`, which names the operation but not its output. One suspected cause, not established, is a resource removed between the fixture listing it and inspecting it. `Polls=0` and `LastInventoryUtc=null` mean no inventory completed, so the `StillPresent` lists are empty because nothing was read, not because nothing was left.
+- `creation-identity-changed` means the resource names matched but a resource was recreated, and `caller-cancelled` means the surrounding test deadline stopped the wait.
+
+A wait can also fail to converge with every `StillPresent` list empty: `BaselineContainersMissing` names a baseline container (a foreign or sentinel one) that disappeared, which keeps the wait from converging.
+
+Two more readings. If both markers are false and `Failure` and `CleanupFailure` are both `null`, the process stopped before the case finished recording, for example because it was killed. And `LastClosureWait` can predate the failure: `DisposeAsync` can throw on a `container rm` before its own wait starts, so check the wait's `Purpose` against the marker that failed. Evidence recorded before these fields existed is still judged as before, and the log says `not recorded` for the missing wait.
+
+Text taken from the evidence is printed with the runner's workflow-command markers (`::` and `##[`) broken up, so a container name or an exception message cannot act as a command.
+
+On a failed run the `owned-environment-acceptance` artefact also holds a `docker-state` directory, captured by a step that runs minutes after the failing case and after the job's other test projects. It shows what Docker holds at that point, so it confirms whether something persists but cannot show what was there when the case failed; the fixture's own records in the case JSON do that. It contains:
+
+- `docker ps -a` with the ID, image, creation time, status, ports and names, and without the command column, because a container's command line can carry a credential;
+- `docker network ls`, `docker volume ls`, per-network membership, and per-container name, ID, status, exit code, daemon error text, start and finish times, out-of-memory flag and health status (not the health-check output);
+- the Docker daemon's most recent events, at most 256 whatever the time window, with the command lines of `docker exec` events removed.
+
+It deliberately omits container environments, which can hold the fixture's database password. On a failed run, the `owned-environment-acceptance`, `docker-integration-test-results`, `integration-dcp-captures` and `integration-crash-dumps` artefacts are kept for 30 days instead of 7, because this failure is rare and may take longer than a week to notice. A passing run keeps all four for 7 days.
 
 | Capability | Native regression case |
 | --- | --- |

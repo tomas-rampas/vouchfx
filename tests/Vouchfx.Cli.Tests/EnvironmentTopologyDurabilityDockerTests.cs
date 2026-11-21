@@ -571,10 +571,17 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
     private sealed record ResourceInventory(string[] Containers, string[] Networks, string[] Volumes,
         IReadOnlyDictionary<string, string> Created, string[] DcpProcesses, string[] Journals);
     private sealed record ColdResult(int Pid, DateTime BirthUtc, int ExitCode, string[] ObservedContainers, string[] ObservedDcpProcesses, string[] ObservedJournals, RawStreamBinding Stdout, RawStreamBinding Stderr, ResourceInventory Active);
-    /// <summary>What a baseline wait was for, how long it ran against which bound, and what was still present when it ended.</summary>
+    /// <summary>
+    /// What a baseline wait was for, how long it ran against which bound, and what was still present when it ended.
+    /// The <c>*StillPresent</c> lists and <c>BaselineContainersMissing</c> come from the last poll that completed
+    /// (<c>Polls</c> says how many did; <c>LastInventoryUtc</c> is null when none did), not from the moment the wait ended.
+    /// <c>Error</c> is the exception type and scrubbed message of a wait that did not converge; <c>Events</c> are the Docker
+    /// events of the wait's own window, and <c>EventsReadError</c> is the exception type name if they could not be read.
+    /// </summary>
     private sealed record ClosureWait(string Purpose, string Outcome, DateTime StartedUtc, long ElapsedMilliseconds, long BoundMilliseconds,
         string[] ContainersStillPresent, string[] NetworksStillPresent, string[] VolumesStillPresent, string[] BaselineContainersMissing,
-        string[] DcpProcessesStillPresent, string[] JournalsStillPresent, string[] ContainerStates, string[] NetworkNames, string? StateReadError);
+        string[] DcpProcessesStillPresent, string[] JournalsStillPresent, string[] ContainerStates, string[] NetworkNames, string? StateReadError,
+        int Polls, DateTime? LastInventoryUtc, string? Error, string[] Events, string? EventsReadError);
     private sealed record LinuxProcessState(int Pid, long BirthUtcTicks, string State, int ParentPid);
     private sealed record OwnedDcpIdentity(int Pid, long BirthUtcTicks, int CliPid, long CliBirthUtcTicks, string Profile);
     private sealed record OwnedDcpResidual(string Identity, bool OwnershipProven, int? CliPid, long? CliBirthUtcTicks,
@@ -715,6 +722,9 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             using var join = CancellationTokenSource.CreateLinkedTokenSource(ct);
             join.CancelAfter(ClosureWaitBound);
             string outcome = "error";
+            Exception? failure = null;
+            var polls = 0;
+            DateTime? lastInventoryUtc = null;
             try
             {
                 while (true)
@@ -722,6 +732,8 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
                     join.Token.ThrowIfCancellationRequested();
                     var after = await CaptureAsync(profile, ct: join.Token);
                     LastClosureInventory = after;
+                    polls++;
+                    lastInventoryUtc = DateTime.UtcNow;
                     if (after.Containers.SequenceEqual(before.Containers) && after.Networks.SequenceEqual(before.Networks)
                         && after.Volumes.SequenceEqual(before.Volumes) && after.DcpProcesses.SequenceEqual(before.DcpProcesses)
                         && after.Journals.SequenceEqual(before.Journals))
@@ -734,15 +746,17 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
                     await Task.Delay(100, join.Token);
                 }
             }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested && join.IsCancellationRequested)
+            catch (OperationCanceledException error) when (!ct.IsCancellationRequested && join.IsCancellationRequested)
             {
                 outcome = "bound-elapsed";
+                failure = error;
                 ResidualDcpProcesses = DescribeResidualDcp(LastClosureInventory?.DcpProcesses.Except(before.DcpProcesses) ?? Array.Empty<string>());
                 throw;
             }
             catch (Exception error)
             {
-                if (error is OperationCanceledException) outcome = "caller-cancelled";
+                failure = error;
+                if (error is OperationCanceledException && ct.IsCancellationRequested) outcome = "caller-cancelled";
                 else if (outcome != "creation-identity-changed") outcome = "error";
                 ResidualDcpProcesses = DescribeResidualDcp(LastClosureInventory?.DcpProcesses.Except(before.DcpProcesses) ?? Array.Empty<string>());
                 throw;
@@ -750,13 +764,14 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             finally
             {
                 clock.Stop();
-                await RecordClosureWaitAsync(purpose, outcome, started, clock.Elapsed, before);
+                await RecordClosureWaitAsync(purpose, outcome, started, clock.Elapsed, before, failure, polls, lastInventoryUtc);
             }
         }
 
         // Diagnostics only: the bound above is unchanged. The wait failing and the resources really
         // lingering look identical from the verdict alone, so the evidence says which one happened.
-        private async Task RecordClosureWaitAsync(string purpose, string outcome, DateTime started, TimeSpan elapsed, ResourceInventory before)
+        private async Task RecordClosureWaitAsync(string purpose, string outcome, DateTime started, TimeSpan elapsed, ResourceInventory before,
+            Exception? failure, int polls, DateTime? lastInventoryUtc)
         {
             var last = LastClosureInventory;
             var record = new ClosureWait(purpose, outcome, started, (long)elapsed.TotalMilliseconds, (long)ClosureWaitBound.TotalMilliseconds,
@@ -766,20 +781,57 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
                 last is null ? Array.Empty<string>() : before.Containers.Except(last.Containers).ToArray(),
                 last is null ? Array.Empty<string>() : last.DcpProcesses.Except(before.DcpProcesses).ToArray(),
                 last is null ? Array.Empty<string>() : last.Journals.Except(before.Journals).ToArray(),
-                Array.Empty<string>(), Array.Empty<string>(), null);
+                Array.Empty<string>(), Array.Empty<string>(), null,
+                polls, lastInventoryUtc, failure is null || outcome == "converged" ? null : DescribeFailure(failure), Array.Empty<string>(), null);
             if (outcome != "converged")
             {
+                // One 10 second limit covers every look below, as before.
+                using var look = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 try
                 {
-                    using var look = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                     var containers = await DockerAsync(look.Token, "container", "ls", "--all", "--no-trunc", "--format", "{{.Names}}|{{.ID}}|{{.State}}|{{.Status}}");
                     var networks = await DockerAsync(look.Token, "network", "ls", "--no-trunc", "--format", "{{.Name}}|{{.ID}}");
                     record = record with { ContainerStates = Lines(containers), NetworkNames = Lines(networks) };
                 }
                 catch (Exception error) { record = record with { StateReadError = error.GetType().Name }; }
+                try
+                {
+                    // dockerd replays only its most recent 256 events, so the window is this wait's own few seconds,
+                    // not the job's. Exec events carry the executed command line, which is stripped below.
+                    var events = await DockerAsync(look.Token, "events", "--since", UnixSeconds(started), "--until", UnixSeconds(DateTime.UtcNow),
+                        "--format", "{{.TimeNano}} {{.Type}} {{.Actor.ID}} {{index .Actor.Attributes \"name\"}} {{.Action}}");
+                    record = record with { Events = EventLines(events) };
+                }
+                catch (Exception error) { record = record with { EventsReadError = error.GetType().Name }; }
                 FailedClosureWaits.Add(record);
             }
             LastClosureWait = record;
+        }
+
+        private const int EventLineLimit = 200;
+        private const int EventLengthLimit = 300;
+
+        private static string UnixSeconds(DateTime utc)
+        {
+            var milliseconds = new DateTimeOffset(DateTime.SpecifyKind(utc, DateTimeKind.Utc)).ToUnixTimeMilliseconds();
+            return (milliseconds / 1000).ToString(CultureInfo.InvariantCulture) + "." + (milliseconds % 1000).ToString("D3", CultureInfo.InvariantCulture);
+        }
+
+        // Keeps the event type, the resource and the action, and drops the command that `docker exec` appends to
+        // `exec_create: ` and `exec_start: `. Capped in count and in length.
+        private string[] EventLines(string text) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Take(EventLineLimit)
+            .Select(line => Scrub(ExecCommand.Replace(line, " $1")))
+            .Select(line => line.Length <= EventLengthLimit ? line : line[..EventLengthLimit] + "...(truncated)")
+            .ToArray();
+
+        private static readonly System.Text.RegularExpressions.Regex ExecCommand =
+            new(" (exec_[a-z]+):.*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
+        private string DescribeFailure(Exception error)
+        {
+            var text = error.GetType().Name + ": " + Scrub(error.Message);
+            return text.Length <= EventLengthLimit ? text : text[..EventLengthLimit] + "...(truncated)";
         }
 
         private static string[] Lines(string text) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Order(StringComparer.Ordinal).ToArray();
@@ -1029,7 +1081,8 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
                 var stdout = ReadBoundedAsync(process.StandardOutput, deadline.Token);
                 var stderr = ReadBoundedAsync(process.StandardError, deadline.Token);
                 await Task.WhenAll(stdout, stderr, process.WaitForExitAsync(deadline.Token));
-                Assert.True(process.ExitCode == 0, "Owned topology fixture Docker operation failed (exit " + process.ExitCode.ToString(CultureInfo.InvariantCulture) + "); output withheld.");
+                Assert.True(process.ExitCode == 0, "Owned topology fixture Docker operation failed (exit " + process.ExitCode.ToString(CultureInfo.InvariantCulture)
+                    + ") in " + Operation(arguments) + "; output withheld.");
                 return (await stdout).Trim();
             }
             finally
@@ -1039,6 +1092,11 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
                 await process.WaitForExitAsync(reap.Token);
             }
         }
+
+        // The first one or two arguments name the operation (`container inspect`, `network ls`, `events`); the values after
+        // them are not included, and a flag in second place (`run --detach`) is not part of the name.
+        private static string Operation(string[] arguments) => arguments.Length == 0 ? "docker"
+            : arguments.Length > 1 && !arguments[1].StartsWith('-') ? arguments[0] + " " + arguments[1] : arguments[0];
 
         private static async Task<string> ReadBoundedAsync(StreamReader reader, CancellationToken ct)
         {

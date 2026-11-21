@@ -102,9 +102,12 @@ def require_raw_stream(directory: Path, raw: Path, channel: str, binding: object
 TEARDOWN_REFUSAL = "Case or fixture teardown did not complete"
 FIELD_LIMIT = 400
 LIST_LIMIT = 20
+EVENT_LINE_LIMIT = 20
+ZERO_WIDTH_SPACE = "\u200b"
 PROGRESS_FIELDS = ("ExpectedCycles", "CompletedCycles", "AttemptedCycles", "CurrentCycle", "LastReleaseCompleted")
 WAIT_FIELDS = ("Purpose", "Outcome", "StartedUtc", "ElapsedMilliseconds", "BoundMilliseconds", "ContainersStillPresent", "NetworksStillPresent",
-               "VolumesStillPresent", "BaselineContainersMissing", "DcpProcessesStillPresent", "JournalsStillPresent", "ContainerStates", "NetworkNames", "StateReadError")
+               "VolumesStillPresent", "BaselineContainersMissing", "DcpProcessesStillPresent", "JournalsStillPresent", "ContainerStates", "NetworkNames", "StateReadError",
+               "Polls", "LastInventoryUtc", "Error", "EventsReadError")
 
 
 def render(value: object) -> str:
@@ -115,16 +118,32 @@ def render(value: object) -> str:
         shown = ", ".join(render(item) for item in value[:LIST_LIMIT])
         return "[" + shown + (f", ... +{len(value) - LIST_LIMIT} more" if len(value) > LIST_LIMIT else "") + "]"
     text = " ".join(str(value).split())
+    # Neutralise runner workflow commands, in both the current (::) and the older (##[) syntax: evidence text
+    # such as a container name or an exception message must never be readable as a command.
+    text = text.replace("##[", "##" + ZERO_WIDTH_SPACE + "[").replace("::", ":" + ZERO_WIDTH_SPACE + ":")
     return text if len(text) <= FIELD_LIMIT else text[:FIELD_LIMIT] + "...(truncated)"
 
 
 def describe_wait(label: str, wait: object) -> list[str]:
     if type(wait) is not dict:
         return [f"    {label}: not recorded (evidence predates wait diagnostics, or no wait ran)"]
-    return [f"    {label}: " + " ".join(f"{name}={render(wait[name])}" for name in WAIT_FIELDS if name in wait)]
+    lines = [f"    {label}: " + " ".join(f"{name}={render(wait[name])}" for name in WAIT_FIELDS if name in wait)]
+    events = wait.get("Events")
+    if type(events) is list and events:
+        lines.append(f"      Docker events during this wait ({len(events)} recorded, first {min(len(events), EVENT_LINE_LIMIT)} shown):")
+        lines.extend(f"        {render(event)}" for event in events[:EVENT_LINE_LIMIT])
+    return lines
 
 
 def describe_teardown(kind: str, report: dict) -> list[str]:
+    """Diagnostics must never replace the refusal: any failure to read the evidence degrades to one line."""
+    try:
+        return describe_teardown_lines(kind, report)
+    except Exception as error:  # noqa: BLE001 - the refusal itself is raised by the caller
+        return [f"  {kind}: diagnostics unavailable: {type(error).__name__}"]
+
+
+def describe_teardown_lines(kind: str, report: dict) -> list[str]:
     roles = []
     if report.get("Completed") is not True:
         roles.append("case did not complete")
@@ -138,7 +157,7 @@ def describe_teardown(kind: str, report: dict) -> list[str]:
     before, closure = report.get("LastBefore"), report.get("FixtureClosureLastInventory")
     if type(before) is dict and type(closure) is dict:
         for key in ("Containers", "Networks", "Volumes"):
-            if type(before.get(key)) is list and type(closure.get(key)) is list:
+            if all(type(items) is list and all(type(item) is str for item in items) for items in (before.get(key), closure.get(key))):
                 lines.append(f"    {key} present at last closure check but absent from the cycle baseline: {render(sorted(set(closure[key]) - set(before[key])))}")
     lines.extend(describe_wait("last baseline wait", report.get("LastClosureWait")))
     failed = report.get("FailedClosureWaits")
@@ -150,7 +169,10 @@ def describe_teardown(kind: str, report: dict) -> list[str]:
 
 
 def refuse_incomplete_teardown(directory: Path) -> None:
-    """Name every case and fixture whose teardown did not complete, with the evidence read, before any other verdict."""
+    """Refuse with the teardown message, listing every readable case and fixture whose teardown did not complete.
+
+    Called from the per-case loop, at the position the plain refusal always had, so an earlier refusal still wins.
+    """
     lines = []
     for kind in CASES:
         try:
@@ -170,12 +192,12 @@ def validate(directory: Path, cli: Path) -> dict:
         require(type(invocation.get(name)) is str and re.fullmatch(r"[0-9a-f]{40}", invocation[name]) is not None, "Missing checkout/head identity")
     cli_digest = hashlib.sha256(cli.read_bytes()).hexdigest().upper()
     require(invocation.get("builtCliSha256") == cli_digest, "The built CLI changed after preparation")
-    refuse_incomplete_teardown(directory)
     cases = {}
     for kind, count in CASES.items():
         report = read_json(directory / (kind + ".json"))
         require(integer(report.get("SchemaVersion"), 1) and report.get("Kind") == kind, "Wrong case/schema")
-        require(report.get("Completed") is True and report.get("FixtureCleanupCompleted") is True, TEARDOWN_REFUSAL)
+        if report.get("Completed") is not True or report.get("FixtureCleanupCompleted") is not True:
+            refuse_incomplete_teardown(directory)
         require(report.get("Failure") is None and report.get("CleanupFailure") is None, "A first-attempt failure is present")
         for name in ("ExpectedCycles", "CompletedCycles", "AttemptedCycles", "CurrentCycle"):
             require(integer(report.get(name), count), "Missing, partial or non-integer cycle count")

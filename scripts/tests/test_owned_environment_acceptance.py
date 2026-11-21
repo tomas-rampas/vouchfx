@@ -332,14 +332,74 @@ class EvidenceAdmissionTests(unittest.TestCase):
         self.change("warm-host-compiled-image", LastClosureWait=wait, FailedClosureWaits=[])
         self.assertTrue(GATE.validate(self.directory, self.cli)["accepted"])
 
-    def test_a_missing_case_report_keeps_its_own_refusal_not_a_teardown_one(self):
+    def test_a_missing_report_before_an_incomplete_one_keeps_its_own_refusal(self):
         self.change("warm-host-compiled-image", Completed=False)
         (self.directory / "compose-capabilities.json").unlink()
+        self.assertEqual("Missing, linked or oversized evidence: compose-capabilities.json", self.refusal().splitlines()[0])
+
+    def test_a_missing_report_after_an_incomplete_one_does_not_hide_the_teardown_refusal(self):
+        self.change("compose-capabilities", Completed=False)
+        (self.directory / "warm-host-compiled-image.json").unlink()
         message = self.refusal()
         self.assertEqual("Case or fixture teardown did not complete", message.splitlines()[0])
-        self.assertNotIn("compose-capabilities", message)
-        (self.directory / "warm-host-compiled-image.json").unlink()
-        self.assertIn("Missing, linked or oversized evidence", self.refusal())
+        self.assertIn("compose-capabilities: case did not complete", message)
+        self.assertNotIn("warm-host-compiled-image", message)
+
+    def test_an_earlier_checkout_mismatch_before_a_later_incomplete_case_wins(self):
+        self.change("compose-capabilities", CheckoutCommit="c" * 40)
+        self.change("cold-host-compiler-profile", Completed=False)
+        self.assertEqual("Evidence belongs to another checkout", self.refusal().splitlines()[0])
+
+    def test_an_earlier_first_attempt_failure_before_a_later_incomplete_case_wins(self):
+        self.change("compose-capabilities", Failure="boom")
+        self.change("cold-host-compiler-profile", FixtureCleanupCompleted=False)
+        self.assertEqual("A first-attempt failure is present", self.refusal().splitlines()[0])
+
+    def test_a_wrong_kind_on_an_incomplete_case_keeps_the_schema_refusal(self):
+        self.change("warm-host-compiled-image", Kind="other", Completed=False)
+        self.assertEqual("Wrong case/schema", self.refusal().splitlines()[0])
+
+    def test_an_incomplete_case_before_a_later_failure_is_still_a_teardown_refusal(self):
+        self.change("compose-capabilities", Completed=False)
+        self.change("cold-host-compiler-profile", Failure="boom")
+        message = self.refusal()
+        self.assertEqual("Case or fixture teardown did not complete", message.splitlines()[0])
+        self.assertIn("compose-capabilities: case did not complete", message)
+
+    def test_unhashable_or_mixed_closure_lists_degrade_instead_of_crashing(self):
+        empty = {"Containers": [], "Networks": [], "Volumes": []}
+        for closure in ({"Containers": [{"a": 1}], "Networks": [], "Volumes": []}, {"Containers": ["a", 1], "Networks": [], "Volumes": []},
+                        {"Containers": [["x"]], "Networks": ["n"], "Volumes": []}):
+            with self.subTest(closure=closure):
+                self.change("warm-host-compiled-image", Completed=False, LastBefore=empty, FixtureClosureLastInventory=closure)
+                message = self.refusal()
+                self.assertEqual("Case or fixture teardown did not complete", message.splitlines()[0])
+                self.assertIn("warm-host-compiled-image: case did not complete", message)
+
+    def test_describe_teardown_degrades_to_the_exception_type_when_anything_raises(self):
+        class Hostile(dict):
+            def get(self, *args):
+                raise RuntimeError("hostile")
+        self.assertEqual(["  warm: diagnostics unavailable: RuntimeError"], GATE.describe_teardown("warm", Hostile()))
+
+    def test_new_wait_fields_and_a_bounded_number_of_events_are_printed(self):
+        wait = {"Purpose": "cycle-release", "Outcome": "error", "ElapsedMilliseconds": 4100, "BoundMilliseconds": 30000, "Polls": 0, "LastInventoryUtc": None,
+                "Error": "InvalidOperationException: Docker operation failed (exit 1) in container inspect; output withheld", "EventsReadError": None,
+                "Events": ["1 container die c%d" % n for n in range(50)]}
+        self.change("warm-host-compiled-image", FixtureCleanupCompleted=False, LastClosureWait=wait, FailedClosureWaits=[wait])
+        message = self.refusal()
+        for text in ("Polls=0", "LastInventoryUtc=null", "Error=InvalidOperationException", "in container inspect", "50 recorded, first 20 shown", "container die c19"):
+            self.assertIn(text, message)
+        self.assertNotIn("container die c20", message)
+
+    def test_workflow_command_syntax_in_evidence_is_neutralised(self):
+        hostile = "##[error]one ##[add-mask]two\n::error::three ::add-mask::four"
+        self.change("warm-host-compiled-image", Completed=False, Failure=hostile, LastClosureWait={"Error": hostile, "Events": [hostile]})
+        message = self.refusal()
+        for command in ("##[", "::error", "::add-mask", "::"):
+            self.assertNotIn(command, message)
+        self.assertIn("##\u200b[error]one", message)
+        self.assertEqual("Case or fixture teardown did not complete", message.splitlines()[0])
 
 
 if __name__ == "__main__":

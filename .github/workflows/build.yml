@@ -1436,6 +1436,8 @@ jobs:
           --results-directory TestResults
 
       # Keep per-project TRX files so database test outcomes remain inspectable.
+      # Retention on the four artefacts of this job: 30 days when a step failed (a rare failure can
+      # take longer than a week to be noticed), 7 days on a passing run.
       - name: Upload Docker integration test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1443,7 +1445,7 @@ jobs:
           name: docker-integration-test-results
           path: TestResults/**/*.trx
           if-no-files-found: error
-          retention-days: 7
+          retention-days: ${{ job.status == 'failure' && 30 || 7 }}
 
       - name: Verify owned topology acceptance counts and closure
         if: always() && steps.topology-evidence-preparation.outcome == 'success'
@@ -1452,16 +1454,24 @@ jobs:
             --directory "$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS" \
             --cli src/Cli/Vouchfx.Cli/bin/Release/net10.0/vouchfx.dll
 
-      # Failure diagnostics only: record what Docker still holds at the moment this job failed, so
-      # "a container or the session network was really left behind" can be told apart from "the
-      # baseline wait timed out and the resources were gone a second later". Runs after the verifier
+      # Failure diagnostics only. This step runs minutes after the failing case, and after the other
+      # test projects in this job, so it records what Docker holds NOW and cannot show what it held
+      # when the case failed: that is what the fixture records itself (`ContainerStates`, `Events` and
+      # `Error` in the case JSON). What this step adds is whether anything persists, and the daemon's
+      # most recent events (at most 256, however wide the window below). It runs after the verifier
       # (which must judge the evidence as the tests left it) and lands inside the evidence directory
       # so it travels in the same artefact. Read-only; nothing is removed or retried, and every
       # command is best effort so one refusal cannot hide the others.
       #
-      # Deliberately NOT a raw `docker inspect`: that prints each container's environment, which
-      # can carry the fixture's database password, and artefacts on this repository are public.
-      # State, network membership and event history carry no environment.
+      # The artefact is public and not secret-masked, so nothing here may print a credential:
+      #   * no raw `docker inspect`: it prints each container's environment, which can carry the
+      #     fixture's database password, and `.Config` as a whole;
+      #   * no COMMAND column in `docker ps` (no `--no-trunc`, and an explicit `--format`): the NATS
+      #     container is started with its password on the command line;
+      #   * container state lists named fields only, so health-check output (`.State.Health.Log`)
+      #     is left out, and the command that `docker exec` appends to exec events is stripped.
+      # What remains is names, ids, images, ports, timestamps, status, exit codes and the daemon's
+      # own state error text.
       - name: Capture Docker state for failure diagnosis
         if: failure() && steps.topology-evidence-preparation.outcome == 'success'
         timeout-minutes: 3
@@ -1471,12 +1481,12 @@ jobs:
           out="$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS/docker-state"
           mkdir -p "$out"
           date -u +%Y-%m-%dT%H:%M:%SZ > "$out/captured-at-utc.txt"
-          docker ps -a --no-trunc > "$out/docker-ps-a.txt" 2>&1 || echo "docker ps -a exited $?" >> "$out/docker-ps-a.txt"
+          docker ps -a --format '{{.ID}}\t{{.Image}}\t{{.CreatedAt}}\t{{.Status}}\t{{.Ports}}\t{{.Names}}' > "$out/docker-ps-a.txt" 2>&1 || echo "docker ps -a exited $?" >> "$out/docker-ps-a.txt"
           docker network ls --no-trunc > "$out/docker-network-ls.txt" 2>&1 || echo "docker network ls exited $?" >> "$out/docker-network-ls.txt"
           docker volume ls > "$out/docker-volume-ls.txt" 2>&1 || echo "docker volume ls exited $?" >> "$out/docker-volume-ls.txt"
           {
-            docker ps -a -q --no-trunc | while read -r id; do
-              docker inspect --format '{{.Name}} {{.Id}} state={{json .State}}' "$id" || echo "inspect of $id failed"
+            docker ps -a -q | while read -r id; do
+              docker inspect --format '{{.Name}} {{.Id}} status={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}} started={{.State.StartedAt}} finished={{.State.FinishedAt}} oom={{.State.OOMKilled}} health={{if .State.Health}}{{.State.Health.Status}}{{end}}' "$id" || echo "inspect of $id failed"
             done
           } > "$out/container-state.txt" 2>&1 || echo "container state capture exited $?" >> "$out/container-state.txt"
           {
@@ -1484,15 +1494,21 @@ jobs:
               docker network inspect --format '{{.Name}} {{.Id}} created={{.Created}} containers={{json .Containers}}' "$id" || echo "inspect of $id failed"
             done
           } > "$out/network-state.txt" 2>&1 || echo "network state capture exited $?" >> "$out/network-state.txt"
-          # A bounded window ending now, so the command terminates instead of streaming.
+          # A bounded window ending now, so the command terminates instead of streaming. The daemon
+          # replays at most its last 256 events whatever the window, so on a long job this is the
+          # tail of the job's events, not the failing case's. `{{.Action}}` is last so the sed can
+          # drop the command line that `exec_create:` and `exec_start:` carry.
+          events="$(mktemp)"
           timeout 60 docker events --since "$(( $(date +%s) - 3600 ))" --until "$(date +%s)" \
-            --format '{{.TimeNano}} {{.Type}} {{.Action}} {{.Actor.ID}} {{index .Actor.Attributes "name"}}' \
-            > "$out/docker-events-last-hour.txt" 2>&1 || echo "docker events exited $?" >> "$out/docker-events-last-hour.txt"
+            --format '{{.TimeNano}} {{.Type}} {{.Actor.ID}} {{index .Actor.Attributes "name"}} {{.Action}}' \
+            > "$events" 2>&1 || echo "docker events exited $?" >> "$events"
+          sed -E 's/ (exec_[a-z]+):.*$/ \1/' "$events" > "$out/docker-events-recent.txt"
+          rm -f "$events"
           exit 0
 
-      # 30 days, not the 7 every other artefact in this workflow carries: this evidence is the only
-      # record of a rare teardown failure (one in about 75 runs), and a week is shorter than the
-      # time it can take to notice and look at one.
+      # 30 days when the job failed, 7 otherwise, like the other Docker / Aspire artefacts. This evidence is
+      # the only record of a rare teardown failure (one in about 75 runs), and a week is shorter than
+      # the time it can take to notice and look at one.
       - name: Upload first-attempt owned topology evidence
         if: always() && steps.topology-evidence-preparation.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1500,7 +1516,7 @@ jobs:
           name: owned-environment-acceptance
           path: ${{ runner.temp }}/vouchfx-topology-acceptance
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ job.status == 'failure' && 30 || 7 }}
 
       - name: Collect new default-root DCP captures
         id: dcp-captures
@@ -1531,7 +1547,7 @@ jobs:
           name: integration-dcp-captures
           path: ${{ runner.temp }}/vouchfx-dcp-captures
           if-no-files-found: error
-          retention-days: 7
+          retention-days: ${{ job.status == 'failure' && 30 || 7 }}
 
       # Upload the blame output so the next crash arrives WITH its dump. `if: always()` because
       # the interesting case is the failing one; a crash aborts the step above.
@@ -1550,7 +1566,7 @@ jobs:
             TestResults/**/*.dmp
             TestResults/**/Sequence*.xml
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: ${{ job.status == 'failure' && 30 || 7 }}
 
   # ── Dependency vulnerability scan — ADVISORY, non-blocking ───────────────────
   # Reports known-vulnerable transitive packages across the solution so a
