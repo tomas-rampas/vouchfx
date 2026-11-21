@@ -403,8 +403,8 @@ the host platform, usually through an AppHost restore; set `ASPIRE_DCP_PATH` to 
 directory. Core `1.0.0` introduced bundled matching native tools for installed distributions on
 supported platforms; these need no warmed NuGet cache. Source AppHosts retain their restore/metadata
 fallback, and the version they probe is the `Aspire.Hosting` version that pinned ref restored: a
-workflow pinned to current main looks for `aspire.hosting.orchestration.<rid>` 13.4.6 when the embedded
-path is missing, while a checkout of v1.2.1 still looks for 13.4.2. See [version-specific installation prerequisites](getting-started.md#installing-vouchfx).
+workflow whose `vouchfx-ref` is a commit of current source looks for `aspire.hosting.orchestration.<rid>`
+13.4.6 when the embedded path is missing, while `vouchfx-ref: v1.2.1` still looks for 13.4.2. See [version-specific installation prerequisites](getting-started.md#installing-vouchfx).
 Current source targets `net10.0`. `global.json` selects SDK 10.0.100 or a later 10.0 feature
 band (`rollForward: latestFeature`) and executables set `RollForward=Major`, so building that
 source needs the .NET 10 SDK and running it needs a .NET 10 or newer runtime. A published global
@@ -674,6 +674,13 @@ before merge. On a pull request the Docker integration checks are reported as sk
 expected. GitHub disables scheduled workflows after 60 days without repository activity; re-enable
 them from the Actions tab if the daily runs stop.
 
+To run them on a branch before merging, open the Actions tab, choose the `CI` or `.NET compatibility`
+workflow, select **Run workflow** and pick the branch. The two workflows are separate, so run both to
+cover the Docker suites of each: `CI` runs them on the .NET 10 SDK, and `.NET compatibility` runs them
+again with only the .NET 10 SDK and runtime installed. Manual dispatch needs write access to
+this repository: a fork contributor runs the workflows from their own fork's Actions tab (once
+Actions is enabled there) or runs the `requires=docker` tests locally.
+
 The advisory **Analyser forward (.NET 11, non-blocking)** job in `build.yml` is `continue-on-error`.
 It rebuilds the solution in Release with `-warnaserror` on the .NET 11 SDK, one major ahead of the
 supported SDK, so the newer SDK's recommended analysers can report problems before the repository
@@ -684,13 +691,6 @@ the version check and the build while the repository's .NET 10 `global.json` sta
 Without it, a hosted image that also carries a newer major would select that SDK, and the job's
 `11.*` version guard would fail before the rebuild. `latestFeature` rolls only within 11.0, so the
 job fails closed when no 11.0 SDK is installed rather than drifting to another major.
-
-To run them on a branch before merging, open the Actions tab, choose the `CI` or `.NET compatibility`
-workflow, select **Run workflow** and pick the branch. The two workflows are separate, so run both to
-cover the Docker suites of each: `CI` runs them on the .NET 10 SDK, and `.NET compatibility` runs them
-again with only the .NET 10 SDK and runtime installed. Manual dispatch needs write access to
-this repository: a fork contributor runs the workflows from their own fork's Actions tab (once
-Actions is enabled there) or runs the `requires=docker` tests locally.
 
 ## See also
 

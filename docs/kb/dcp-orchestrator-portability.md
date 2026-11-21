@@ -2,7 +2,7 @@
 
 **Applies to:** CLI global tools, archives and installers.
 
-**Updated:** 2026-10-13. Core `1.0.0` introduced bundled DCP; legacy `1.0.0-rc.6` remains cache-dependent.
+**Updated:** 2026-11-21. Core `1.0.0` introduced bundled DCP; legacy `1.0.0-rc.6` remains cache-dependent.
 
 ## Symptoms and cause
 
@@ -54,7 +54,7 @@ Aspire workload or warmed NuGet cache.
 If you must retain a legacy package, supply exact platform tools through `ASPIRE_DCP_PATH`.
 It names the directory containing `dcp`/`dcp.exe`, not the executable. An AppHost restore at
 the exact Aspire version the build pins can populate those tools for legacy/source builds; the retired Aspire workload cannot.
-An rc.6 install needs 13.4.2, but a source build of current main restores 13.4.6, and a 13.4.2 cache
+An rc.6 install needs 13.4.2, but a build from current source restores 13.4.6, and a 13.4.2 cache
 entry does not satisfy its probe.
 Do not describe an rc.6 install with this override as a standalone pass.
 See [troubleshooting](../troubleshooting.md#the-aspire-orchestration-component-is-not-installed-could-not-be-located).
