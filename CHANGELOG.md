@@ -21,6 +21,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A mapping key that contains an alias to its own anchor no longer crashes `vouchfx validate` and `vouchfx run`.** A file such as `body: { ? &k [ *k ] : v }` made the YAML loader recurse until the process died with a stack overflow, which cannot be caught. The engine now scans the document first and refuses such a key as an ordinary YAML parse error that names the line and column, so the command exits non-zero and never 0. The same guard covers Compose configuration files. Complex keys and anchors that do not refer to themselves are unaffected.
+
 ## [1.4.0] — 2026-11-21
 
 1.4.0 is the first release that targets .NET 10. 1.3.0 was not published; the changes that were prepared under that number ship in this release and are included below.

@@ -83,6 +83,11 @@ public static class YamlDocumentParser
         // 367 MB) YamlStream.Load plus this method complete in under 1 ms at a 25 MB working
         // set. Providers that DO re-materialise a subtree carry their own bound —
         // see HttpRestProvider's MaxBodyNodes (#346).
+        // YamlStream.Load hashes a mapping key on insert, so a key holding an alias to its own
+        // still-open anchor recurses until the stack overflows, which cannot be caught.
+        // The event-level pre-scan refuses it first, with a line and column.
+        YamlCycleGuard.Check(yamlText);
+
         YamlStream stream;
         try
         {

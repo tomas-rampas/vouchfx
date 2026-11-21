@@ -556,6 +556,12 @@ public static class DocumentValidator
     /// </summary>
     private static YamlMappingNode? TryParseYamlRoot(string yamlText)
     {
+        // A self-referencing mapping key overflows the stack inside YamlStream.Load, which no
+        // catch can stop; the authoring parser refuses it with a located error, so here it
+        // simply means "cannot resolve lines".
+        if (Vouchfx.Engine.Authoring.YamlCycleGuard.TryFindSelfReferencingKey(yamlText, out _, out _, out _))
+            return null;
+
         try
         {
             var stream = new YamlStream();

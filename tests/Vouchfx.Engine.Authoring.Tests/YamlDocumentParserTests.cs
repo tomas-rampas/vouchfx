@@ -14,6 +14,31 @@ namespace Vouchfx.Engine.Authoring.Tests;
 /// </summary>
 public sealed class YamlDocumentParserTests
 {
+    // A mapping key that is a collection holding an alias to its own still-open anchor makes
+    // YamlStream.Load hash the key on insert and recurse until the stack overflows, which no
+    // handler can catch. The pre-scan must refuse it with a located parse error instead.
+    [Theory]
+    [InlineData("body: { ? &k [ *k ] : v }\n")]
+    [InlineData("body: { ? &k { x: *k } : v }\n")]
+    [InlineData("? &k [ *k ] : v\n")]
+    public void Parse_SelfReferentialMappingKey_ThrowsYamlParseExceptionWithLocation_NotStackOverflow(string yaml)
+    {
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.True(ex.Line > 0);
+        Assert.Contains("alias 'k' refers to a node that is still being defined", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_NonKeySelfAliasAndOrdinaryAnchors_StillParse()
+    {
+        var selfAlias = YamlDocumentParser.Parse("a: &k [ *k ]\nsteps: []\n");
+        Assert.Empty(selfAlias.Steps);
+
+        var ordinary = YamlDocumentParser.Parse(
+            "variables:\n  base: &b one\n  again: *b\n  list: &l [ &b two, *b ]\n  copy: *l\nsteps: []\n");
+        Assert.Empty(ordinary.Steps);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("~")]

@@ -32,6 +32,17 @@ public sealed class ComposeTcpBindingTests : IDisposable
     }
 
     [Theory]
+    [InlineData("{ ? &k [ *k ] : v }")]
+    [InlineData("version: 1\nfiles: [./c.yaml]\nservices: { ? &k { x: *k } : v }")]
+    public void SelfReferencingMappingKey_IsRefusedAsInvalidYaml_NotAStackOverflow(string text)
+    {
+        var path = Path.Combine(_directory, "self-ref.compose.yaml");
+        File.WriteAllText(path, text);
+        var ex = Assert.Throws<ArgumentException>(() => ComposeConfiguration.Load(path));
+        Assert.StartsWith("Compose configuration: invalid YAML.", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("{\"service\":\"web\",\"port\":8080,\"readiness\":{\"path\":\"/health\",\"status\":200}}")]
     [InlineData("{\"type\":\"http\",\"service\":\"web\",\"port\":8080,\"readiness\":{\"type\":\"http\",\"path\":\"/health\"}}")]
     public void ExistingAndExplicitHttpForms_KeepHttpDeclarations(string binding)

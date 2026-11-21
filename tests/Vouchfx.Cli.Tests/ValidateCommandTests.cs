@@ -306,6 +306,24 @@ public sealed class ValidateCommandTests : IDisposable
         Assert.Equal(string.Empty, stderr.ToString());
     }
 
+    // A mapping key holding an alias to its own open anchor overflows the stack inside
+    // YamlStream.Load (uncatchable). The pre-scan must turn it into an ordinary parse
+    // failure: a non-zero exit, never a crash and never exit 0.
+    [Fact]
+    public void Execute_SelfReferencingMappingKey_ReturnsNonZeroParseFailure_WithoutCrashing()
+    {
+        var sw = new StringWriter();
+        var file = Path.Combine(_root, "self-ref.e2e.yaml");
+        File.WriteAllText(file, "steps: []\nbody: { ? &k [ *k ] : v }\n");
+
+        var exitCode = Execute(file, json: false, sw);
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        var text = sw.ToString();
+        Assert.Contains("[Parse]", text, StringComparison.Ordinal);
+        Assert.Contains("alias 'k' refers to a node that is still being defined", text, StringComparison.Ordinal);
+    }
+
     // ── a Failed discovery surfaces its OWN ParseError, not a re-validation ───
 
     [Fact]

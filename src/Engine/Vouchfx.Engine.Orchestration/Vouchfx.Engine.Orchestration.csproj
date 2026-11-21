@@ -118,6 +118,12 @@
     <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
+  <!-- The Compose loaders call YamlStream.Load directly; Authoring's guard is internal, so the
+       self-reference pre-scan source is linked in as a private copy (see Compilation). -->
+  <ItemGroup>
+    <Compile Include="..\Vouchfx.Engine.Authoring\YamlCycleGuard.Scan.cs" Link="Shared\YamlCycleGuard.Scan.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
     <!-- EnvironmentMapper consumes EnvironmentSpec / ServiceSpec / DependencySpec from Authoring.
