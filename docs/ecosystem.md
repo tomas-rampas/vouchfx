@@ -48,6 +48,8 @@ Real microservices in C#, Python, Node.js and Java with complete end-to-end test
 - **[Inventory (Python + FastAPI)](https://samples.vouchfx.io/samples/inventory-python/README.html)** — HTTP, MySQL, RabbitMQ, Redis
 - **[Payments (Java + Spring Boot)](https://samples.vouchfx.io/samples/payments-java/README.html)** — REST, SQL Server, NATS, email
 - **[Ledger (Node.js + JSON-RPC)](https://samples.vouchfx.io/samples/ledger-jsonrpc/README.html)** — Custom community provider (rpc.json-rpc), PostgreSQL, Kafka
+- **[Orders with Compose (C# + ASP.NET)](https://samples.vouchfx.io/samples/orders-dotnet-compose/README.html)** — The Orders application and five assertions, with a user-owned Compose environment
+- **[Kafka mutual TLS](https://samples.vouchfx.io/samples/kafka-mtls/README.html)** — Infrastructure-only produce/consume round trip with engine-owned mutual-TLS confirmation
 
 **Start here:**
 - **[Run a sample](https://samples.vouchfx.io/docs/RUNNING.html)** — Clone and run any sample in minutes
