@@ -402,6 +402,41 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
         }
     }
 
+    // Docker-free: pins how the fixture records `docker events` output for a failed baseline wait.
+    [Fact]
+    public void ClosureWaitEvents_KeepOneLinePerEvent_DropExecCommands_AndKeepTheNewest()
+    {
+        var output = string.Join('\n',
+            "1763700000000000001 container 0123abcd web \"exec_start: sh -c \\\"x\\nPGPASSWORD=s3cret psql\\\"\"",
+            "1763700000000000002 container 0123abcd web \"exec_create: sh -c \\\"x\"",
+            "1763700000000000003 container 0123abcd web \"exec_start: sh -c \"x",
+            "PGPASSWORD=s3cret psql\"",
+            "1763700000000000004 container 0123abcd web \"health_status: healthy\"",
+            "1763700000000000005 container 0123abcd web \"destroy\"",
+            "1763700000000000006 network 4567cdef aspire-session-network-x \"disconnect\"",
+            "1763700000000000007 container 0123abcd fixture-secret-name \"die\"",
+            "Error response from daemon: fixture-secret",
+            "17637000000000000 container short \"destroy\"");
+        var lines = OwnedFixture.EventLines(output, text => text.Replace("fixture-secret", "***REDACTED***", StringComparison.Ordinal));
+        Assert.Equal(new[]
+        {
+            "1763700000000000001 container 0123abcd web exec_start",
+            "1763700000000000002 container 0123abcd web exec_create",
+            "1763700000000000003 container 0123abcd web exec_start",
+            "1763700000000000004 container 0123abcd web \"health_status: healthy\"",
+            "1763700000000000005 container 0123abcd web \"destroy\"",
+            "1763700000000000006 network 4567cdef aspire-session-network-x \"disconnect\"",
+            "1763700000000000007 container 0123abcd ***REDACTED***-name \"die\"",
+        }, lines);
+        Assert.DoesNotContain(lines, line => line.Contains("s3cret", StringComparison.Ordinal));
+
+        var many = string.Join('\n', Enumerable.Range(0, 250).Select(index => (1763700000000000000L + index).ToString(CultureInfo.InvariantCulture) + " container id name \"destroy\""));
+        var newest = OwnedFixture.EventLines(many, text => text);
+        Assert.Equal(200, newest.Length);
+        Assert.StartsWith("1763700000000000050 ", newest[0], StringComparison.Ordinal);
+        Assert.StartsWith("1763700000000000249 ", newest[^1], StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task RawCapture_DestinationFailure_RetainsBytesWrittenBeforeTheFault()
     {
@@ -573,15 +608,20 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
     private sealed record ColdResult(int Pid, DateTime BirthUtc, int ExitCode, string[] ObservedContainers, string[] ObservedDcpProcesses, string[] ObservedJournals, RawStreamBinding Stdout, RawStreamBinding Stderr, ResourceInventory Active);
     /// <summary>
     /// What a baseline wait was for, how long it ran against which bound, and what was still present when it ended.
-    /// The <c>*StillPresent</c> lists and <c>BaselineContainersMissing</c> come from the last poll that completed
-    /// (<c>Polls</c> says how many did; <c>LastInventoryUtc</c> is null when none did), not from the moment the wait ended.
-    /// <c>Error</c> is the exception type and scrubbed message of a wait that did not converge; <c>Events</c> are the Docker
-    /// events of the wait's own window, and <c>EventsReadError</c> is the exception type name if they could not be read.
+    /// The <c>*StillPresent</c> lists, <c>BaselineContainersMissing</c> and <c>BaselineMissing</c> come from the last poll that
+    /// completed (<c>Polls</c> says how many did; <c>LastInventoryUtc</c> is null when none did), not from the moment the wait
+    /// ended, and compare it with the wait's own baseline. <c>BaselineMissing</c> names every baseline item of all five kinds
+    /// that the last poll no longer saw (<c>container:</c>, <c>network:</c>, <c>volume:</c>, <c>dcp:</c> and <c>journal:</c>
+    /// prefixes); <c>BaselineContainersMissing</c> is its container part without the prefix. <c>FailedInspect</c> is the kind
+    /// and id of a creation-time inspect that failed during the wait. <c>Error</c> is the exception type and scrubbed message of
+    /// a wait that did not converge. <c>Events</c> are the newest Docker events of the window from <c>EventsSinceUtc</c> to
+    /// <c>EventsUntilUtc</c>, and <c>EventsReadError</c> is the exception type name if they could not be read.
     /// </summary>
     private sealed record ClosureWait(string Purpose, string Outcome, DateTime StartedUtc, long ElapsedMilliseconds, long BoundMilliseconds,
         string[] ContainersStillPresent, string[] NetworksStillPresent, string[] VolumesStillPresent, string[] BaselineContainersMissing,
-        string[] DcpProcessesStillPresent, string[] JournalsStillPresent, string[] ContainerStates, string[] NetworkNames, string? StateReadError,
-        int Polls, DateTime? LastInventoryUtc, string? Error, string[] Events, string? EventsReadError);
+        string[] BaselineMissing, string[] DcpProcessesStillPresent, string[] JournalsStillPresent, string[] ContainerStates, string[] NetworkNames,
+        string? StateReadError, int Polls, DateTime? LastInventoryUtc, string? FailedInspect, string? Error, string[] Events,
+        DateTime? EventsSinceUtc, DateTime? EventsUntilUtc, string? EventsReadError);
     private sealed record LinuxProcessState(int Pid, long BirthUtcTicks, string State, int ParentPid);
     private sealed record OwnedDcpIdentity(int Pid, long BirthUtcTicks, int CliPid, long CliBirthUtcTicks, string Profile);
     private sealed record OwnedDcpResidual(string Identity, bool OwnershipProven, int? CliPid, long? CliBirthUtcTicks,
@@ -696,8 +736,12 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             var volumes = await ListAsync("volume", ct);
             var created = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var (kind, ids) in includeCreated ? new[] { ("container", containers), ("network", networks), ("volume", volumes) } : Array.Empty<(string, string[])>())
-                foreach (var id in ids) created[kind + ":" + id] = await DockerAsync(ct, kind, "inspect", "--format",
-                    kind == "volume" ? "{{.CreatedAt}}" : "{{.Created}}", id);
+                foreach (var id in ids)
+                {
+                    // The filter only notes which inspect failed and never catches, so the exception propagates unchanged.
+                    try { created[kind + ":" + id] = await DockerAsync(ct, kind, "inspect", "--format", kind == "volume" ? "{{.CreatedAt}}" : "{{.Created}}", id); }
+                    catch (Exception error) when (NoteFailedInspect(kind, id, error)) { throw; }
+                }
             var journals = System.IO.Directory.Exists(_journalDirectory) ? System.IO.Directory.GetFiles(_journalDirectory) : Array.Empty<string>();
             if (profile is not null) journals = journals.Concat(System.IO.Directory.GetFiles(profile, "vouchfx-*.json", SearchOption.AllDirectories)).ToArray();
             return new ResourceInventory(containers, networks, volumes, created, DcpIdentities(), journals.Order(StringComparer.Ordinal).ToArray());
@@ -717,6 +761,7 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
         private async Task<ResourceInventory> WaitForBaselineAsync(ResourceInventory before, string? profile, string purpose, CancellationToken ct)
         {
             LastClosureInventory = null;
+            _failedInspect = null;
             var clock = Stopwatch.StartNew();
             var started = DateTime.UtcNow;
             using var join = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -774,15 +819,15 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             Exception? failure, int polls, DateTime? lastInventoryUtc)
         {
             var last = LastClosureInventory;
+            string[] Present(Func<ResourceInventory, string[]> items) => last is null ? Array.Empty<string>() : Scrubbed(items(last).Except(items(before)));
             var record = new ClosureWait(purpose, outcome, started, (long)elapsed.TotalMilliseconds, (long)ClosureWaitBound.TotalMilliseconds,
-                last is null ? Array.Empty<string>() : last.Containers.Except(before.Containers).ToArray(),
-                last is null ? Array.Empty<string>() : last.Networks.Except(before.Networks).ToArray(),
-                last is null ? Array.Empty<string>() : last.Volumes.Except(before.Volumes).ToArray(),
-                last is null ? Array.Empty<string>() : before.Containers.Except(last.Containers).ToArray(),
-                last is null ? Array.Empty<string>() : last.DcpProcesses.Except(before.DcpProcesses).ToArray(),
-                last is null ? Array.Empty<string>() : last.Journals.Except(before.Journals).ToArray(),
+                Present(inventory => inventory.Containers), Present(inventory => inventory.Networks), Present(inventory => inventory.Volumes),
+                last is null ? Array.Empty<string>() : Scrubbed(before.Containers.Except(last.Containers)),
+                last is null ? Array.Empty<string>() : Scrubbed(MissingFromBaseline(before, last)),
+                Present(inventory => inventory.DcpProcesses), Present(inventory => inventory.Journals),
                 Array.Empty<string>(), Array.Empty<string>(), null,
-                polls, lastInventoryUtc, failure is null || outcome == "converged" ? null : DescribeFailure(failure), Array.Empty<string>(), null);
+                polls, lastInventoryUtc, _failedInspect is null ? null : Scrub(_failedInspect),
+                failure is null || outcome == "converged" ? null : DescribeFailure(failure), Array.Empty<string>(), null, null, null);
             if (outcome != "converged")
             {
                 // One 10 second limit covers every look below, as before.
@@ -791,16 +836,23 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
                 {
                     var containers = await DockerAsync(look.Token, "container", "ls", "--all", "--no-trunc", "--format", "{{.Names}}|{{.ID}}|{{.State}}|{{.Status}}");
                     var networks = await DockerAsync(look.Token, "network", "ls", "--no-trunc", "--format", "{{.Name}}|{{.ID}}");
-                    record = record with { ContainerStates = Lines(containers), NetworkNames = Lines(networks) };
+                    record = record with { ContainerStates = Scrubbed(Lines(containers)), NetworkNames = Scrubbed(Lines(networks)) };
                 }
                 catch (Exception error) { record = record with { StateReadError = error.GetType().Name }; }
                 try
                 {
-                    // dockerd replays only its most recent 256 events, so the window is this wait's own few seconds,
-                    // not the job's. Exec events carry the executed command line, which is stripped below.
-                    var events = await DockerAsync(look.Token, "events", "--since", UnixSeconds(started), "--until", UnixSeconds(DateTime.UtcNow),
-                        "--format", "{{.TimeNano}} {{.Type}} {{.Actor.ID}} {{index .Actor.Attributes \"name\"}} {{.Action}}");
-                    record = record with { Events = EventLines(events) };
+                    // The window opens EventWindowLookBack before the wait started, so it covers up to that much of the
+                    // teardown that ran just before the wait, and closes now, a few seconds after the wait ended: a wait
+                    // that ran out its 30 second bound gives a window of about 90 seconds. dockerd replays only its most
+                    // recent 256 events whatever the window, so on a busy daemon the start of the window can already be
+                    // gone. Each event is printed on one line (`json .Action` escapes any newline inside an exec command),
+                    // and EventLines keeps the newest.
+                    var since = started - EventWindowLookBack;
+                    var until = DateTime.UtcNow;
+                    record = record with { EventsSinceUtc = since, EventsUntilUtc = until };
+                    var events = await DockerAsync(look.Token, "events", "--since", UnixSeconds(since), "--until", UnixSeconds(until),
+                        "--format", "{{.TimeNano}} {{.Type}} {{.Actor.ID}} {{index .Actor.Attributes \"name\"}} {{json .Action}}");
+                    record = record with { Events = EventLines(events, Scrub) };
                 }
                 catch (Exception error) { record = record with { EventsReadError = error.GetType().Name }; }
                 FailedClosureWaits.Add(record);
@@ -808,6 +860,29 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             LastClosureWait = record;
         }
 
+        // Every baseline item of the five kinds the convergence test compares that the last poll no longer saw. Any of
+        // them keeps the wait from converging, even when nothing the case created is still present.
+        private static IEnumerable<string> MissingFromBaseline(ResourceInventory before, ResourceInventory last) =>
+            before.Containers.Except(last.Containers).Select(id => "container:" + id)
+                .Concat(before.Networks.Except(last.Networks).Select(id => "network:" + id))
+                .Concat(before.Volumes.Except(last.Volumes).Select(name => "volume:" + name))
+                .Concat(before.DcpProcesses.Except(last.DcpProcesses).Select(identity => "dcp:" + identity))
+                .Concat(before.Journals.Except(last.Journals).Select(path => "journal:" + path));
+
+        private string[] Scrubbed(IEnumerable<string> items) => items.Select(Scrub).ToArray();
+
+        // Records which creation-time inspect failed, so a destroy event for that id can show it was removed between the
+        // listing and the inspect. Returns false, so the exception filter that calls it never catches anything.
+        private bool NoteFailedInspect(string kind, string id, Exception error)
+        {
+            if (error is not OperationCanceledException) _failedInspect = kind + " " + id;
+            return false;
+        }
+
+        private string? _failedInspect;
+
+        // How long before a wait its event window opens, so the window covers the teardown that ran just before the wait.
+        private static readonly TimeSpan EventWindowLookBack = TimeSpan.FromSeconds(60);
         private const int EventLineLimit = 200;
         private const int EventLengthLimit = 300;
 
@@ -817,16 +892,21 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             return (milliseconds / 1000).ToString(CultureInfo.InvariantCulture) + "." + (milliseconds % 1000).ToString("D3", CultureInfo.InvariantCulture);
         }
 
-        // Keeps the event type, the resource and the action, and drops the command that `docker exec` appends to
-        // `exec_create: ` and `exec_start: `. Capped in count and in length.
-        private string[] EventLines(string text) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Take(EventLineLimit)
-            .Select(line => Scrub(ExecCommand.Replace(line, " $1")))
+        // Keeps only lines that start with the 19-digit `TimeNano` of an event, so nothing that is not an event line (such as a
+        // continuation line) is recorded; drops the command that `docker exec` appends to `exec_create: ` and `exec_start: `
+        // inside the JSON-quoted action; keeps the newest EventLineLimit lines, each capped in length.
+        internal static string[] EventLines(string text, Func<string, string> scrub) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => EventLine.IsMatch(line))
+            .TakeLast(EventLineLimit)
+            .Select(line => scrub(ExecCommand.Replace(line, " $1")))
             .Select(line => line.Length <= EventLengthLimit ? line : line[..EventLengthLimit] + "...(truncated)")
             .ToArray();
 
+        private static readonly System.Text.RegularExpressions.Regex EventLine =
+            new("^[0-9]{19} ", System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
         private static readonly System.Text.RegularExpressions.Regex ExecCommand =
-            new(" (exec_[a-z]+):.*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            new(" \"(exec_[a-z]+):.*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
         private string DescribeFailure(Exception error)
         {

@@ -1436,8 +1436,10 @@ jobs:
           --results-directory TestResults
 
       # Keep per-project TRX files so database test outcomes remain inspectable.
-      # Retention on the four artefacts of this job: 30 days when a step failed (a rare failure can
-      # take longer than a week to be noticed), 7 days on a passing run.
+      # Retention on the four artefacts of this job: 30 days if the job has already failed or been
+      # cancelled when the upload step runs (a rare failure can take longer than a week to be
+      # noticed), 7 days otherwise. `job.status` is read as each upload runs, and this upload runs
+      # before the evidence verifier, so it keeps 7 days when only the verifier or a later step fails.
       - name: Upload Docker integration test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1445,7 +1447,7 @@ jobs:
           name: docker-integration-test-results
           path: TestResults/**/*.trx
           if-no-files-found: error
-          retention-days: ${{ job.status == 'failure' && 30 || 7 }}
+          retention-days: ${{ job.status != 'success' && 30 || 7 }}
 
       - name: Verify owned topology acceptance counts and closure
         if: always() && steps.topology-evidence-preparation.outcome == 'success'
@@ -1461,7 +1463,8 @@ jobs:
       # most recent events (at most 256, however wide the window below). It runs after the verifier
       # (which must judge the evidence as the tests left it) and lands inside the evidence directory
       # so it travels in the same artefact. Read-only; nothing is removed or retried, and every
-      # command is best effort so one refusal cannot hide the others.
+      # command is best effort so one refusal cannot hide the others. It does not run when the job
+      # is cancelled (`failure()` is false then).
       #
       # The artefact is public and not secret-masked, so nothing here may print a credential:
       #   * no raw `docker inspect`: it prints each container's environment, which can carry the
@@ -1470,6 +1473,7 @@ jobs:
       #     container is started with its password on the command line;
       #   * container state lists named fields only, so health-check output (`.State.Health.Log`)
       #     is left out, and the command that `docker exec` appends to exec events is stripped.
+      # `scripts/ci/test_failure_diagnostics_capture.py` allows only the template fields used here.
       # What remains is names, ids, images, ports, timestamps, status, exit codes and the daemon's
       # own state error text.
       - name: Capture Docker state for failure diagnosis
@@ -1496,19 +1500,24 @@ jobs:
           } > "$out/network-state.txt" 2>&1 || echo "network state capture exited $?" >> "$out/network-state.txt"
           # A bounded window ending now, so the command terminates instead of streaming. The daemon
           # replays at most its last 256 events whatever the window, so on a long job this is the
-          # tail of the job's events, not the failing case's. `{{.Action}}` is last so the sed can
-          # drop the command line that `exec_create:` and `exec_start:` carry.
+          # tail of the job's events, not the failing case's. `{{json .Action}}` prints the action as
+          # one JSON string, so a newline inside an exec command stays escaped and every event is one
+          # line. It is last so the sed can drop the command that `exec_create:` and `exec_start:`
+          # carry, and the grep first drops any line that does not start with the 19-digit TimeNano.
+          # The command's own error output goes to a separate file.
           events="$(mktemp)"
+          status=0
           timeout 60 docker events --since "$(( $(date +%s) - 3600 ))" --until "$(date +%s)" \
-            --format '{{.TimeNano}} {{.Type}} {{.Actor.ID}} {{index .Actor.Attributes "name"}} {{.Action}}' \
-            > "$events" 2>&1 || echo "docker events exited $?" >> "$events"
-          sed -E 's/ (exec_[a-z]+):.*$/ \1/' "$events" > "$out/docker-events-recent.txt"
+            --format '{{.TimeNano}} {{.Type}} {{.Actor.ID}} {{index .Actor.Attributes "name"}} {{json .Action}}' \
+            > "$events" 2> "$out/docker-events-errors.txt" || status=$?
+          { grep -E '^[0-9]{19} ' "$events" | sed -E 's/ "(exec_[a-z]+):.*$/ \1/'; } > "$out/docker-events-recent.txt" || true
+          [ "$status" -eq 0 ] || echo "docker events exited $status" >> "$out/docker-events-errors.txt"
           rm -f "$events"
           exit 0
 
-      # 30 days when the job failed, 7 otherwise, like the other Docker / Aspire artefacts. This evidence is
-      # the only record of a rare teardown failure (one in about 75 runs), and a week is shorter than
-      # the time it can take to notice and look at one.
+      # 30 days if the job has failed or been cancelled by the time this upload runs, 7 otherwise, like
+      # the other Docker / Aspire artefacts. This evidence is the only record of a rare teardown failure
+      # (one in about 75 runs), and a week is shorter than the time it can take to notice and look at one.
       - name: Upload first-attempt owned topology evidence
         if: always() && steps.topology-evidence-preparation.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1516,7 +1525,7 @@ jobs:
           name: owned-environment-acceptance
           path: ${{ runner.temp }}/vouchfx-topology-acceptance
           if-no-files-found: error
-          retention-days: ${{ job.status == 'failure' && 30 || 7 }}
+          retention-days: ${{ job.status != 'success' && 30 || 7 }}
 
       - name: Collect new default-root DCP captures
         id: dcp-captures
@@ -1547,7 +1556,7 @@ jobs:
           name: integration-dcp-captures
           path: ${{ runner.temp }}/vouchfx-dcp-captures
           if-no-files-found: error
-          retention-days: ${{ job.status == 'failure' && 30 || 7 }}
+          retention-days: ${{ job.status != 'success' && 30 || 7 }}
 
       # Upload the blame output so the next crash arrives WITH its dump. `if: always()` because
       # the interesting case is the failing one; a crash aborts the step above.
@@ -1566,7 +1575,7 @@ jobs:
             TestResults/**/*.dmp
             TestResults/**/Sequence*.xml
           if-no-files-found: ignore
-          retention-days: ${{ job.status == 'failure' && 30 || 7 }}
+          retention-days: ${{ job.status != 'success' && 30 || 7 }}
 
   # ── Dependency vulnerability scan — ADVISORY, non-blocking ───────────────────
   # Reports known-vulnerable transitive packages across the solution so a

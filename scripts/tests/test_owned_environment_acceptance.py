@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 MODULE = Path(__file__).resolve().parents[1] / "assert-owned-environment-acceptance.py"
 SPEC = importlib.util.spec_from_file_location("owned_environment_acceptance", MODULE)
@@ -400,6 +401,76 @@ class EvidenceAdmissionTests(unittest.TestCase):
             self.assertNotIn(command, message)
         self.assertIn("##\u200b[error]one", message)
         self.assertEqual("Case or fixture teardown did not complete", message.splitlines()[0])
+
+    def test_a_later_report_that_cannot_be_parsed_does_not_change_the_refusal(self):
+        # json.loads raises RecursionError (not ValueError) on this; the current case still refuses as before.
+        self.change("compose-capabilities", Completed=False)
+        (self.directory / "cold-host-compiler-profile.json").write_text("[" * 200000 + "]" * 200000, encoding="utf-8")
+        message = self.refusal()
+        self.assertEqual("Case or fixture teardown did not complete", message.splitlines()[0])
+        self.assertIn("compose-capabilities: case did not complete", message)
+        self.assertNotIn("cold-host-compiler-profile", message)
+
+    def test_a_second_read_that_fails_or_sees_a_complete_report_still_refuses(self):
+        kind = "warm-host-compiled-image"
+        self.change(kind, Completed=False)
+        original = GATE.read_json
+        complete = copy.deepcopy(self.reports[kind])
+        for name, second in (("fails", OSError("transient")), ("sees complete", complete)):
+            with self.subTest(second_read=name):
+                calls = []
+
+                def flaky(path, second=second):
+                    if path.name == kind + ".json":
+                        calls.append(path)
+                        if len(calls) >= 2:
+                            if isinstance(second, BaseException):
+                                raise second
+                            return copy.deepcopy(second)
+                    return original(path)
+                with mock.patch.object(GATE, "read_json", flaky):
+                    message = self.refusal()
+                self.assertEqual(1, len(calls), "the current case is described from the report already read")
+                self.assertEqual("Case or fixture teardown did not complete", message.splitlines()[0])
+                self.assertIn(kind + ": case did not complete", message)
+
+    def test_the_refusal_helper_never_returns_and_raises_only_value_error(self):
+        class Hostile(dict):
+            def get(self, *args):
+                raise RecursionError("hostile")
+        for report in (copy.deepcopy(self.reports["compose-capabilities"]), Hostile()):
+            with self.subTest(report=type(report).__name__):
+                with self.assertRaises(ValueError) as caught:
+                    GATE.refuse_incomplete_teardown(self.directory, "compose-capabilities", report)
+                self.assertEqual("Case or fixture teardown did not complete", str(caught.exception).splitlines()[0])
+        with mock.patch.object(GATE, "describe_teardown_lines", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                GATE.refuse_incomplete_teardown(self.directory, "compose-capabilities", {})
+        with mock.patch.object(GATE, "read_json", side_effect=MemoryError):
+            with self.assertRaises(ValueError):
+                GATE.refuse_incomplete_teardown(self.directory, "compose-capabilities", {})
+
+    def test_every_baseline_item_missing_from_the_wait_is_printed(self):
+        wait = {"Purpose": "cycle-release", "Outcome": "bound-elapsed", "ElapsedMilliseconds": 30004, "BoundMilliseconds": 30000, "Polls": 212,
+                "ContainersStillPresent": [], "NetworksStillPresent": [], "VolumesStillPresent": [], "BaselineContainersMissing": [],
+                "BaselineMissing": ["dcp:4242:638000000000000000", "network:feed"], "DcpProcessesStillPresent": [], "JournalsStillPresent": [],
+                "FailedInspect": None, "EventsSinceUtc": "2026-01-01T00:00:00Z", "EventsUntilUtc": "2026-01-01T00:01:31Z"}
+        before = {"Containers": ["c"], "Networks": ["feed", "n"], "Volumes": [], "DcpProcesses": ["4242:638000000000000000"], "Journals": []}
+        closure = {"Containers": ["c"], "Networks": ["n"], "Volumes": [], "DcpProcesses": [], "Journals": []}
+        self.change("warm-host-compiled-image", Completed=False, LastBefore=before, FixtureClosureLastInventory=closure, LastClosureWait=wait, FailedClosureWaits=[wait])
+        message = self.refusal()
+        for text in ("BaselineMissing=[dcp:4242:638000000000000000, network:feed]", "Polls=212", "FailedInspect=null", "EventsSinceUtc=2026-01-01T00:00:00Z",
+                     "EventsUntilUtc=2026-01-01T00:01:31Z", "Networks in the cycle baseline but absent at last closure check: [feed]",
+                     "DcpProcesses in the cycle baseline but absent at last closure check: [4242:638000000000000000]",
+                     "Containers in the cycle baseline but absent at last closure check: []"):
+            self.assertIn(text, message)
+
+    def test_a_malformed_wait_is_labelled_malformed_not_old_evidence(self):
+        self.change("warm-host-compiled-image", Completed=False, LastClosureWait="not-an-object", FailedClosureWaits=[7, None])
+        message = self.refusal()
+        self.assertIn("last baseline wait: malformed (str instead of a wait record)", message)
+        self.assertIn("non-converged wait 1: malformed (int instead of a wait record)", message)
+        self.assertIn("non-converged wait 2: malformed (NoneType instead of a wait record)", message)
 
 
 if __name__ == "__main__":
