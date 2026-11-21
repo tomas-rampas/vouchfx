@@ -6112,10 +6112,10 @@ public static class ScenarioRunner
             var collection = StepTemplateCensus.Collect(node);
             foreach (var field in collection.Fields)
             {
-                // CheckText is Text, except that a structured REST body string drops a
-                // reference it opens and never closes: that text is never resolved, so it is
-                // not refused either (StepTemplateCensus.WithoutOpenSigilTail).
-                if (!SecretReference.ValidateField(field.CheckText, s_knownSecretSources, out var fieldError))
+                // ValidateField over the field's text, except for the one open tail a structured
+                // REST body sends literally because it joins a later string
+                // (StepTemplateCensus.TryValidate). Diagnostics quote the text as written.
+                if (!StepTemplateCensus.TryValidate(field, s_knownSecretSources, out var fieldError))
                 {
                     var message = $"step '{node.Id}': {fieldError} (field '{field.Location}')";
                     faults.Add(new SecretReferenceFault(message, $"steps.{node.Id}.{field.Location}", false));

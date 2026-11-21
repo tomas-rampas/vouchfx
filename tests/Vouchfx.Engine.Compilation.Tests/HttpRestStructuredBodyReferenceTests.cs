@@ -137,6 +137,7 @@ public sealed class HttpRestStructuredBodyReferenceTests
     [InlineData("body:\n  'a${secret:env/': 'X}'\n", "{\"a${secret:env/\":\"X}\"}")]
     [InlineData("body:\n  - '${secret:env/'\n  - 'X}'\n", "[\"${secret:env/\",\"X}\"]")]
     [InlineData("body:\n  a: '${secret:env/'\n  b: 'X}'\n", "{\"a\":\"${secret:env/\",\"b\":\"X}\"}")]
+    [InlineData("body:\n  a: 'p${secret:env/'\n  b: { c: 'X}' }\n", "{\"a\":\"p${secret:env/\",\"b\":{\"c\":\"X}\"}}")]
     public async Task ReferenceJoinedAcrossStrings_IsNotResolved_AndIsSentLiterally(string bodyYaml, string expected)
     {
         var run = await RunAsync(bodyYaml);
@@ -144,6 +145,92 @@ public sealed class HttpRestStructuredBodyReferenceTests
         Assert.Equal(Verdict.Pass, run.Outcome.Verdict);
         Assert.Empty(run.References);
         Assert.Equal(expected, run.Received);
+    }
+
+    /// <summary>
+    /// The joined text stays literal when another string in the same body holds a reference,
+    /// so the body is sent as parts: the joined halves are JSON text that is never resolved,
+    /// and only the placeholder's string is resolved and escaped.
+    /// </summary>
+    [Fact]
+    public async Task JoinedTextBesideAResolvedPlaceholder_IsSentLiterally_ExactBytes()
+    {
+        var run = await RunAsync(
+            "body:\n  a: '${secret:env/'\n  b: 'X}'\n  c: '{p}'\n",
+            vars: new Dictionary<string, object?> { ["p"] = "v\"q" });
+
+        Assert.Equal(Verdict.Pass, run.Outcome.Verdict);
+        Assert.Empty(run.References);
+        Assert.Equal("{\"a\":\"${secret:env/\",\"b\":\"X}\",\"c\":\"v\\u0022q\"}", run.Received);
+    }
+
+    /// <summary>
+    /// A placeholder whose value holds <c>${secret:...}</c> text is substituted once: the text
+    /// is sent literally and no secret is read.
+    /// </summary>
+    [Fact]
+    public async Task PlaceholderValueHoldingASecretReference_IsSentLiterally_NothingFetched()
+    {
+        var env = NewEnvName();
+        Environment.SetEnvironmentVariable(env, "must-not-be-read");
+        try
+        {
+            var run = await RunAsync(
+                "body:\n  t: '{p}'\n",
+                vars: new Dictionary<string, object?> { ["p"] = "${secret:env/" + env + "}" });
+
+            Assert.Equal(Verdict.Pass, run.Outcome.Verdict);
+            Assert.Empty(run.References);
+            Assert.Equal("{\"t\":\"${secret:env/" + env + "}\"}", run.Received);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(env, null);
+        }
+    }
+
+    /// <summary>
+    /// A resolved value holding a lone surrogate, which no UTF-8 text can carry, does not
+    /// break the body: the serialiser writes it as the escaped replacement character U+FFFD,
+    /// so the body stays valid JSON on the wire and the step runs.
+    /// </summary>
+    [Fact]
+    public async Task PlaceholderValueHoldingALoneSurrogate_IsWrittenAsAnEscapedReplacementCharacter()
+    {
+        var run = await RunAsync(
+            "body:\n  t: 'a{p}b'\n",
+            vars: new Dictionary<string, object?> { ["p"] = "\uD800" });
+
+        Assert.Equal(Verdict.Pass, run.Outcome.Verdict);
+        Assert.Equal("{\"t\":\"a\\uFFFDb\"}", run.Received);
+    }
+
+    /// <summary>
+    /// A missing secret in a structured body that is sent as parts is the step's
+    /// EnvironmentError: nothing is sent, and the observation names the reference but holds
+    /// no value, not even the placeholder's resolved beside it.
+    /// </summary>
+    [Fact]
+    public async Task MissingSecretInStructuredBodyParts_IsEnvironmentError_NothingSent()
+    {
+        var env = NewEnvName();
+        Environment.SetEnvironmentVariable(env, null);
+        const string placeholderValue = "placeholder-value-canary";
+
+        var model = Bind("body:\n  t: '${secret:env/" + env + "}'\n  p: '{p}'\n");
+        Assert.NotNull(model.BodyParts);
+
+        var run = await RunAsync(
+            "body:\n  t: '${secret:env/" + env + "}'\n  p: '{p}'\n",
+            vars: new Dictionary<string, object?> { ["p"] = placeholderValue });
+
+        Assert.Equal(Verdict.EnvironmentError, run.Outcome.Verdict);
+        Assert.Null(run.Received);
+        Assert.Equal(new[] { "${secret:env/" + env + "}" }, run.References);
+        var observation = Assert.IsType<string>(run.Outcome.Observation);
+        Assert.Contains("secret resolution failed", observation, StringComparison.Ordinal);
+        Assert.Contains(env, observation, StringComparison.Ordinal);
+        Assert.DoesNotContain(placeholderValue, observation, StringComparison.Ordinal);
     }
 
     /// <summary>
