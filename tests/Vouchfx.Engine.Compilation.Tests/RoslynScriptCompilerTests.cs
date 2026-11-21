@@ -203,6 +203,8 @@ public sealed class RoslynScriptCompilerTests
             var expected = Assert.Throws<FileNotFoundException>(() => MetadataReference.CreateFromFile(path));
 
             Assert.Equal(expected.Message, actual.Message);
+            Assert.Equal(expected.FileName, actual.FileName);
+            Assert.Equal(expected.InnerException?.GetType(), actual.InnerException?.GetType());
             Assert.Equal(before, RoslynScriptCompiler.ExternalReferenceCount);
         });
     }
@@ -290,6 +292,40 @@ public sealed class RoslynScriptCompilerTests
 
             Assert.Equal("Delta", TypeNamesOf(built));
             Assert.Same(built, RoslynScriptCompiler.GetReference(path));
+        });
+    }
+
+    /// <summary>
+    /// When another caller stores the entry for the very content a first-time caller then reads
+    /// under the lock, the first-time caller returns that entry instead of building a duplicate.
+    /// </summary>
+    [Fact]
+    public void GetReference_EntryStoredWhileFirstCallerWaits_ReturnsTheStoredInstance()
+    {
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "Subject.dll");
+            EmitTinyAssembly(path, "Alpha");
+
+            MetadataReference? inner = null;
+            RoslynScriptCompiler.BeforeExternalBuildForTest = p =>
+            {
+                RoslynScriptCompiler.BeforeExternalBuildForTest = null;
+                inner = RoslynScriptCompiler.GetReference(p);
+            };
+            MetadataReference outer;
+            try
+            {
+                outer = RoslynScriptCompiler.GetReference(path);
+            }
+            finally
+            {
+                RoslynScriptCompiler.BeforeExternalBuildForTest = null;
+            }
+
+            Assert.NotNull(inner);
+            Assert.Same(inner, outer);
+            Assert.Same(outer, RoslynScriptCompiler.GetReference(path));
         });
     }
 

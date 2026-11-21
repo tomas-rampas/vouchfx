@@ -83,11 +83,12 @@ public static class RoslynScriptCompiler
     //   process is unsupported, and whoever can write them already controls the process.
     //   They are never read again.
     // - Every other path (provider and customer assemblies, anything passed through
-    //   additionalReferencePaths or ScriptOptions) may be rewritten at the same path, so
-    //   its reference is keyed on the file's content: each call with an entry for the path
+    //   additionalReferencePaths) may be rewritten at the same path, so
+    //   its reference is keyed on the file's content (references the caller has already built, in
+    //   ScriptOptions, are used as given): each call with an entry for the path
     //   hashes the file (SHA-256, streamed, so an unchanged file allocates no image) and
     //   reuses the cached reference only when the hash matches. A path with no entry yet is
-    //   read once, without a prior hash. On a mismatch the reference is built from
+    //   read without a prior hash, once by each caller that reaches it first at the same time. On a mismatch the reference is built from
     //   the very bytes that were read and hashed again, so no reference ever pairs a
     //   hash with an image from a different read. Length and timestamp are not part of
     //   the key: a file rewritten with the same length and a restored timestamp is
@@ -95,11 +96,12 @@ public static class RoslynScriptCompiler
     //
     // The image-backed reference keeps its managed byte[] alive for as long as the reference
     // is reachable, instead of unmanaged memory; the array may also be pinned by
-    // System.Reflection.Metadata with a handle freed only by a finaliser, so a replaced image
-    // may be reclaimed only after a finaliser pass. Entries are never evicted, so the cache
-    // holds one image per distinct path the process has seen. Those paths come from provider
-    // assemblies that are already loaded and do not change while the process runs, so the
-    // retained set is bounded in practice.
+    // System.Reflection.Metadata with a handle freed only by a finalizer, so a replaced image
+    // may be reclaimed only after a finalizer pass. Entries are never evicted, so the cache
+    // holds one image per distinct path the process has seen. In the engine's own hosts (the CLI and
+    // the runner) those paths come from provider assemblies that are already loaded and do not
+    // change while the process runs, so the retained set is bounded in practice. An embedder
+    // that passes a new path on every call is not bounded.
     //
     // The set is ordinal, as the runtime spells the paths. When the value is absent or
     // empty nothing is treated as a platform path. The platform rule is mirrored in the
@@ -146,6 +148,8 @@ public static class RoslynScriptCompiler
     /// that are not already on the Roslyn reference list.  At runtime, those assemblies
     /// must be made available either via the Default context or via
     /// <c>collectibleProbingPaths</c> on <see cref="RunIsolatedAsync"/>.
+    /// Each distinct path outside the trusted-platform list is cached by content and its image
+    /// is kept for the life of the process, so pass stable paths.
     /// </param>
     /// <param name="cancellationToken">
     /// Propagated to Roslyn's <c>Compilation.Emit</c> call — bounds a compile whose
@@ -434,6 +438,8 @@ public static class RoslynScriptCompiler
     /// Optional list of absolute paths to assemblies that should be added as
     /// Roslyn metadata references at compile time.  See
     /// <see cref="CompileOnce"/> for full semantics.
+    /// Each distinct path outside the trusted-platform list is cached by content and its image
+    /// is kept for the life of the process, so pass stable paths.
     /// </param>
     /// <returns>
     /// A <see cref="CompiledScenario"/> whose <see cref="CompiledScenario.Compiled"/>
@@ -676,16 +682,18 @@ public static class RoslynScriptCompiler
         return bytes;
     }
 
-    // Opens the file the way MetadataReference.CreateFromFile reports failures, so callers see
-    // the same exception types and messages as before the cache: a missing parent directory is a
-    // FileNotFoundException, other IOExceptions and ArgumentExceptions pass through, and anything
-    // else (for example UnauthorizedAccessException on an unreadable file or a directory path)
-    // is wrapped in an IOException.
+    // Opens the file the way MetadataReference.CreateFromFile does, including its share mode
+    // (FileShare.Read), so a file another process holds open for writing fails as it did, and
+    // reports failures the same way, so callers see the same exception types and messages as
+    // before the cache: a missing parent directory is a FileNotFoundException, other
+    // IOExceptions and ArgumentExceptions pass through, and anything else (for example
+    // UnauthorizedAccessException on an unreadable file or a directory path) is wrapped in an
+    // IOException.
     private static FileStream OpenForRead(string path)
     {
         try
         {
-            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         }
         catch (DirectoryNotFoundException e)
         {
