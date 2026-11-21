@@ -29,9 +29,20 @@
 #               and a re-run of an old run does not count. build.yml (06:17) and
 #               dotnet-compatibility.yml (06:47) fire about 2.5 to 3 hours before the
 #               watchdog. It also reconciles: when the newest completed scheduled run was
-#               unsuccessful and no alert issue is open, it opens one, so an event that was
+#               unsuccessful, is also the newest scheduled run and no alert issue is open
+#               (and none was closed after that run), it opens one, so an event that was
 #               never delivered or one failed Issues API call does not hide a failure. It
 #               never closes an issue for health: only a successful scheduled run does.
+#               Its own findings add a comment to an open issue only when the newest
+#               finding it recorded there was of a different kind.
+#               A manual dispatch is report-only: the step's WATCHDOG_EVENT tells the script
+#               the trigger, and for anything but `schedule` it prints its finding and the
+#               write it would have made but writes nothing, because the 12-hour window is
+#               meaningful only around the scheduled time.
+#
+# Closing an alert by hand: closing a still-failing issue as completed is undone by the
+# next failed scheduled run; closing it as "not planned" stops it being reopened (the next
+# failure opens a new issue). To quieten a known break, leave the issue open and unsubscribe.
 #
 # Limits, stated plainly: the state check catches a workflow that was disabled by hand.
 # GitHub disables scheduled workflows for inactivity per repository, so `CI`,
@@ -101,7 +112,7 @@ jobs:
 
   watchdog:
     name: Watchdog (${{ matrix.name }})
-    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
@@ -129,4 +140,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WATCHED_FILE: ${{ matrix.file }}
+          WATCHDOG_EVENT: ${{ github.event_name }}
         run: python3 -I -B scripts/ci/scheduled_run_alerts.py watchdog

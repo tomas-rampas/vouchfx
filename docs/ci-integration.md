@@ -682,16 +682,32 @@ Failures no longer depend on someone watching the Actions tab for those daily ru
 `scheduled-run-alerts.yml` opens one issue per workflow, titled "Scheduled run alert", when a
 scheduled run of `CI` or `.NET compatibility` fails, is cancelled or times out. The issue lists the
 jobs that did not succeed and the jobs that were skipped (the Docker suite is skipped when the build
-job fails, so it gave no result that day). Each further occurrence adds a comment, a later scheduled
-run that succeeds and is the newest one closes the issue, and a break within 30 days of a close
+job fails, so it gave no result that day). Each further occurrence adds a comment, and a later
+scheduled run that succeeds and is the newest one closes the issue. A break within 30 days of a close
 reopens the same issue, so an open issue means the workflow is currently broken. The repository
-owner is assigned to the issue so that they are notified whatever their watch settings.
+owner is added to the issue's assignees (whoever else is assigned stays) so that they are notified
+whatever their watch settings.
+
+Closing the issue by hand has consequences. If the workflow is still failing and you close the issue
+as completed, the next failed scheduled run reopens it. If you close it as "not planned", it is
+never reopened, and the next failure opens a new issue instead. To quieten a known break, leave the
+issue open and unsubscribe from it.
 
 A daily watchdog in the same file opens or updates that issue when either workflow is not active, or
-when no scheduled run was created on `main` in the last 12 hours, whatever its status. A run that
-is still in progress, or one that fails, is the first job's responsibility; the watchdog also opens
-the issue if the newest completed scheduled run was unsuccessful and no issue is open, so a lost
-event or a failed API call does not hide a failure.
+when no scheduled run was created on `main` in the last 12 hours, whatever its status. While such a
+condition lasts, the watchdog adds a comment to the open issue only when the newest finding it
+recorded there was of a different kind, so a workflow disabled on purpose gets one comment, not one
+a day. A run that is still in progress, or one that fails, is the first job's responsibility; the
+watchdog also opens the issue if the newest completed scheduled run was unsuccessful, is also the
+newest scheduled run and no issue is open. It does not do so when someone closed an alert issue for
+that workflow after that run last changed, so a lost event or a failed API call does not hide a
+failure, but a recovery or a manual close is not undone.
+
+A manual run of the watchdog (**Run workflow** on the default branch) is a health report: it reads
+the same data and prints its finding, and the write it would have made, in the job log, but it
+creates and changes no issue. The "no scheduled run in 12 hours" finding is meaningful only around
+the scheduled time (09:23 UTC), because a run created at 06:30 is more than 12 hours old by the
+evening.
 
 The state check catches a workflow that was disabled by hand. GitHub disables scheduled workflows
 after 60 days without repository activity for the whole repository at once, so `CI`,

@@ -269,12 +269,18 @@ class FakeGh(sra.Gh):
     """The real `Gh` logic over an in-memory API: only `_call` is replaced."""
 
     def __init__(self, issues=(), runs=(), jobs=JOBS, state="active", owner=None, dry_run=False,
-                 reject_status=None, race=None):
+                 reject_status=None, reject_text=None, race=None, seeded=None):
         super().__init__(REPO, dry_run=dry_run, owner=owner)
         self.issues = [dict(i) for i in issues]
         self.runs, self.jobs, self.state = list(runs), jobs, state
-        self.reject_status, self.race = reject_status, race
-        self.calls, self.comments = [], {}
+        self.reject_status, self.reject_text, self.race = reject_status, reject_text, race
+        self.calls, self.comment_objects, self.assignees = [], {}, {}
+        for number, entries in (seeded or {}).items():       # {issue number: [(user, body), ...]}
+            self.comment_objects[number] = [{"user": dict(u), "body": b} for u, b in entries]
+
+    @property
+    def comments(self):
+        return {n: [c["body"] for c in objs] for n, objs in self.comment_objects.items()}
 
     def writes(self):
         return [c for c in self.calls if c[0] != "GET"]
@@ -292,7 +298,12 @@ class FakeGh(sra.Gh):
                     and i["user"]["login"] == params["creator"]]
             hits.sort(key=lambda i: i["number"], reverse=params["direction"] == "desc")
             size, page = int(params["per_page"]), int(params["page"])
-            return hits[(page - 1) * size:page * size]
+            return [{**i, "comments": len(self.comment_objects.get(i["number"], []))}
+                    for i in hits[(page - 1) * size:page * size]]
+        match = re.fullmatch(r"issues/(\d+)/comments", path)
+        if match:
+            size, page = int(params["per_page"]), int(params["page"])
+            return self.comment_objects.get(int(match.group(1)), [])[(page - 1) * size:page * size]
         if re.fullmatch(r"actions/workflows/[\w.-]+", path):
             return {"state": self.state}
         if re.fullmatch(r"actions/workflows/[\w.-]+/runs", path):
@@ -303,7 +314,8 @@ class FakeGh(sra.Gh):
 
     def _reject(self, payload):
         if self.reject_status and "assignees" in payload:
-            raise sra.GhError("gh api failed (1)", f"gh: Validation Failed (HTTP {self.reject_status})")
+            text = self.reject_text or "Validation Failed"
+            raise sra.GhError("gh api failed (1)", f"gh: {text} (HTTP {self.reject_status})")
 
     def _write(self, method, path, payload):
         self._reject(payload)
@@ -317,11 +329,17 @@ class FakeGh(sra.Gh):
         if method == "PATCH" and match:
             target = next(i for i in self.issues if i["number"] == int(match.group(1)))
             target["state"] = payload["state"]
+            target["state_reason"] = payload.get("state_reason")
             target["closed_at"] = sra.iso_time(NOW) if payload["state"] == "closed" else None
             return {"number": target["number"]}
         match = re.fullmatch(r"issues/(\d+)/comments", path)
         if method == "POST" and match:
-            self.comments.setdefault(int(match.group(1)), []).append(payload["body"])
+            self.comment_objects.setdefault(int(match.group(1)), []).append(
+                {"user": dict(BOT), "body": payload["body"]})
+            return {}
+        match = re.fullmatch(r"issues/(\d+)/assignees", path)
+        if method == "POST" and match:
+            self.assignees.setdefault(int(match.group(1)), []).extend(payload["assignees"])
             return {}
         raise AssertionError(f"unexpected {method} {path}")
 
@@ -383,6 +401,19 @@ class ApplyTests(unittest.TestCase):
             self.apply(gh)
         self.assertEqual(1, len(gh.writes()))
 
+    def test_only_an_http_422_status_counts_as_a_validation_error(self):
+        # a 500 whose text merely contains "422" must propagate, on create and on reopen
+        gh = FakeGh(owner=OWNER, reject_status="500", reject_text="Server Error 422 at node 4224")
+        with self.assertRaises(SystemExit):
+            self.apply(gh)
+        self.assertEqual(1, len(gh.writes()))
+        gh = FakeGh([issue(3, state="closed", closed_at=days_ago(3))], owner=OWNER,
+                    reject_status="500", reject_text="Server Error 422")
+        with self.assertRaises(SystemExit):
+            self.apply(gh)
+        self.assertTrue(sra.is_validation_error(sra.GhError("x", "gh: Validation Failed (HTTP 422)")))
+        self.assertFalse(sra.is_validation_error(sra.GhError("x", "gh: Server Error 422 (HTTP 500)")))
+
     def test_comments_on_the_open_issue(self):
         gh = FakeGh([issue(5), issue(2, state="closed", closed_at=days_ago(1))], owner=OWNER)
         self.assertEqual("comment", self.apply(gh))
@@ -394,19 +425,52 @@ class ApplyTests(unittest.TestCase):
                      issue(3, state="closed", closed_at=days_ago(3)),
                      issue(4, state="closed", closed_at=days_ago(40))], owner=OWNER)
         self.assertEqual("reopen", self.apply(gh))
-        self.assertEqual([("PATCH", "issues/3"), ("POST", "issues/3/comments")],
-                         [c[:2] for c in gh.writes()])
-        patch = gh.writes()[0][3]
-        self.assertEqual({"state": "open", "state_reason": "reopened", "assignees": [OWNER]}, patch)
+        self.assertEqual([("PATCH", "issues/3"), ("POST", "issues/3/comments"),
+                          ("POST", "issues/3/assignees")], [c[:2] for c in gh.writes()])
+        # the reopen replaces nobody: no `assignees` in the PATCH, the owner is added separately
+        self.assertEqual({"state": "open", "state_reason": "reopened"}, gh.writes()[0][3])
+        self.assertEqual({"assignees": [OWNER]}, gh.writes()[2][3])
         self.assertEqual("open", next(i for i in gh.issues if i["number"] == 3)["state"])
         self.assertEqual(["detail line"], gh.comments[3])
 
-    def test_reopen_retries_without_the_assignee_on_a_422(self):
+    def test_reopen_without_a_valid_owner_adds_no_assignee(self):
+        gh = FakeGh([issue(3, state="closed", closed_at=days_ago(3))])
+        self.assertEqual("reopen", self.apply(gh))
+        self.assertEqual([("PATCH", "issues/3"), ("POST", "issues/3/comments")],
+                         [c[:2] for c in gh.writes()])
+
+    def test_a_422_on_adding_the_assignee_is_ignored_on_reopen(self):
         gh = FakeGh([issue(3, state="closed", closed_at=days_ago(3))], owner=OWNER, reject_status="422")
         self.assertEqual("reopen", self.apply(gh))
-        patches = [c[3] for c in gh.writes() if c[0] == "PATCH"]
-        self.assertEqual(2, len(patches))
-        self.assertNotIn("assignees", patches[1])
+        self.assertEqual("open", next(i for i in gh.issues if i["number"] == 3)["state"])
+        self.assertEqual(1, len([c for c in gh.writes() if c[1] == "issues/3/assignees"]))
+        self.assertEqual(["detail line"], gh.comments[3])
+
+    def test_another_error_on_adding_the_assignee_propagates(self):
+        gh = FakeGh([issue(3, state="closed", closed_at=days_ago(3))], owner=OWNER, reject_status="500")
+        with self.assertRaises(SystemExit):
+            self.apply(gh)
+        self.assertEqual(1, len([c for c in gh.writes() if c[1] == "issues/3/assignees"]))   # not retried
+
+    def test_a_not_planned_issue_is_never_reopened(self):
+        # the only recently closed issue is a duplicate (or a muted alert): a new issue is created
+        gh = FakeGh([issue(3, state="closed", closed_at=days_ago(1), state_reason="not_planned")],
+                    owner=OWNER)
+        self.assertEqual("create", self.apply(gh))
+        self.assertEqual([("POST", "issues")], [c[:2] for c in gh.writes()])
+        # a canonical issue closed earlier is reopened rather than the newer duplicate
+        gh = FakeGh([issue(2, state="closed", closed_at=days_ago(5), state_reason="completed"),
+                     issue(3, state="closed", closed_at=days_ago(1), state_reason="not_planned")])
+        self.assertEqual("reopen", self.apply(gh))
+        self.assertEqual(("PATCH", "issues/2"), gh.writes()[0][:2])
+
+    def test_recovery_closes_as_completed_and_a_duplicate_as_not_planned(self):
+        gh = FakeGh([issue(5)])
+        sra.apply(gh, "build.yml", "recover", closing_comment="x", now=NOW)
+        self.assertEqual("completed", gh.issues[0]["state_reason"])
+        gh = FakeGh(race=issue(101))
+        self.apply(gh)
+        self.assertEqual("not_planned", next(i for i in gh.issues if i["number"] == 102)["state_reason"])
 
     def test_creates_when_the_closed_issue_is_too_old_or_not_ours(self):
         gh = FakeGh([issue(2, state="closed", closed_at=days_ago(31)),
@@ -443,6 +507,59 @@ class ApplyTests(unittest.TestCase):
         patches = [c for c in gh.writes() if c[0] == "PATCH"]
         self.assertEqual([("PATCH", "issues/102", {"state": "closed", "state_reason": "not_planned"})],
                          [(m, p, b) for m, p, _, b in patches])
+
+    def test_the_watchdogs_kind_marker_travels_with_body_and_comments(self):
+        kind = "missing"
+        gh = FakeGh()
+        sra.apply(gh, "build.yml", "alert", DETAIL, now=NOW, finding_kind=kind)
+        body = gh.writes()[0][3]["body"]
+        self.assertEqual([sra.marker("build.yml"), sra.finding_marker(kind)], body.splitlines()[:2])
+        # reopen and duplicate hand-over comments carry it too
+        gh = FakeGh([issue(3, state="closed", closed_at=days_ago(3))])
+        sra.apply(gh, "build.yml", "alert", DETAIL, now=NOW, finding_kind=kind)
+        self.assertEqual(sra.finding_marker(kind), gh.comments[3][0].splitlines()[-1])
+        gh = FakeGh(race=issue(101))
+        sra.apply(gh, "build.yml", "alert", DETAIL, now=NOW, finding_kind=kind)
+        self.assertEqual(sra.finding_marker(kind), gh.comments[101][0].splitlines()[-1])
+
+    def test_a_repeated_finding_kind_is_not_commented_again(self):
+        person = {"login": "someone", "type": "User"}
+        mark, other = sra.finding_marker("disabled"), sra.finding_marker("missing")
+
+        def go(gh, kind):
+            return sra.apply(gh, "build.yml", "alert", DETAIL, now=NOW, finding_kind=kind)
+
+        # the newest bot comment records the same kind: no write
+        gh = FakeGh([issue(5)], seeded={5: [(BOT, "x\n" + other), (BOT, "y\n" + mark)]})
+        self.assertEqual("none", go(gh, "disabled"))
+        self.assertEqual([], gh.writes())
+        # a different kind, or a marker only in a person's comment: comment
+        gh = FakeGh([issue(5)], seeded={5: [(BOT, "y\n" + mark)]})
+        self.assertEqual("comment", go(gh, "missing"))
+        self.assertEqual(other, gh.comments[5][-1].splitlines()[-1])
+        gh = FakeGh([issue(5)], seeded={5: [(person, mark)]})
+        self.assertEqual("comment", go(gh, "disabled"))
+        # the newest marker wins, even when an older one has the same kind
+        gh = FakeGh([issue(5)], seeded={5: [(BOT, mark), (BOT, other)]})
+        self.assertEqual("comment", go(gh, "disabled"))
+
+    def test_the_issue_body_marker_counts_when_there_are_no_comments(self):
+        body = sra.marker("build.yml") + "\n" + sra.finding_marker("disabled") + "\ntext"
+        gh = FakeGh([issue(5, body=body)])
+        self.assertEqual("none", sra.apply(gh, "build.yml", "alert", DETAIL, now=NOW, finding_kind="disabled"))
+        self.assertEqual("comment", sra.apply(gh, "build.yml", "alert", DETAIL, now=NOW, finding_kind="missing"))
+        # a run job's failure comment has no marker, so it does not reset the record
+        gh = FakeGh([issue(5, body=body)], seeded={5: [(BOT, "failure detail")]})
+        self.assertEqual("none", sra.apply(gh, "build.yml", "alert", DETAIL, now=NOW, finding_kind="disabled"))
+
+    def test_the_newest_comment_page_is_read_and_a_run_alert_is_never_deduplicated(self):
+        gh = FakeGh([issue(5)], seeded={5: [(BOT, f"c{n}") for n in range(150)]})
+        sra.apply(gh, "build.yml", "alert", DETAIL, now=NOW, finding_kind="missing")
+        reads = [c for c in gh.calls if c[1] == "issues/5/comments" and c[0] == "GET"]
+        self.assertEqual([2], [c[2]["page"] for c in reads])
+        gh = FakeGh([issue(5)], seeded={5: [(BOT, "y\n" + sra.finding_marker("missing"))]})
+        self.assertEqual("comment", self.apply(gh))      # no finding kind: always comments
+        self.assertEqual(["y\n" + sra.finding_marker("missing"), "detail line"], gh.comments[5])
 
     def test_no_duplicate_handling_when_there_is_one_issue(self):
         gh = FakeGh()
@@ -589,12 +706,104 @@ class CmdWatchdogTests(unittest.TestCase):
         self.assertEqual([("PATCH", "issues/5"), ("POST", "issues/5/comments")],
                          [c[:2] for c in gh.writes()])
 
-    def test_an_in_progress_run_does_not_hide_yesterdays_failure(self):
+    def test_an_in_progress_run_defers_yesterdays_failure_to_the_run_job(self):
+        # Today's run is still running, so "newest completed" is yesterday's failure. Its own
+        # completion will raise the alert; reconciling now could undo a recovery.
         today = run(None, id=2, status="in_progress", created_at="2026-11-21T06:30:00Z")
         yesterday = run("failure", id=1, created_at="2026-11-20T06:30:00Z")
         gh = FakeGh(runs=[today, yesterday])
         self.go(gh)
+        self.assertEqual([], gh.writes())
+        self.assertFalse(any(c[1] == "issues" for c in gh.calls))
+
+    def test_the_security_demo_race_leaves_a_closed_issue_closed(self):
+        # Yesterday's run failed; today's run succeeded two minutes ago and its run job closed
+        # the issue after the watchdog listed the runs (while today's was in progress).
+        today = run(None, id=2, status="in_progress", created_at="2026-11-21T06:30:00Z")
+        yesterday = run("failure", id=1, created_at="2026-11-20T06:30:00Z")
+        closed = issue(5, state="closed", closed_at="2026-11-21T09:21:00Z")
+        gh = FakeGh([closed], runs=[today, yesterday], owner=OWNER)
+        self.go(gh)
+        self.assertEqual([], gh.writes())
+        self.assertEqual("closed", gh.issues[0]["state"])
+
+    def test_an_issue_closed_after_the_failed_run_is_not_reopened(self):
+        # A maintainer closed the alert at 08:00 after triaging a failure last updated at 07:50.
+        failed = run("failure", id=1, updated_at="2026-11-21T07:50:00Z")
+        for reason in ("completed", "not_planned"):
+            gh = FakeGh([issue(5, state="closed", closed_at="2026-11-21T08:00:00Z", state_reason=reason)],
+                        runs=[failed], owner=OWNER)
+            self.go(gh)
+            self.assertEqual([], gh.writes(), reason)
+        # closing exactly at the run's last update also counts; before it does not
+        gh = FakeGh([issue(5, state="closed", closed_at="2026-11-21T07:50:00Z")], runs=[failed])
+        self.go(gh)
+        self.assertEqual([], gh.writes())
+        gh = FakeGh([issue(5, state="closed", closed_at="2026-11-21T07:49:59Z")], runs=[failed])
+        self.go(gh)
+        self.assertEqual([("PATCH", "issues/5"), ("POST", "issues/5/comments")],
+                         [c[:2] for c in gh.writes()])
+        # an issue closed after the run for the other workflow does not block this one
+        other = issue(6, key="dotnet-compatibility.yml", state="closed", closed_at="2026-11-21T08:00:00Z")
+        gh = FakeGh([other], runs=[failed])
+        self.go(gh)
         self.assertEqual("POST", gh.writes()[0][0])
+
+    def test_a_disabled_finding_comments_once_while_the_condition_lasts(self):
+        gh = FakeGh([issue(5)], runs=[run("success")], state="disabled_manually")
+        self.go(gh)
+        self.assertEqual(1, len(gh.writes()))
+        self.assertIn(sra.finding_marker("disabled"), gh.comments[5][0])
+        self.go(gh)
+        self.go(gh)
+        self.assertEqual(1, len(gh.writes()))
+        gh.state = "active"
+        gh.runs = []                       # the condition changes kind: one more comment
+        self.go(gh)
+        self.assertEqual(2, len(gh.writes()))
+        self.assertIn(sra.finding_marker("missing"), gh.comments[5][1])
+
+    def test_a_dispatched_watchdog_reports_and_writes_nothing(self):
+        # 18:39 UTC: today's 06:30 run is 12h09m old, so the window calls it missing.
+        late = datetime(2026, 11, 21, 18, 39, tzinfo=timezone.utc)
+        gh = FakeGh(runs=[run("success")], owner=OWNER, dry_run=not sra.may_write("workflow_dispatch"))
+        with mock.patch("builtins.print") as printed:
+            sra.cmd_watchdog(gh, "build.yml", late)
+        self.assertEqual([], gh.writes())
+        text = "\n".join(str(c.args[0]) for c in printed.call_args_list)
+        self.assertIn("Report only", text)
+        self.assertIn("DRY RUN POST issues", text)
+        self.assertIn("No scheduled run", text)
+        # the scheduled path is unchanged: the same inputs write the issue
+        gh = FakeGh(runs=[run("success")], owner=OWNER, dry_run=not sra.may_write("schedule"))
+        with mock.patch("builtins.print"):
+            sra.cmd_watchdog(gh, "build.yml", late)
+        self.assertEqual([("POST", "issues")], [c[:2] for c in gh.writes()])
+
+    def test_only_a_scheduled_trigger_may_write(self):
+        self.assertTrue(sra.may_write("schedule"))
+        for event in ("workflow_dispatch", "push", "", None, "Schedule"):
+            self.assertFalse(sra.may_write(event), event)
+
+    def test_main_makes_a_non_scheduled_watchdog_report_only(self):
+        seen = {}
+
+        def fake_gh(repo, dry_run=False, owner=None):
+            seen["dry_run"] = dry_run
+            return object()
+
+        for event, expected in (("schedule", False), ("workflow_dispatch", True), (None, True)):
+            env = {"GITHUB_REPOSITORY": REPO, "WATCHED_FILE": "build.yml"}
+            if event:
+                env["WATCHDOG_EVENT"] = event
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(sra, "Gh", fake_gh), \
+                    mock.patch.object(sra, "cmd_watchdog", return_value=0):
+                sra.main(["watchdog"])
+            self.assertEqual(expected, seen["dry_run"], event)
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": REPO, "GITHUB_EVENT_PATH": "x"}, clear=True), \
+                mock.patch.object(sra, "Gh", fake_gh), mock.patch.object(sra, "cmd_run", return_value=0):
+            sra.main(["run"])
+        self.assertFalse(seen["dry_run"])         # the run job is unaffected by WATCHDOG_EVENT
 
     def test_a_newer_success_is_not_reconciled(self):
         gh = FakeGh(runs=[run("success", id=2), run("failure", id=1, created_at="2026-11-20T06:30:00Z")])
@@ -679,6 +888,7 @@ class WorkflowContractTests(unittest.TestCase):
     def test_triggers(self):
         on = self.data["on"]
         self.assertEqual({"workflow_run", "schedule", "workflow_dispatch"}, set(on))
+        self.assertEqual({"workflows", "types", "branches"}, set(on["workflow_run"]))
         self.assertEqual(["completed"], on["workflow_run"]["types"])
         self.assertEqual(["main"], on["workflow_run"]["branches"])
         self.assertEqual(["CI", ".NET compatibility"], on["workflow_run"]["workflows"])
@@ -687,21 +897,30 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(sorted(sra.WATCHED.values()), sorted(on["workflow_run"]["workflows"]))
 
     def test_watchdog_cron_follows_both_scheduled_runs_and_the_window_fits(self):
-        def minutes(cron):
-            minute, hour = cron.split()[:2]
-            return int(hour) * 60 + int(minute)
-        crons = [minutes(workflow(ROOT / ".github/workflows" / f)["on"]["schedule"][0]["cron"])
-                 for f in sra.WATCHED]
-        entries = self.data["on"]["schedule"]
-        self.assertEqual(1, len(entries))
-        watchdog = minutes(entries[0]["cron"])
+        def minutes(cron, owner):
+            self.assertRegex(cron, r"^\d{1,2} \d{1,2} \* \* \*$", owner)     # a plain daily cron
+            minute, hour = (int(part) for part in cron.split()[:2])
+            self.assertLess(minute, 60, owner)
+            self.assertLess(hour, 24, owner)
+            return hour * 60 + minute
+
+        def only_cron(on, owner):
+            entries = on["schedule"]
+            self.assertEqual(1, len(entries), owner)
+            self.assertEqual({"cron"}, set(entries[0]), owner)
+            return minutes(entries[0]["cron"], owner)
+
+        crons = [only_cron(workflow(ROOT / ".github/workflows" / f)["on"], f) for f in sra.WATCHED]
+        watchdog = only_cron(self.data["on"], "scheduled-run-alerts.yml")
         self.assertGreaterEqual(watchdog, max(crons) + 120)
         self.assertLess(watchdog, 12 * 60)
-        gap = timedelta(minutes=watchdog - max(crons))
-        # Yesterday's run is at least 24 hours minus the gap old: it can never satisfy today's check.
-        self.assertLess(sra.WATCHDOG_WINDOW, timedelta(hours=24) - gap)
-        # Today's runs, created after their cron and delayed by up to two hours, stay inside it.
-        self.assertGreater(sra.WATCHDOG_WINDOW, gap + timedelta(hours=2))
+        delay = timedelta(hours=2)          # the creation delay allowed for a scheduled run
+        # Yesterday's latest run is about 24 hours plus the gap old, less any creation delay:
+        # it can never satisfy today's check.
+        self.assertLess(sra.WATCHDOG_WINDOW,
+                        timedelta(hours=24) + timedelta(minutes=watchdog - max(crons)) - delay)
+        # Today's earliest run, created after its cron and delayed, stays inside the window.
+        self.assertGreater(sra.WATCHDOG_WINDOW, timedelta(minutes=watchdog - min(crons)) + delay)
 
     def test_permissions_are_exact(self):
         self.assertEqual({}, self.data["permissions"])
@@ -714,8 +933,9 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual("github.event_name == 'workflow_run' && "
                          "github.event.workflow_run.event == 'schedule'",
                          self.jobs["alert-on-run"]["if"])
-        self.assertEqual("(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && "
-                         "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
+        # `schedule` does not depend on the payload carrying a default branch
+        self.assertEqual("github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && "
+                         "github.ref == format('refs/heads/{0}', github.event.repository.default_branch))",
                          self.jobs["watchdog"]["if"])
 
     def test_runner_and_no_ambient_configuration(self):
@@ -738,7 +958,11 @@ class WorkflowContractTests(unittest.TestCase):
                                                   r"(run|watchdog)$")
                 for key, value in step.get("env", {}).items():
                     self.assertIn((key, value), {("GH_TOKEN", "${{ github.token }}"),
-                                                 ("WATCHED_FILE", "${{ matrix.file }}")})
+                                                 ("WATCHED_FILE", "${{ matrix.file }}"),
+                                                 ("WATCHDOG_EVENT", "${{ github.event_name }}")})
+        self.assertEqual({"GH_TOKEN", "WATCHED_FILE", "WATCHDOG_EVENT"},
+                         set(self.jobs["watchdog"]["steps"][1]["env"]))
+        self.assertEqual({"GH_TOKEN"}, set(self.jobs["alert-on-run"]["steps"][1]["env"]))
 
     def test_nothing_from_the_triggering_run_is_checked_out_or_executed(self):
         code = "\n".join(self.code_lines())

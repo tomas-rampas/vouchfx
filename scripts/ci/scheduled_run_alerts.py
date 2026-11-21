@@ -10,10 +10,18 @@ Used only by .github/workflows/scheduled-run-alerts.yml. Two modes:
   watchdog  The daily job. Opens or updates the same issue when the workflow is not
             `active` or has no scheduled run created in the last 12 hours, whatever
             that run's status. It also reconciles: when the newest completed
-            scheduled run was unsuccessful and no alert issue is open, it opens one,
-            so a lost event or a failed Issues API call in the `run` job is made
-            good the next morning. It never closes an issue: only a successful
-            scheduled run does.
+            scheduled run was unsuccessful, is also the newest scheduled run (none is
+            still in progress) and no alert issue is open, it opens one, so a lost
+            event or a failed Issues API call in the `run` job is made good the next
+            morning; it does nothing when an alert issue for the workflow was closed at
+            or after that run's last update. It never closes an issue: only a
+            successful scheduled run does. For its own findings (not active, no recent
+            run) it adds a comment to an open issue only when the newest finding it
+            recorded there was of a different kind.
+            Only a scheduled trigger (WATCHDOG_EVENT=schedule) lets the watchdog write.
+            Any other trigger, such as a manual dispatch, makes it report only: it reads,
+            prints its finding and the write it would have made, and writes nothing,
+            because the 12-hour window is meaningful only around the scheduled time.
 
 Every decision and every piece of text lives in a pure function so the tests need no
 GitHub. Free text from the event or the API (job names, conclusions, workflow state,
@@ -50,12 +58,16 @@ JOB_QUIET_CONCLUSIONS = frozenset({"success", "skipped", "neutral"})
 # scheduled crons fire at 06:17 and 06:47 UTC (observed creation 06:30-07:04) and
 # the watchdog's cron is 09:23 UTC, so today's runs are 2.5 to 3 hours old when the
 # watchdog looks, and yesterday's are about 26 hours old. 12 hours leaves wide margins
-# on both sides, and the contract test checks that it stays under 24 hours minus the
-# gap between the latest watched cron and the watchdog cron.
+# on both sides, and the contract test checks that it stays under 24 hours plus the gap
+# between the latest watched cron and the watchdog cron, less any creation delay.
 WATCHDOG_WINDOW = timedelta(hours=12)
 # A closed alert issue is reopened (not replaced) when the workflow breaks again
-# within this period.
+# within this period, unless it was closed as `not_planned`.
 REOPEN_WINDOW = timedelta(days=30)
+# The watchdog's own findings carry a second hidden marker line naming the finding kind.
+FINDING_PREFIX = "<!-- vouchfx-scheduled-run-alert-finding:"
+FINDING_RE = re.compile(re.escape(FINDING_PREFIX) + r"([a-z]+) -->")
+COMMENTS_PER_PAGE = 100
 MAX_JOBS_LISTED = 20
 MAX_OPEN_PAGES = 10
 MAX_CLOSED_PAGES = 3
@@ -68,6 +80,29 @@ OWNER_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}")
 
 def marker(key):
     return f"{MARKER_PREFIX}{key} -->"
+
+
+def finding_marker(kind):
+    return f"{FINDING_PREFIX}{kind} -->"
+
+
+def last_finding_kind(texts):
+    """Kind of the newest finding marker in `texts` (newest text first), or None."""
+    for text in texts:
+        for line in reversed((text or "").splitlines()):
+            found = FINDING_RE.fullmatch(line.strip())
+            if found:
+                return found.group(1)
+    return None
+
+
+def with_finding(lines, kind):
+    return list(lines) + ([finding_marker(kind)] if kind else [])
+
+
+def may_write(event):
+    """Only a scheduled watchdog run writes; a manual dispatch is a health report."""
+    return event == "schedule"
 
 
 def inline_code(value, limit=100):
@@ -159,9 +194,10 @@ def title_for(key):
     return f"Scheduled run alert: {WATCHED[key]}"
 
 
-def issue_body(key, detail_lines):
+def issue_body(key, detail_lines, kind=None):
     return "\n".join([
         marker(key),
+        *([finding_marker(kind)] if kind else []),
         f"The scheduled runs of the **{WATCHED[key]}** workflow need attention. This issue is "
         "opened and updated automatically (`scheduled-run-alerts.yml`); an open issue means "
         "the workflow is currently broken. It closes itself when a later scheduled run "
@@ -200,6 +236,11 @@ def newest_completed(runs, branch):
     """The most recently created completed scheduled run on the branch, or None."""
     done = [r for r in scheduled_runs(runs, branch) if r.get("status") == "completed"]
     return max(done, key=lambda r: r["created_at"], default=None)
+
+
+def newest_scheduled(runs, branch):
+    """The most recently created scheduled run on the branch, whatever its status, or None."""
+    return max(scheduled_runs(runs, branch), key=lambda r: r["created_at"], default=None)
 
 
 def is_newest_scheduled(run, newest_runs):
@@ -256,11 +297,14 @@ def duplicate_comment(number):
             "at the same moment. Closing this one as a duplicate; updates continue there.")
 
 
+def is_bot(user):
+    user = user or {}
+    return user.get("login") == BOT_LOGIN and user.get("type") == BOT_TYPE
+
+
 def is_alert_issue(issue, key):
     """A non-PR issue authored by the Actions bot whose body starts with the marker."""
-    user = issue.get("user") or {}
-    return ("pull_request" not in issue
-            and user.get("login") == BOT_LOGIN and user.get("type") == BOT_TYPE
+    return ("pull_request" not in issue and is_bot(issue.get("user"))
             and (issue.get("body") or "").split("\n", 1)[0].strip() == marker(key))
 
 
@@ -276,10 +320,16 @@ def find_alert_issue(issues, key):
 
 
 def find_recently_closed_issue(issues, key, now):
-    """Most recently closed alert issue for the workflow, closed within REOPEN_WINDOW."""
+    """Most recently closed alert issue for the workflow, closed within REOPEN_WINDOW.
+
+    An issue closed as `not_planned` is skipped: it is either a duplicate this script
+    closed or an alert a maintainer chose to mute, and neither is reopened.
+    """
     hits = []
     for issue in issues:
         if not is_alert_issue(issue, key) or issue.get("state") != "closed":
+            continue
+        if issue.get("state_reason") == "not_planned":
             continue
         try:
             closed = parse_time(issue["closed_at"])
@@ -288,6 +338,18 @@ def find_recently_closed_issue(issues, key, now):
         if now - closed <= REOPEN_WINDOW:
             hits.append((closed, int(issue["number"]), issue))
     return max(hits, key=lambda h: h[:2])[2] if hits else None
+
+
+def closed_since(issues, key, since):
+    """True when any alert issue for the workflow (whatever its close reason) was closed at or after `since`."""
+    for issue in issues:
+        if is_alert_issue(issue, key) and issue.get("state") == "closed":
+            try:
+                if parse_time(issue["closed_at"]) >= since:
+                    return True
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+    return False
 
 
 def plan(existing, action, closed=None):
@@ -313,6 +375,11 @@ class GhError(SystemExit):
     def __init__(self, message, stderr=""):
         super().__init__(message)
         self.stderr = stderr
+
+
+def is_validation_error(error):
+    """True for a `gh api` failure whose HTTP status is 422 (not any text containing '422')."""
+    return "(HTTP 422)" in error.stderr
 
 
 class Gh:
@@ -350,20 +417,46 @@ class Gh:
             return {"number": 0}
         return self._call(method, path, payload=payload)
 
-    def write_assigned(self, method, path, payload):
-        """Write with the repository owner as assignee; retry once without it on a 422.
+    def create_assigned(self, payload):
+        """Create an issue with the repository owner as assignee; retry once without it on a 422.
 
         An organisation cannot be assigned, and the API answers 422 for it. The login is
         never put in a body.
         """
         if self.owner:
             try:
-                return self.write(method, path, {**payload, "assignees": [self.owner]})
+                return self.write("POST", "issues", {**payload, "assignees": [self.owner]})
             except GhError as error:
-                if "422" not in error.stderr:
+                if not is_validation_error(error):
                     raise
                 print(f"The API rejected the assignee {self.owner!r}; retrying without one.")
-        return self.write(method, path, payload)
+        return self.write("POST", "issues", payload)
+
+    def add_owner(self, number):
+        """Add the owner to an issue's assignees (best effort: a 422 is logged and ignored).
+
+        Unlike a PATCH with `assignees`, this keeps whoever a maintainer assigned earlier.
+        """
+        if not self.owner:
+            return
+        try:
+            self.write("POST", f"issues/{int(number)}/assignees", {"assignees": [self.owner]})
+        except GhError as error:
+            if not is_validation_error(error):
+                raise
+            print(f"The API rejected the assignee {self.owner!r}; leaving the assignees as they are.")
+
+    def recent_comments(self, number, count):
+        """Bot-authored comments on the newest page of an issue, newest first.
+
+        The API lists an issue's comments oldest first, so the last page is derived from
+        the issue's comment count.
+        """
+        if not count:
+            return []
+        page = (int(count) - 1) // COMMENTS_PER_PAGE + 1
+        batch = self.get(f"issues/{int(number)}/comments", per_page=COMMENTS_PER_PAGE, page=page)
+        return [c for c in reversed(batch) if is_bot(c.get("user"))]
 
     def _alert_issue_pages(self, max_pages, **params):
         """Issues created by the Actions bot, page by page. Returns (issues, last_page_was_full)."""
@@ -414,30 +507,57 @@ def settle_duplicates(gh, key, mine, detail_lines):
             gh.write("POST", f"issues/{keep}/comments", {"body": "\n".join(detail_lines)})
 
 
-def apply(gh, key, action, detail_lines=None, closing_comment=None, now=None):
+def apply(gh, key, action, detail_lines=None, closing_comment=None, now=None,
+          finding_kind=None, reconcile_after=None):
+    """Carry out the plan for one workflow.
+
+    `finding_kind` marks the text as one of the watchdog's own findings (see
+    `last_finding_kind`). `reconcile_after` is the last update time of the run being
+    reconciled: an alert issue closed at or after it means someone dealt with that run.
+    """
     now = now or datetime.now(timezone.utc)
     existing = find_alert_issue(gh.open_issues(), key)
-    closed = None
+    closed, handled = None, False
     if existing is None and action in ("alert", "reconcile"):
-        closed = find_recently_closed_issue(gh.closed_issues(now), key, now)
-    step = plan(existing, action, closed)
+        closed_issues = gh.closed_issues(now)
+        closed = find_recently_closed_issue(closed_issues, key, now)
+        handled = (action == "reconcile" and reconcile_after is not None
+                   and closed_since(closed_issues, key, reconcile_after))
+    step = "none" if handled else plan(existing, action, closed)
+    lines = with_finding(detail_lines, finding_kind) if detail_lines else detail_lines
+    if step == "comment" and finding_kind and last_recorded_kind(gh, existing) == finding_kind:
+        step = "none"
     if step == "create":
-        created = gh.write_assigned("POST", "issues", {"title": title_for(key),
-                                                       "body": issue_body(key, detail_lines)})
-        settle_duplicates(gh, key, int(created["number"]), detail_lines)
+        created = gh.create_assigned({"title": title_for(key),
+                                      "body": issue_body(key, detail_lines, finding_kind)})
+        settle_duplicates(gh, key, int(created["number"]), lines)
     elif step == "reopen":
         number = int(closed["number"])
-        gh.write_assigned("PATCH", f"issues/{number}", {"state": "open", "state_reason": "reopened"})
-        gh.write("POST", f"issues/{number}/comments", {"body": "\n".join(detail_lines)})
-        settle_duplicates(gh, key, number, detail_lines)
+        gh.write("PATCH", f"issues/{number}", {"state": "open", "state_reason": "reopened"})
+        gh.write("POST", f"issues/{number}/comments", {"body": "\n".join(lines)})
+        gh.add_owner(number)
+        settle_duplicates(gh, key, number, lines)
     elif step == "comment":
-        gh.write("POST", f"issues/{int(existing['number'])}/comments", {"body": "\n".join(detail_lines)})
+        gh.write("POST", f"issues/{int(existing['number'])}/comments", {"body": "\n".join(lines)})
     elif step == "close":
         number = int(existing["number"])
         gh.write("POST", f"issues/{number}/comments", {"body": closing_comment})
         gh.write("PATCH", f"issues/{number}", {"state": "closed", "state_reason": "completed"})
     print(f"{WATCHED[key]}: {action} -> {step}")
     return step
+
+
+def last_recorded_kind(gh, issue):
+    """Kind of the newest finding the watchdog recorded on an open alert issue, or None.
+
+    Reads the newest page of bot comments, then the issue body, which is the oldest
+    record; the body counts only when that page holds every comment.
+    """
+    count = int(issue.get("comments") or 0)
+    texts = [c.get("body") for c in gh.recent_comments(issue["number"], count)]
+    if count <= COMMENTS_PER_PAGE:
+        texts.append(issue.get("body"))
+    return last_finding_kind(texts)
 
 
 def cmd_run(gh, event_path, now=None):
@@ -467,17 +587,27 @@ def cmd_run(gh, event_path, now=None):
 def cmd_watchdog(gh, key, now):
     if key not in WATCHED:
         raise SystemExit(f"{key!r} is not a watched workflow")
+    if gh.dry_run:
+        print("Report only (a manual run or --dry-run): this run reads and prints but writes no issue or "
+              "comment. A 'no scheduled run in 12 hours' finding is meaningful only around the "
+              "scheduled time.")
     branch = gh.get("")["default_branch"]
     state = gh.get(f"actions/workflows/{key}")["state"]
     runs = gh.get(f"actions/workflows/{key}/runs", event="schedule", branch=branch,
                   per_page=10)["workflow_runs"]
     finding = watchdog_finding(state, runs, now, branch)
     if finding is not None:
-        apply(gh, key, "alert", watchdog_alert(gh.repo, key, finding, branch), now=now)
+        apply(gh, key, "alert", watchdog_alert(gh.repo, key, finding, branch), now=now,
+              finding_kind=finding["kind"])
         return 0
     latest = newest_completed(runs, branch)
     if latest is not None and classify_conclusion(latest.get("conclusion")) == "alert":
-        apply(gh, key, "reconcile", run_alert(gh.repo, key, latest, gh.run_jobs(latest["id"])), now=now)
+        if latest.get("id") != newest_scheduled(runs, branch).get("id"):
+            print(f"{WATCHED[key]}: a newer scheduled run is still in progress; its own "
+                  "completion raises the alert, so nothing is reconciled.")
+            return 0
+        apply(gh, key, "reconcile", run_alert(gh.repo, key, latest, gh.run_jobs(latest["id"])), now=now,
+              reconcile_after=parse_time(latest.get("updated_at") or latest["created_at"]))
         return 0
     print(f"{WATCHED[key]}: a scheduled run was created within 12 hours and nothing needs "
           "reconciling; healthy.")
@@ -489,7 +619,8 @@ def main(argv=None):
     parser.add_argument("mode", choices=("run", "watchdog"))
     parser.add_argument("--dry-run", action="store_true", help="print writes instead of calling them")
     args = parser.parse_args(argv)
-    gh = Gh(os.environ["GITHUB_REPOSITORY"], dry_run=args.dry_run,
+    report_only = args.mode == "watchdog" and not may_write(os.environ.get("WATCHDOG_EVENT"))
+    gh = Gh(os.environ["GITHUB_REPOSITORY"], dry_run=args.dry_run or report_only,
             owner=os.environ.get("GITHUB_REPOSITORY_OWNER"))
     if args.mode == "run":
         return cmd_run(gh, os.environ["GITHUB_EVENT_PATH"])
