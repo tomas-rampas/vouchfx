@@ -1,0 +1,113 @@
+# .github/workflows/scheduled-run-alerts.yml — alerts for the daily scheduled runs
+#
+# GitHub tells only the user who last edited a cron line when a scheduled run fails,
+# tells nobody when one is cancelled, and stops scheduled workflows after 60 days
+# without repository activity. This workflow turns those silences into an issue.
+#
+# alert-on-run  Runs when a scheduled run of `CI` or `.NET compatibility` completes
+#               (workflow_run). A failed, cancelled, timed-out, stale or otherwise
+#               unsuccessful run opens the alert issue for that workflow, or adds a
+#               comment to the open one, naming the conclusion, the run, the commit
+#               and the jobs that did not succeed. A successful scheduled run adds a
+#               closing comment and closes the issue, so an open alert issue means
+#               "currently broken". `skipped` and `neutral` conclusions do nothing:
+#               neither workflow has a run-level condition that could skip it, and
+#               such a run proves neither a break nor a recovery.
+#
+# watchdog      A daily schedule (and manual dispatch). For each watched workflow it
+#               asks the API for the workflow state and the latest scheduled runs on
+#               the default branch, and raises the same alert issue when the state is
+#               not `active` (`disabled_inactivity` after 60 days without activity) or
+#               when no scheduled run completed with success, failure or timeout in the
+#               last 36 hours (a dropped or delayed run). The cron is 09:23 UTC, after
+#               build.yml (06:17, about 1.5 hours observed) and dotnet-compatibility.yml
+#               (06:47, about 1.5 hours observed) have finished; the 36-hour window
+#               tolerates one run that is still in progress. The watchdog never closes
+#               an issue: only a successful scheduled run does.
+#
+# Limits, stated plainly: the watchdog is itself a scheduled workflow, so the same
+# 60-day rule disables it. What covers that: GitHub's notice to the user who last edited
+# a cron line (GitHub documents scheduled-run notifications, but not a disable notice, so
+# do not rely on it alone), and docs/ci-integration.md and RELEASING.md, which tell
+# maintainers to check the Actions tab for disabled workflows before a release. A disabled watchdog is also the reason an
+# alert issue can stay silent, so re-enable all three workflows together.
+#
+# Security: workflow_run workflows run from the default branch with a repository token
+# (and secrets) whatever the triggering run was. So no job here checks out or executes
+# anything from the triggering run: the one checkout is the default branch commit
+# (`github.sha`) with no persisted credentials, and the script it runs is stdlib-only.
+# Every field of the event and of the API replies is treated as untrusted text: no
+# expression appears in a `run:` line, the script reads the event file itself, and
+# issue bodies reach `gh api` as JSON on stdin. scripts/ci/scheduled_run_alerts.py holds
+# the logic; scripts/ci/test_scheduled_run_alerts.py pins this file's contract.
+#
+# No label is applied. Creating an issue with a missing label fails, and the alert issue
+# is found by a hidden marker on the first body line plus the Actions bot as author, which
+# a person editing the title cannot break.
+name: Scheduled run alerts
+
+on:
+  workflow_run:
+    workflows: ["CI", ".NET compatibility"]
+    types: [completed]
+  schedule:
+    - cron: '23 9 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  alert-on-run:
+    name: Alert on a scheduled run
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read   # the default-branch checkout of the alert script
+      actions: read    # list the jobs of the triggering run
+      issues: write    # list, create, comment on and close alert issues
+    concurrency:
+      group: scheduled-run-alerts-${{ github.event.workflow_run.name }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Open, update or close the alert issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci/scheduled_run_alerts.py run
+
+  watchdog:
+    name: Watchdog (${{ matrix.name }})
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: CI
+            file: build.yml
+          - name: .NET compatibility
+            file: dotnet-compatibility.yml
+    permissions:
+      contents: read   # the default-branch checkout of the alert script
+      actions: read    # read the workflow state and list its scheduled runs
+      issues: write    # list, create and comment on alert issues
+    concurrency:
+      group: scheduled-run-alerts-${{ matrix.name }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check that the workflow ran in the last 36 hours
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WATCHED_FILE: ${{ matrix.file }}
+        run: python3 -B scripts/ci/scheduled_run_alerts.py watchdog

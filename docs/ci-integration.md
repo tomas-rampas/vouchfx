@@ -676,9 +676,16 @@ noticed on a day with no pull request.
 The Docker integration suite (the `integration` job in `build.yml`) does not run on pull requests or
 pushes. It runs daily on `main`, scheduled for 06:17 UTC, and on manual dispatch from any branch. A
 Docker-test failure therefore surfaces on the next daily run, not before merge. On a pull request the
-Docker integration check is reported as skipped, which is expected. GitHub disables scheduled
-workflows after 60 days without repository activity; re-enable them from the Actions tab if the daily
-runs stop.
+Docker integration check is reported as skipped, which is expected.
+
+Nobody has to watch the Actions tab for those daily runs. `scheduled-run-alerts.yml` opens one issue
+per workflow, titled "Scheduled run alert", when a scheduled run of `CI` or `.NET compatibility`
+fails, is cancelled or times out, adds a comment for each further occurrence, and closes the issue
+when a later scheduled run succeeds, so an open issue means the workflow is currently broken. A daily
+watchdog in the same file opens or updates that issue when either workflow is not active or has no
+completed scheduled run in the last 36 hours. GitHub disables scheduled workflows after 60 days
+without repository activity, and the watchdog is itself scheduled, so check the Actions tab for
+disabled workflows (state `disabled_inactivity`) before a release and re-enable all three together.
 
 To run the Docker suite on a branch before merging, open the Actions tab, choose the `CI` workflow,
 select **Run workflow** and pick the branch. Manual dispatch needs write access to this repository: a
