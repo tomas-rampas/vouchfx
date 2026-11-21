@@ -55,7 +55,9 @@
 #  vuln-scan    ADVISORY, NON-BLOCKING dependency-vulnerability scan
 #               (continue-on-error: true).  Surfaces known-vulnerable
 #               transitive packages via `dotnet list package --vulnerable
-#               --include-transitive` so maintainers retain continuous CVE
+#               --include-transitive` for the solution and for each project
+#               outside it (the worked example and the isolated TLS acceptance
+#               host), so maintainers retain continuous CVE
 #               visibility over the published-package footprint (the engine
 #               assemblies + Vouchfx.Sdk.Testing now ship a code-generating
 #               compiler + JsonSchema.Net + YamlDotNet onto every consumer's
@@ -1550,6 +1552,33 @@ jobs:
       - name: List vulnerable packages (transitive, advisory)
         continue-on-error: true
         run: dotnet list vouchfx.sln package --vulnerable --include-transitive
+
+      # The same report for each project that is NOT in vouchfx.sln, because the
+      # solution scan above cannot see them.  Every project file with a
+      # PackageReference that sits outside the solution must be named here;
+      # OutOfSolutionProjectAuditGuardTests fails when one is missing.  Each
+      # project is restored and listed on its own, and a failure in one does not
+      # skip the next.  As above, the findings are printed to the Actions log and
+      # `dotnet list package` exits 0 on them, so this step is informational.
+      # Only a restore failure (for example an advisory that audit reports as an
+      # error under the repository's warnings-as-errors setting) fails the step,
+      # which continue-on-error keeps from failing the workflow.
+      - name: List vulnerable packages (projects outside the solution, advisory)
+        continue-on-error: true
+        env:
+          OUT_OF_SOLUTION_PROJECTS: >-
+            examples/compose-orders/app/ComposeOrders.csproj
+            tests/Vouchfx.Engine.Runtime.TransportAcceptance.Tests/Vouchfx.Engine.Runtime.TransportAcceptance.Tests.csproj
+        run: |
+          status=0
+          for project in $OUT_OF_SOLUTION_PROJECTS; do
+            echo "::group::$project"
+            dotnet restore "$project" \
+              && dotnet list "$project" package --vulnerable --include-transitive \
+              || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
 
   # ── VSCode extension build — NON-BLOCKING ────────────────────────────────────
   # Builds, lints, tests and packages the greenfield TypeScript VSCode extension

@@ -47,7 +47,18 @@ updates:
           - "github/codeql-action*"
 
   - package-ecosystem: "nuget"
-    directory: "/"
+    # One entry, several directories, so the groups and the ignore rules below apply to all
+    # of them. Dependabot's NuGet discovery reads the project and solution files in a
+    # directory it is given and the projects they reference; it does not recurse into
+    # subdirectories. "/" therefore reaches vouchfx.sln and everything in it, and
+    # Directory.Packages.props. examples/compose-orders/app/ComposeOrders.csproj is in no
+    # solution and pins its own Npgsql version, so it needs its own line here. A project
+    # outside the solution that uses only the central versions is covered through "/" and
+    # needs none. Add a directory when a project outside the solution sets a
+    # version itself.
+    directories:
+      - "/"
+      - "/examples/compose-orders/app"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
