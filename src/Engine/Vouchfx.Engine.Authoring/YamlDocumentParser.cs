@@ -85,8 +85,15 @@ public static class YamlDocumentParser
         // structure: Load hashes every key as it inserts it, and a sequence hashes by walking
         // all of its elements with no limit and no memoisation, so an alias to a collection
         // inside a key would overflow the stack (uncatchable) or cost time exponential in the
-        // sharing depth. The event-level pre-scan below refuses such a key with a line and
-        // column, which keeps the measurement above true for every document that reaches Load.
+        // sharing depth. An alias inside a key whose anchor is not defined before it is worse
+        // still: Load keeps it as an unresolved placeholder until the end of the document, and
+        // a placeholder used as a key recurses in its own equality check whatever its target,
+        // while one nested in a key is hashed again once resolved. A scalar alias is hashed
+        // over the scalar's full text at every use, so a long scalar repeated through many
+        // keys costs quadratic time. The event-level pre-scan below refuses all three (an
+        // alias in a key must name a scalar anchor defined earlier in the same document, and
+        // the scalar text aliases bring into keys is capped) with a line and column, which
+        // keeps the measurement above true for every document that reaches Load.
         // Providers that DO re-materialise a subtree carry their own bound —
         // see HttpRestProvider's MaxBodyNodes (#346).
         YamlKeyAliasGuard.Check(yamlText);

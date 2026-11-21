@@ -160,6 +160,14 @@ public static class DocumentValidator
     internal static SchemaValidationResult Validate(
         string yamlText, StepKindRegistry registry, SecurityProfileRegistry securityProfileRegistry)
     {
+        // A refused alias inside a mapping key (see YamlKeyAliasGuard.TryFindRefusedKeyAlias)
+        // can overflow the stack inside YamlStream.Load, which no catch can stop, or make it
+        // hash for exponential or quadratic time. Refuse it first, with the same located text
+        // the authoring parser gives: the schema conversion below would otherwise expand the
+        // key's aliases up to its own budget before anything reported the real cause.
+        if (Vouchfx.Engine.Authoring.YamlKeyAliasGuard.TryFindRefusedKeyAlias(yamlText, out var refusal))
+            return new SchemaValidationResult(false, new[] { new SchemaValidationError(string.Empty, refusal.Message) });
+
         // Delegate to the composed-schema path; this is the authoritative
         // schema validation (root schema + provider fragments).
         var raw = SchemaComposer.ValidateForDocument(registry, yamlText);
@@ -171,9 +179,7 @@ public static class DocumentValidator
         // parsing fails (the document was already rejected as malformed) both
         // concerns degrade gracefully: no line prefixes, no unknown-type
         // detection — there is no YAML tree left to walk.
-        YamlMappingNode? rootMapping = TryParseYamlRoot(yamlText, out var refusedKey);
-        if (refusedKey is not null)
-            return new SchemaValidationResult(false, new[] { refusedKey });
+        YamlMappingNode? rootMapping = TryParseYamlRoot(yamlText);
 
         // Run the unknown-step-type cross-check UNCONDITIONALLY — not only when
         // the schema pass already failed — because a document whose ONLY defect
@@ -556,23 +562,15 @@ public static class DocumentValidator
     /// Returns <see langword="null"/> when the YAML cannot be parsed or the
     /// root node is not a mapping (e.g. a bare scalar or sequence).
     /// </summary>
-    private static YamlMappingNode? TryParseYamlRoot(string yamlText, out SchemaValidationError? refusedKey)
+    /// <remarks>
+    /// Only <see cref="Validate(string, StepKindRegistry, SecurityProfileRegistry)"/> calls
+    /// this, after its key-alias scan has passed, so the load below cannot meet a mapping key
+    /// it is unable to hash in bounded time.
+    /// </remarks>
+    private static YamlMappingNode? TryParseYamlRoot(string yamlText)
     {
-        refusedKey = null;
         try
         {
-            // An alias to a collection inside a mapping key can overflow the stack inside
-            // YamlStream.Load, which no catch can stop. Refuse it with the same located text
-            // the authoring parser gives, so the schema's generic recursion message is not
-            // the only explanation.
-            if (Vouchfx.Engine.Authoring.YamlKeyAliasGuard.TryFindCollectionAliasInKey(
-                    yamlText, out var anchor, out var line, out var column))
-            {
-                refusedKey = new SchemaValidationError(
-                    string.Empty, Vouchfx.Engine.Authoring.YamlKeyAliasGuard.Message(anchor, line, column));
-                return null;
-            }
-
             var stream = new YamlStream();
             using var reader = new System.IO.StringReader(yamlText);
             stream.Load(reader);

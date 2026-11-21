@@ -118,16 +118,25 @@ change. Keys are compared by their text, so two keys whose text matches are refu
 case where YAML's own type resolution would distinguish them — `!!str 1:` beside `1:`. That is
 deliberate, and it fails closed.
 
-**A mapping key may refer by alias only to a scalar.** Inside a mapping key, at any depth, an alias
-(`*name`) whose anchor is on a mapping or a sequence is refused at parse time with a YAML parse error
-that names the line and column of the alias, whether the anchor is still being defined
-(`? &k [ *k ] : v`) or was completed earlier. This applies to every YAML file the engine reads: suite
-files and Compose configuration files and the Compose manifests they reference. The loader hashes a
-key when it inserts it and walks everything the key can reach, so a key that reached a cyclic, very
-deep or heavily shared collection would crash the process or take exponential time. An alias to a
-scalar anchor in a key stays legal, as does a collection written out inline in a key (`? [a, b] : v`).
-Aliases anywhere else are untouched, including a value that refers to its own anchor and merge keys
-(`<<: *base`); the rule has one visible consequence: `a: &k [1]` followed by `{ ? *k : v }` is refused.
+**A mapping key may refer by alias only to a scalar anchor defined earlier in the same document.**
+Inside a mapping key, at any depth, an alias (`*name`) is refused at parse time, with a YAML parse
+error that names the line and column of the alias, when its anchor is on a mapping or a sequence
+(whether that anchor is still being defined, as in `? &k [ *k ] : v`, or was completed earlier), or
+when its anchor is not defined before it in the same document (a forward alias, a name defined only
+in an earlier document of the stream, or a name never defined). The scalar text that aliases bring
+into the keys of one document is also capped at 1,048,576 characters, counted again for each key
+that encloses the alias. This applies to suite files, Compose configuration files and the Compose
+manifests they reference. The loader hashes a key when it inserts it and walks everything the key
+can reach: a key that reached a cyclic, very deep or heavily shared collection would crash the
+process or take exponential time, an alias whose anchor comes later is held as a placeholder that
+crashes the process when it is used in a key, whatever its target, and a long scalar repeated
+through many keys by alias costs time that grows with the square of the file's length. An alias to a
+scalar anchor defined earlier stays legal in a key, as does a collection written out inline in a key
+(`? [a, b] : v`). Aliases outside keys are unaffected, including a value that refers to its own
+anchor, a forward alias in a value (which schema validation refuses with its own message) and merge
+keys (`<<: *base`). The rule refuses some documents that would otherwise load: for example,
+`a: &k [1]` followed by `{ ? *k : v }`, an anchored mapping used as a key, or an alias to an anchored
+sequence nested in a key written out inline (`? [ *k ] : v`).
 
 ### 3.1 The metadata section
 

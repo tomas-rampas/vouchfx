@@ -306,14 +306,15 @@ public sealed class ValidateCommandTests : IDisposable
         Assert.Equal(string.Empty, stderr.ToString());
     }
 
-    // A mapping key holding an alias to a collection can overflow the stack inside
-    // YamlStream.Load (uncatchable). The pre-scan must turn it into an ordinary parse
-    // failure: a non-zero exit, never a crash and never exit 0.
-    [Theory]
-    [InlineData("steps: []\nbody: { ? &k [ *k ] : v }\n", 2, 16)]
-    [InlineData("steps: []\na: &k [ *k ]\nb: { ? *k : v }\n", 3, 8)]
-    [InlineData("steps: []\na: &k [ one ]\nb: { ? *k : v }\n", 3, 8)]
-    public void Execute_CollectionAliasInMappingKey_ReturnsNonZeroParseFailure_WithoutCrashing(string yaml, int line, int column)
+    // A mapping key holding an alias to a collection, or an alias before its anchor, can
+    // overflow the stack inside YamlStream.Load (uncatchable). The pre-scan must turn it into an
+    // ordinary parse failure: a non-zero exit, never a crash and never exit 0. Every test that
+    // could crash the host if the pre-scan were unwired first validates an acyclic document that
+    // Load survives, so a wiring regression fails that assertion cleanly.
+    private const string CollectionCause = "refers to a mapping or sequence";
+    private const string ForwardCause = "refers to an anchor that is not defined before it";
+
+    private void AssertValidateRefusesKeyAlias(string yaml, string anchor, int line, int column, string cause)
     {
         var sw = new StringWriter();
         var file = Path.Combine(_root, "key-alias.e2e.yaml");
@@ -324,7 +325,60 @@ public sealed class ValidateCommandTests : IDisposable
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
         var text = sw.ToString();
         Assert.Contains("[Parse]", text, StringComparison.Ordinal);
-        Assert.Contains($"line {line}, column {column}: alias 'k' inside a mapping key", text, StringComparison.Ordinal);
+        Assert.Contains($"line {line}, column {column}: alias '{anchor}' inside a mapping key {cause}", text, StringComparison.Ordinal);
+    }
+
+    private void AssertValidateKeyAliasGuardIsWired() =>
+        AssertValidateRefusesKeyAlias("steps: []\na: &k [ one ]\nb: { ? *k : v }\n", "k", 3, 8, CollectionCause);
+
+    [Fact]
+    public void Execute_AcyclicCollectionAliasInMappingKey_ReturnsNonZeroParseFailure()
+    {
+        AssertValidateKeyAliasGuardIsWired();
+    }
+
+    [Theory]
+    [InlineData("steps: []\nbody: { ? &k [ *k ] : v }\n", 2, 16)]
+    [InlineData("steps: []\na: &k [ *k ]\nb: { ? *k : v }\n", 3, 8)]
+    public void Execute_CollectionAliasInMappingKey_ReturnsNonZeroParseFailure_WithoutCrashing(string yaml, int line, int column)
+    {
+        AssertValidateKeyAliasGuardIsWired();
+        AssertValidateRefusesKeyAlias(yaml, "k", line, column, CollectionCause);
+    }
+
+    [Theory]
+    [InlineData("name: fwd\n? *k : v\nsteps: &k [ *k ]\n", "k", 2, 3)]
+    [InlineData("steps: []\n? *k : v\nb: &k x\n", "k", 2, 3)]
+    [InlineData("steps: []\na: { ? *k : v }\nb: &k [ *k ]\n", "k", 2, 8)]
+    [InlineData("steps: []\n? { ? *k : 1 } : 2\nb: &k [ *k ]\n", "k", 2, 7)]
+    [InlineData("steps: []\na: [ ? *k : v ]\nb: &k [ *k ]\n", "k", 2, 8)]
+    [InlineData("steps: []\na: [ *k : v ]\nb: &k [ *k ]\n", "k", 2, 6)]
+    [InlineData("steps: []\n? [ *k ] : *k\nb: &k [ *k ]\n", "k", 2, 5)]
+    [InlineData("steps: []\nb: { ? *nowhere : v }\n", "nowhere", 2, 8)]
+    public void Execute_AliasInMappingKeyBeforeItsAnchor_ReturnsNonZeroParseFailure_WithoutCrashing(
+        string yaml, string anchor, int line, int column)
+    {
+        AssertValidateKeyAliasGuardIsWired();
+        AssertValidateRefusesKeyAlias(yaml, anchor, line, column, ForwardCause);
+    }
+
+    [Fact]
+    public void Execute_ForwardBillionLaughsKey_ReturnsNonZeroParseFailurePromptly()
+    {
+        AssertValidateKeyAliasGuardIsWired();
+
+        var yaml = new System.Text.StringBuilder("variables:\n  ? [ *a9 ] : *a9\n  a0: &a0 [x, y]\n");
+        for (var level = 1; level <= 9; level++)
+        {
+            yaml.Append("  a").Append(level).Append(": &a").Append(level).Append(" [")
+                .Append(string.Join(", ", Enumerable.Repeat("*a" + (level - 1), 10))).Append("]\n");
+        }
+
+        yaml.Append("steps: []\n");
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        AssertValidateRefusesKeyAlias(yaml.ToString(), "a9", 2, 7, ForwardCause);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"validate took {watch.Elapsed}");
     }
 
     // ── a Failed discovery surfaces its OWN ParseError, not a re-validation ───
