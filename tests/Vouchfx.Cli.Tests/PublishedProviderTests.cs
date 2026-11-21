@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using Vouchfx.Cli;
@@ -53,7 +52,7 @@ public sealed class PublishedProviderTests
         using var scope = new ProviderRegistryScope(ProviderDirectoryScanner.Load(new[] { providers }));
         using var compiler = isolated ? new ScriptCompilerScope(CompileWorkerMode.Compile) : null;
         // One Close() ends the listener (no Stop() before it): see LoopbackHttpListener.
-        var bound = LoopbackHttpListener.Start();
+        using var bound = LoopbackHttpListener.Start();
         var listener = bound.Listener; var port = bound.Port;
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         var server = Task.Run(async () =>
@@ -110,8 +109,11 @@ public sealed class PublishedProviderTests
         finally
         {
             // Cancel first so a pending GetContextAsync ends as OperationCanceledException, then close once.
+            // ObjectDisposedException: Cancel() and the close can both land between the loop check and
+            // the next GetContextAsync(), whose BeginGetContext then throws it. Teardown-only, so a
+            // real server error still surfaces.
             cancellation.Cancel(); bound.Dispose();
-            try { await server; } catch (Exception exception) when (exception is OperationCanceledException or HttpListenerException) { }
+            try { await server; } catch (Exception exception) when (exception is OperationCanceledException or HttpListenerException or ObjectDisposedException) { }
         }
     }
 

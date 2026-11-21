@@ -10,8 +10,10 @@ namespace Vouchfx.Cli.Tests;
 //
 // The mechanism exists only in the managed HttpListener (Linux and macOS): there Stop() removes the
 // endpoint, and a following Dispose() runs the close path again and re-binds the port to remove the
-// prefix. The Windows implementation sits on http.sys and has no such re-bind, so the throwing
-// assertion is guarded by platform.
+// prefix. The Windows implementation sits on http.sys and has no such re-bind, so the tests that
+// depend on a failed bind or a re-bind are guarded by platform.
+//
+// If the regression test below starts failing, the runtime no longer re-binds in Close: delete it.
 public sealed class LoopbackHttpListenerTests
 {
     [Fact]
@@ -22,17 +24,19 @@ public sealed class LoopbackHttpListenerTests
             return;
         }
 
-        var listener = new HttpListener();
-        var port = FreePort();
-        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-        listener.Start();
+        using var helper = LoopbackHttpListener.Start();
+        var listener = helper.Listener;
+        var port = helper.Port;
         listener.Stop();
 
         var thief = new TcpListener(IPAddress.Loopback, port);
         thief.Start();
         try
         {
-            Assert.Throws<HttpListenerException>(() => ((IDisposable)listener).Dispose());
+            var thrown = Record.Exception(() => ((IDisposable)listener).Dispose());
+            Assert.True(
+                thrown is HttpListenerException,
+                "if this starts failing, the runtime no longer re-binds in Close; delete this test. Got: " + (thrown?.ToString() ?? "no exception"));
         }
         finally
         {
@@ -41,16 +45,21 @@ public sealed class LoopbackHttpListenerTests
     }
 
     [Fact]
-    public void Single_close_does_not_throw_when_another_socket_takes_the_port_afterwards()
+    public void Dispose_releases_the_port()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
         var helper = LoopbackHttpListener.Start();
         var port = helper.Port;
 
         helper.Dispose();
 
-        var thief = new TcpListener(IPAddress.Loopback, port);
-        thief.Start();
-        thief.Stop();
+        var next = new TcpListener(IPAddress.Loopback, port);
+        next.Start();
+        next.Stop();
     }
 
     [Fact]
@@ -67,16 +76,35 @@ public sealed class LoopbackHttpListenerTests
     }
 
     [Fact]
-    public void Start_retries_on_a_fresh_port_when_the_probe_port_is_taken()
+    public void Start_retries_on_a_fresh_port_when_the_first_probe_port_is_taken()
     {
-        // Hold a port, then prove a started listener never lands on it.
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
         var held = new TcpListener(IPAddress.Loopback, 0);
         held.Start();
         try
         {
             var heldPort = ((IPEndPoint)held.LocalEndpoint).Port;
-            using var helper = LoopbackHttpListener.Start();
+            var calls = 0;
+            using var helper = LoopbackHttpListener.Start(() =>
+            {
+                calls++;
+                if (calls == 1)
+                {
+                    return heldPort;
+                }
+
+                var probe = new TcpListener(IPAddress.Loopback, 0);
+                probe.Start();
+                try { return ((IPEndPoint)probe.LocalEndpoint).Port; }
+                finally { probe.Stop(); }
+            });
+
             Assert.NotEqual(heldPort, helper.Port);
+            Assert.True(calls >= 2, "the retry path was not taken");
         }
         finally
         {
@@ -84,11 +112,28 @@ public sealed class LoopbackHttpListenerTests
         }
     }
 
-    private static int FreePort()
+    [Fact]
+    public void Start_reports_every_attempt_when_every_probe_port_is_taken()
     {
-        var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        try { return ((IPEndPoint)probe.LocalEndpoint).Port; }
-        finally { probe.Stop(); }
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var held = new TcpListener(IPAddress.Loopback, 0);
+        held.Start();
+        try
+        {
+            var heldPort = ((IPEndPoint)held.LocalEndpoint).Port;
+            var ex = Assert.Throws<InvalidOperationException>(() => LoopbackHttpListener.Start(() => heldPort));
+
+            var all = Assert.IsType<AggregateException>(ex.InnerException);
+            Assert.Equal(LoopbackHttpListener.MaxAttempts, all.InnerExceptions.Count);
+            Assert.All(all.InnerExceptions, inner => Assert.IsType<HttpListenerException>(inner));
+        }
+        finally
+        {
+            held.Stop();
+        }
     }
 }

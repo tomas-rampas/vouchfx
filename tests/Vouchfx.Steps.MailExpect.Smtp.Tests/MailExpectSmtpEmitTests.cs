@@ -642,7 +642,6 @@ public sealed class MailExpectSmtpEmitTests
     /// </summary>
     private static DisposableAction StartMockMailpit(out string baseUrl, string messagesJson)
     {
-        // Find a free port.
         // Started on a probed free port (retried on a bind collision) and ended with exactly one
         // Close() and no Stop() before it: see LoopbackHttpListener.
         var bound = LoopbackHttpListener.Start();

@@ -1,6 +1,5 @@
 using System.IO.Compression;
 using System.Net;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -459,7 +458,7 @@ public sealed class ProviderAcquisitionTests
         var validation = await Cli("validate", suite, "--providers", root, "--no-default-providers", "--isolate-compile", "--json");
         Assert.True(validation.Exit == 0, validation.Output);
         // One Close() ends the listener (no Stop() before it): see LoopbackHttpListener.
-        var bound = LoopbackHttpListener.Start();
+        using var bound = LoopbackHttpListener.Start();
         var listener = bound.Listener; var port = bound.Port;
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         var serve = Task.Run(async () =>
@@ -490,8 +489,11 @@ public sealed class ProviderAcquisitionTests
         finally
         {
             // Cancel first so a pending GetContextAsync ends as OperationCanceledException, then close once.
+            // ObjectDisposedException: Cancel() and the close can both land between the loop check and
+            // the next GetContextAsync(), whose BeginGetContext then throws it. Teardown-only, so a
+            // real server error still surfaces.
             cancellation.Cancel(); bound.Dispose();
-            try { await serve; } catch (Exception exception) when (exception is OperationCanceledException or HttpListenerException) { }
+            try { await serve; } catch (Exception exception) when (exception is OperationCanceledException or HttpListenerException or ObjectDisposedException) { }
         }
         Assert.Equal(0, (await Cli("providers", "list", "--directory", root, "--offline", "--json")).Exit);
         Assert.Equal(0, (await Cli("providers", "uninstall", id, "--directory", root)).Exit);

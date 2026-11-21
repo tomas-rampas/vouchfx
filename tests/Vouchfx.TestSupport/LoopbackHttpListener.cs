@@ -7,8 +7,8 @@
 // the close path again, which re-binds the port to remove the prefix. If any other socket took the
 // port in between, that bind fails and Dispose() throws HttpListenerException ("Address already
 // in use"). Ending the listener with a single Close() and no preceding Stop() never takes that
-// path. Do not add a Stop() ahead of Dispose()/Close(), and do not put `using` on a listener that
-// is also closed explicitly.
+// path. Do not add a Stop() ahead of Dispose()/Close() on a raw HttpListener. A `using` on this
+// helper is safe: it closes once, and a later Dispose() does nothing.
 //
 // WHY A RETRY
 // -----------
@@ -53,12 +53,19 @@ public sealed class LoopbackHttpListener : IDisposable
     /// Starts a listener on a freshly probed loopback port, retrying on a new probe port when the
     /// bind collides with another socket.
     /// </summary>
-    public static LoopbackHttpListener Start()
+    public static LoopbackHttpListener Start() => Start(ProbeFreePort);
+
+    /// <summary>
+    /// Starts a listener on the port <paramref name="probePort"/> returns for each attempt. A test
+    /// seam: the OS never hands out a port another socket still holds, so the retry path is only
+    /// reachable by a probe that returns a taken port.
+    /// </summary>
+    internal static LoopbackHttpListener Start(Func<int> probePort)
     {
-        HttpListenerException? last = null;
+        var failures = new List<HttpListenerException>();
         for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
-            var port = ProbeFreePort();
+            var port = probePort();
             var listener = new HttpListener();
             try
             {
@@ -68,14 +75,14 @@ public sealed class LoopbackHttpListener : IDisposable
             }
             catch (HttpListenerException ex)
             {
-                last = ex;
+                failures.Add(ex);
                 // The failed attempt owns nothing worth reporting; release it and try a new port.
                 try { listener.Close(); } catch (HttpListenerException) { }
             }
         }
 
         throw new InvalidOperationException(
-            $"Could not bind an HttpListener on a free loopback port after {MaxAttempts} attempts.", last);
+            $"Could not bind an HttpListener on a free loopback port after {MaxAttempts} attempts.", new AggregateException(failures));
     }
 
     /// <summary>Closes the listener once. Later calls do nothing.</summary>
