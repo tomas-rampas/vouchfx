@@ -389,9 +389,62 @@ class EvidenceAdmissionTests(unittest.TestCase):
                 "Events": ["1 container die c%d" % n for n in range(50)]}
         self.change("warm-host-compiled-image", FixtureCleanupCompleted=False, LastClosureWait=wait, FailedClosureWaits=[wait])
         message = self.refusal()
-        for text in ("Polls=0", "LastInventoryUtc=null", "Error=InvalidOperationException", "in container inspect", "50 recorded, first 20 shown", "container die c19"):
+        for text in ("Polls=0", "LastInventoryUtc=null", "Error=InvalidOperationException", "in container inspect", "in this wait's window (50 recorded, last 20 shown", "container die c30", "container die c49"):
             self.assertIn(text, message)
-        self.assertNotIn("container die c20", message)
+        self.assertNotIn("container die c29", message)
+        self.assertNotIn("Docker events during this wait", message)
+
+    def test_events_naming_the_failed_inspect_or_a_still_present_resource_precede_the_last_twenty(self):
+        events = ["1 container die ccc%d" % n for n in range(100)]
+        events[3] = "2 container destroy abc123 web"
+        events[10] = "3 network disconnect net9 x"
+        events[11] = "4 container destroy abc123 again"
+        events[12:22] = ["5 container die abc123 n%d" % n for n in range(10)]
+        wait = {"Outcome": "error", "FailedInspect": "container abc123", "NetworksStillPresent": ["net9", ""], "ContainersStillPresent": [7, None], "Events": events}
+        lines = GATE.describe_wait("w", wait, may_be_absent=False)
+        shown = [line.strip() for line in lines[2:]]
+        self.assertIn("last 20 shown, preceded by 10 earlier", lines[1])
+        self.assertEqual(30, len(shown))
+        self.assertEqual(events[80:], shown[10:])
+        self.assertEqual(events[12:22], shown[:10])
+        self.assertNotIn(events[3], shown)
+        self.assertNotIn(events[10], shown)
+
+    def test_a_related_event_already_among_the_last_twenty_is_not_printed_twice(self):
+        events = ["1 container die x%d" % n for n in range(30)]
+        events[25] = "2 container destroy abc123"
+        lines = GATE.describe_wait("w", {"FailedInspect": "container abc123", "Events": events}, may_be_absent=False)
+        self.assertEqual(20, len(lines) - 2)
+        self.assertEqual(1, sum("destroy abc123" in line for line in lines))
+        self.assertNotIn("preceded by", lines[1])
+
+    def test_related_event_lines_still_pass_through_render(self):
+        hostile = "::error::x abc123"
+        events = [hostile] + ["1 e%d" % n for n in range(40)]
+        lines = GATE.describe_wait("w", {"FailedInspect": "container abc123", "Events": events}, may_be_absent=False)
+        self.assertNotIn("::error", "\n".join(lines))
+        self.assertTrue(any("x abc123" in line for line in lines))
+
+    def test_the_number_of_waits_printed_per_case_is_capped(self):
+        self.change("warm-host-compiled-image", Completed=False, FailedClosureWaits=[{}] * 300000)
+        lines = self.refusal().splitlines()
+        self.assertEqual("Case or fixture teardown did not complete", lines[0])
+        self.assertIn("    non-converged baseline waits: 300000", lines)
+        self.assertEqual(20, sum(line.startswith("    non-converged wait ") for line in lines))
+        self.assertIn("    ... +299980 more", lines)
+        self.assertLess(len(lines), 60)
+
+    def test_each_rendered_wait_line_is_capped_at_four_thousand_characters(self):
+        wait = {"Purpose": "cycle-release", "Outcome": "bound-elapsed", **{name: ["x" * 300] * 20 for name in ("ContainersStillPresent", "NetworksStillPresent",
+                "VolumesStillPresent", "BaselineMissing", "DcpProcessesStillPresent", "JournalsStillPresent", "ContainerStates", "NetworkNames")}}
+        self.change("warm-host-compiled-image", Completed=False, FailedClosureWaits=[wait], LastClosureWait=wait)
+        lines = self.refusal().splitlines()
+        wait_lines = [line for line in lines if "Purpose=cycle-release" in line]
+        self.assertEqual(2, len(wait_lines))
+        for line in wait_lines:
+            self.assertEqual(4000, len(line))
+            self.assertTrue(line.endswith("...(truncated)"))
+        self.assertLessEqual(max(len(line) for line in lines), 4000)
 
     def test_workflow_command_syntax_in_evidence_is_neutralised(self):
         hostile = "##[error]one ##[add-mask]two\n::error::three ::add-mask::four"

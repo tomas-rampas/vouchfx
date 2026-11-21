@@ -104,6 +104,10 @@ TEARDOWN_REFUSAL = "Case or fixture teardown did not complete"
 FIELD_LIMIT = 400
 LIST_LIMIT = 20
 EVENT_LINE_LIMIT = 20
+RELATED_EVENT_LIMIT = 10
+RELATED_ID_LIMIT = 40
+WAIT_LINE_LIMIT = 4000
+TRUNCATED = "...(truncated)"
 ZERO_WIDTH_SPACE = "\u200b"
 PROGRESS_FIELDS = ("ExpectedCycles", "CompletedCycles", "AttemptedCycles", "CurrentCycle", "LastReleaseCompleted")
 WAIT_FIELDS = ("Purpose", "Outcome", "StartedUtc", "ElapsedMilliseconds", "BoundMilliseconds", "ContainersStillPresent", "NetworksStillPresent",
@@ -128,6 +132,37 @@ def render(value: object) -> str:
     return text if len(text) <= FIELD_LIMIT else text[:FIELD_LIMIT] + "...(truncated)"
 
 
+def cap_line(line: str) -> str:
+    return line if len(line) <= WAIT_LINE_LIMIT else line[:WAIT_LINE_LIMIT - len(TRUNCATED)] + TRUNCATED
+
+
+def related_ids(wait: dict) -> list[str]:
+    """The failed inspect's ID and the IDs of the resources still present, which the recorded events may name."""
+    ids: list[str] = []
+    failed = wait.get("FailedInspect")
+    if type(failed) is str and failed.split():
+        ids.append(failed.split()[-1])
+    for name, items in wait.items():
+        if type(name) is str and name.endswith("StillPresent") and type(items) is list:
+            ids.extend(item for item in items if type(item) is str and item)
+    return ids[:RELATED_ID_LIMIT]
+
+
+def select_events(wait: dict, events: list) -> tuple[list, int]:
+    """The last EVENT_LINE_LIMIT events, preceded by at most RELATED_EVENT_LIMIT earlier ones that name a related ID."""
+    split = max(len(events) - EVENT_LINE_LIMIT, 0)
+    ids, related = related_ids(wait), []
+    if ids:
+        for index in range(split - 1, -1, -1):
+            event = events[index]
+            if type(event) is str and any(item in event for item in ids):
+                related.append(event)
+                if len(related) == RELATED_EVENT_LIMIT:
+                    break
+    related.reverse()
+    return related + events[split:], len(related)
+
+
 def describe_wait(label: str, wait: object, *, may_be_absent: bool) -> list[str]:
     if wait is None and may_be_absent:
         return [f"    {label}: not recorded (evidence predates wait diagnostics, or no wait ran)"]
@@ -136,9 +171,11 @@ def describe_wait(label: str, wait: object, *, may_be_absent: bool) -> list[str]
     lines = [f"    {label}: " + " ".join(f"{name}={render(wait[name])}" for name in WAIT_FIELDS if name in wait)]
     events = wait.get("Events")
     if type(events) is list and events:
-        lines.append(f"      Docker events during this wait ({len(events)} recorded, first {min(len(events), EVENT_LINE_LIMIT)} shown):")
-        lines.extend(f"        {render(event)}" for event in events[:EVENT_LINE_LIMIT])
-    return lines
+        shown, earlier = select_events(wait, events)
+        extra = f", preceded by {earlier} earlier naming the failed inspect or a still-present resource" if earlier else ""
+        lines.append(f"      Docker events in this wait's window ({len(events)} recorded, last {len(shown) - earlier} shown{extra}):")
+        lines.extend(f"        {render(event)}" for event in shown)
+    return [cap_line(line) for line in lines]
 
 
 def describe_teardown(kind: str, report: dict) -> list[str]:
@@ -172,8 +209,10 @@ def describe_teardown_lines(kind: str, report: dict) -> list[str]:
     failed = report.get("FailedClosureWaits")
     if type(failed) is list:
         lines.append(f"    non-converged baseline waits: {len(failed)}")
-        for index, wait in enumerate(failed, 1):
+        for index, wait in enumerate(failed[:LIST_LIMIT], 1):
             lines.extend(describe_wait(f"non-converged wait {index}", wait, may_be_absent=False))
+        if len(failed) > LIST_LIMIT:
+            lines.append(f"    ... +{len(failed) - LIST_LIMIT} more")
     return lines
 
 

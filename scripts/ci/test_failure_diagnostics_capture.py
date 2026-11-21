@@ -8,6 +8,7 @@ with another parser.
 """
 
 import os
+import posixpath
 import re
 import shlex
 import shutil
@@ -70,8 +71,55 @@ def docker_invocations(run):
     return found
 
 
-def has_format(arguments):
-    return any(argument in ("--format", "-f") or argument.startswith("--format=") for argument in arguments)
+def format_values(arguments):
+    """The value of every `--format X`, `--format=X`, `-f X` or `-fX` argument, in order (`None` for a flag with no value)."""
+    values = []
+    for index, argument in enumerate(arguments):
+        following = arguments[index + 1] if index + 1 < len(arguments) else None
+        if argument in ("--format", "-f"):
+            values.append(following)
+        elif argument.startswith("--format="):
+            values.append(argument[len("--format="):])
+        elif argument.startswith("-f") and not argument.startswith("--"):
+            values.append(argument[2:])
+    return values
+
+
+def format_problem(value):
+    """Why a format value is not an explicit Go template that names its fields, or `None` if it is one."""
+    if not value:
+        return "empty or missing"
+    if "{{" not in value:
+        return "no `{{` template"
+    if value == "json" or value.startswith("table"):
+        return "a pre-defined format, not a template"
+    remainder = TEMPLATE.sub("", value)
+    if any(character in remainder for character in "{}$`"):
+        return "stray `{`, `}`, `$` or backquote outside a template"
+    return None
+
+
+def shell_words(script):
+    """Every shell word of every non-comment line, as `commands` joins them, by the same lexer as `docker_invocations`."""
+    words = []
+    for line in commands(script, ""):
+        lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        words.extend(token for token in lexer if not all(character in "();<>|&" for character in token))
+    return words
+
+
+def docker_spellings(script):
+    """Words that name `docker` other than as exactly `docker`: a path (`/usr/bin/docker`), or a value assigned to a variable."""
+    return [word for word in shell_words(script) if word != "docker" and posixpath.basename(word.split("=", 1)[-1]) == "docker"]
+
+
+FORBIDDEN_SYNTAX = {
+    "$'": re.compile(r"\$'"), "eval": re.compile(r"\beval\b"), "shell -c": re.compile(r"\b(?:ba|z|da)?sh\s+-\w*c\b"),
+    "xargs": re.compile(r"\bxargs\b"), "curl": re.compile(r"\bcurl\b"), "docker.sock": re.compile(r"docker\.sock"),
+    "DOCKER_HOST": re.compile(r"DOCKER_HOST"),
+}
 
 
 def is_quiet(arguments):
@@ -113,18 +161,47 @@ class FailureDiagnosticsCaptureTests(unittest.TestCase):
         # A template held anywhere else outside a comment (a variable, a heredoc) would escape the per-command check above.
         self.assertEqual(len(TEMPLATE.findall("\n".join(commands(self.script, "")))), seen)
 
-    def test_every_inspect_has_an_explicit_format(self):
+    def test_every_inspect_has_exactly_one_explicit_format(self):
         inspects = [(name, arguments) for name, arguments in self.invocations if name in CONTAINER_INSPECTS or name == "network inspect"]
         self.assertEqual(2, len(inspects), inspects)
         for name, arguments in inspects:
-            self.assertTrue(has_format(arguments), (name, arguments))
+            self.assertEqual(1, len(format_values(arguments)), (name, arguments))
+
+    def test_every_format_value_is_a_non_empty_template_with_nothing_else_that_expands(self):
+        seen = 0
+        for name, arguments in self.invocations:
+            values = format_values(arguments)
+            seen += len(values)
+            for value in values:
+                self.assertIsNone(format_problem(value), (name, arguments, value))
+            if name in LISTINGS | CONTAINER_INSPECTS | EVENTS | {"network inspect"}:
+                self.assertLessEqual(len(values), 1, (name, arguments))
+        self.assertGreaterEqual(seen, 4)
+
+    def test_the_format_rules_reject_the_known_bypasses(self):
+        for value in (None, "", "json", "table", "table {{.ID}}", "{{.ID}} $x", "{{.ID}} `id`", "{{.ID}} {", "$f", "$'\\x7b\\x7b.ID}}", "{{.ID}}}"):
+            self.assertIsNotNone(format_problem(value), value)
+        for value in ("{{.ID}}\\t{{.Names}}", '{{index .Actor.Attributes "name"}} {{json .Action}}', "x={{if .State.Health}}{{.State.Health.Status}}{{end}}"):
+            self.assertIsNone(format_problem(value), value)
+        self.assertEqual(["{{.ID}}", "json", "x", "y"], format_values(["--format={{.ID}}", "-f", "json", "-fx", "--format=y"]))
+        self.assertEqual([None], format_values(["--format"]))
+        self.assertEqual(["/usr/bin/docker", "d=docker"], docker_spellings("/usr/bin/docker inspect x\nd=docker\ndocker ps\nmkdir \"$out/docker-state\""))
+
+    def test_docker_is_only_ever_spelt_docker(self):
+        self.assertEqual([], docker_spellings(self.script))
+
+    def test_no_dynamic_command_construction_or_other_route_to_the_daemon(self):
+        code = "\n".join(commands(self.script, ""))
+        for name, pattern in FORBIDDEN_SYNTAX.items():
+            self.assertIsNone(pattern.search(code), name)
 
     def test_container_listings_print_no_command_column(self):
         listings = [(name, arguments) for name, arguments in self.invocations if name in LISTINGS]
         self.assertGreaterEqual(len(listings), 2, listings)
         for name, arguments in listings:
             self.assertNotIn("--no-trunc", arguments, (name, arguments))
-            self.assertTrue(has_format(arguments) or is_quiet(arguments), (name, arguments))
+            values = format_values(arguments)
+            self.assertTrue(len(values) == 1 or (not values and is_quiet(arguments)), (name, arguments))
         self.assertNotRegex(self.script, r"\.Command\b")
 
     def test_each_event_is_one_line_and_exec_command_lines_are_stripped(self):

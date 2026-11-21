@@ -167,6 +167,9 @@ jobs:
       - name: Exercise DCP capture artefact contracts
         run: python -B -m unittest discover -s scripts/ci -p test_dcp_capture_artifacts.py -v
 
+      - name: Pin failure-diagnostics capture allowlist
+        run: python -B -m unittest discover -s scripts/ci -p test_failure_diagnostics_capture.py -v
+
   build:
     name: Build & unit tests
     runs-on: ubuntu-latest
