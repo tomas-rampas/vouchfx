@@ -664,22 +664,24 @@ This section describes the vouchfx repository's own pipeline in `.github/workflo
 consumers call.
 
 Each pull request to `main` runs the build and unit tests (Linux and Windows) on the .NET 10 SDK, the
-memory-leak gate, the Docker-free .NET 10 compatibility lane, the .NET 11 roll-forward lane (the packed
-tool started with only a .NET 11 runtime present), the .NET 10 provider-closure memory gate, the native
-TLS lane, the documentation build and the workflow contract. The Docker integration suites (the
-`integration` job and the `docker` matrix) do not run on pull requests or pushes. They run daily on
-`main`, scheduled for 06:17 UTC in `build.yml` and 06:47 UTC in `dotnet-compatibility.yml`, and on
-manual dispatch from any branch. A Docker-test failure therefore surfaces on the next daily run, not
-before merge. On a pull request the Docker integration checks are reported as skipped, which is
-expected. GitHub disables scheduled workflows after 60 days without repository activity; re-enable
-them from the Actions tab if the daily runs stop.
+memory-leak gate, the native TLS transport acceptance on Windows and Linux, the documentation build
+and the workflow contract, all from `build.yml`. `dotnet-compatibility.yml` adds two lanes that
+`build.yml` does not have: the Docker-free .NET 10 compatibility lane, which builds and tests with
+only a .NET 10 SDK and runtime installed, and the .NET 11 roll-forward lane (the packed tool started
+with only a .NET 11 runtime present). The compatibility workflow holds no Docker, memory or TLS lane,
+because `build.yml` already runs those on the same .NET 10 runtime.
 
-To run them on a branch before merging, open the Actions tab, choose the `CI` or `.NET compatibility`
-workflow, select **Run workflow** and pick the branch. The two workflows are separate, so run both to
-cover the Docker suites of each: `CI` runs them on the .NET 10 SDK, and `.NET compatibility` runs them
-again with only the .NET 10 SDK and runtime installed. Manual dispatch needs write access to
-this repository: a fork contributor runs the workflows from their own fork's Actions tab (once
-Actions is enabled there) or runs the `requires=docker` tests locally.
+The Docker integration suite (the `integration` job in `build.yml`) does not run on pull requests or
+pushes. It runs daily on `main`, scheduled for 06:17 UTC, and on manual dispatch from any branch. A
+Docker-test failure therefore surfaces on the next daily run, not before merge. On a pull request the
+Docker integration check is reported as skipped, which is expected. GitHub disables scheduled
+workflows after 60 days without repository activity; re-enable them from the Actions tab if the daily
+runs stop.
+
+To run the Docker suite on a branch before merging, open the Actions tab, choose the `CI` workflow,
+select **Run workflow** and pick the branch. Manual dispatch needs write access to this repository: a
+fork contributor runs the workflow from their own fork's Actions tab (once Actions is enabled there)
+or runs the `requires=docker` tests locally.
 
 The advisory **Analyser forward (.NET 11, non-blocking)** job in `build.yml` is `continue-on-error`.
 It rebuilds the solution in Release with `-warnaserror` on the .NET 11 SDK, one major ahead of the
