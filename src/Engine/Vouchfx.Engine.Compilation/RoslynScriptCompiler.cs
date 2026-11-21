@@ -84,17 +84,22 @@ public static class RoslynScriptCompiler
     //   They are never read again.
     // - Every other path (provider and customer assemblies, anything passed through
     //   additionalReferencePaths or ScriptOptions) may be rewritten at the same path, so
-    //   its reference is keyed on the file's content: each call hashes the file (SHA-256,
-    //   streamed, so an unchanged file allocates no image) and reuses the cached
-    //   reference only when the hash matches. On a mismatch the reference is built from
+    //   its reference is keyed on the file's content: each call with an entry for the path
+    //   hashes the file (SHA-256, streamed, so an unchanged file allocates no image) and
+    //   reuses the cached reference only when the hash matches. A path with no entry yet is
+    //   read once, without a prior hash. On a mismatch the reference is built from
     //   the very bytes that were read and hashed again, so no reference ever pairs a
     //   hash with an image from a different read. Length and timestamp are not part of
     //   the key: a file rewritten with the same length and a restored timestamp is
     //   still caught. At most one entry is kept per path.
     //
-    // The image-backed reference keeps its managed byte[] alive and pinned for as long as
-    // the reference is reachable, instead of unmanaged memory. It is released by the
-    // ordinary collector once the entry is replaced or dropped.
+    // The image-backed reference keeps its managed byte[] alive for as long as the reference
+    // is reachable, instead of unmanaged memory; the array may also be pinned by
+    // System.Reflection.Metadata with a handle freed only by a finaliser, so a replaced image
+    // may be reclaimed only after a finaliser pass. Entries are never evicted, so the cache
+    // holds one image per distinct path the process has seen. Those paths come from provider
+    // assemblies that are already loaded and do not change while the process runs, so the
+    // retained set is bounded in practice.
     //
     // The set is ordinal, as the runtime spells the paths. When the value is absent or
     // empty nothing is treated as a platform path. The platform rule is mirrored in the
@@ -116,6 +121,10 @@ public static class RoslynScriptCompiler
     // Serialises only the miss path, so concurrent compiles of one changed file build one
     // image rather than several. Hits take no lock.
     private static readonly object ExternalBuildGate = new();
+
+    // Test seam: invoked with the path after the streamed hash and before the build gate is
+    // taken, so a test can rewrite the file at exactly that point. Null in production.
+    internal static Action<string>? BeforeExternalBuildForTest;
 
     /// <summary>
     /// Compiles <paramref name="csxSource"/> into a portable-executable image exactly once.
@@ -578,14 +587,21 @@ public static class RoslynScriptCompiler
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A platform file is read once per process. Any other file is hashed on every call; the
-    /// cached reference is returned while the SHA-256 matches, and otherwise a new reference is
-    /// built from the bytes just read and replaces the entry for that path. No file stays open
+    /// A platform file is read once per process. Any other file with an entry is hashed on every call;
+    /// the cached reference is returned while the SHA-256 matches, and otherwise a new reference is
+    /// built from the bytes just read and replaces the entry for that path. A path with no entry is read once. No file stays open
     /// or locked.
     /// </para>
     /// <para>
-    /// A missing or unreadable file throws as <c>MetadataReference.CreateFromFile</c> always did
-    /// (<see cref="FileNotFoundException"/> for a missing file), and a missing file's entry is dropped.
+    /// A missing or unreadable file throws as <c>MetadataReference.CreateFromFile</c> always did,
+    /// with the same exception types and messages: <see cref="FileNotFoundException"/> for a missing
+    /// file or parent directory, and <see cref="IOException"/> for an unreadable file or a directory
+    /// path. A missing file's entry is dropped.
+    /// </para>
+    /// <para>
+    /// Replacing an assembly the process has already loaded changes what scripts compile against
+    /// but not the code that runs, and is not a supported way to update a provider (as for
+    /// platform files above).
     /// </para>
     /// </remarks>
     internal static Microsoft.CodeAnalysis.MetadataReference GetReference(string path) =>
@@ -600,16 +616,35 @@ public static class RoslynScriptCompiler
     {
         try
         {
-            // Hit: hash from a stream, so an unchanged file allocates no large array.
-            var hash = HashFile(path);
-            if (ExternalReferences.TryGetValue(path, out var cached) && cached.Hash.AsSpan().SequenceEqual(hash))
-                return cached.Reference;
+            // Hit: when the path has an entry, hash the file from a stream, so an unchanged
+            // file allocates no large array. A path with no entry skips the hash and reads the
+            // file once, under the gate: a first compile, and every --isolate-compile worker
+            // (each a fresh process), costs one read.
+            byte[]? hash = null;
+            if (ExternalReferences.TryGetValue(path, out var cached))
+            {
+                hash = HashFile(path);
+                if (cached.Hash.AsSpan().SequenceEqual(hash))
+                    return cached.Reference;
+            }
 
+            BeforeExternalBuildForTest?.Invoke(path);
+
+            // One gate for every path: cold misses of different paths are serialised, which is
+            // acceptable because each path misses once per process (plus once per replacement)
+            // and the work is one read of a provider assembly.
             lock (ExternalBuildGate)
             {
+                // A caller that waited here may find another thread already stored the content it
+                // saw on disk. `hash` is exactly that, so no read is needed.
+                if (hash is not null
+                    && ExternalReferences.TryGetValue(path, out var stored)
+                    && stored.Hash.AsSpan().SequenceEqual(hash))
+                    return stored.Reference;
+
                 // Miss: read once, hash those bytes, build from those bytes. The file may have
                 // changed since the streamed hash, so the entry carries the hash of what is built.
-                var bytes = File.ReadAllBytes(path);
+                var bytes = ReadFile(path);
                 var builtHash = SHA256.HashData(bytes);
                 if (ExternalReferences.TryGetValue(path, out var current) && current.Hash.AsSpan().SequenceEqual(builtHash))
                     return current.Reference;
@@ -620,7 +655,7 @@ public static class RoslynScriptCompiler
                 return reference;
             }
         }
-        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        catch (FileNotFoundException)
         {
             ExternalReferences.TryRemove(path, out _);
             throw;
@@ -629,8 +664,41 @@ public static class RoslynScriptCompiler
 
     private static byte[] HashFile(string path)
     {
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var stream = OpenForRead(path);
         return SHA256.HashData(stream);
+    }
+
+    private static byte[] ReadFile(string path)
+    {
+        using var stream = OpenForRead(path);
+        var bytes = new byte[checked((int)stream.Length)];
+        stream.ReadExactly(bytes);
+        return bytes;
+    }
+
+    // Opens the file the way MetadataReference.CreateFromFile reports failures, so callers see
+    // the same exception types and messages as before the cache: a missing parent directory is a
+    // FileNotFoundException, other IOExceptions and ArgumentExceptions pass through, and anything
+    // else (for example UnauthorizedAccessException on an unreadable file or a directory path)
+    // is wrapped in an IOException.
+    private static FileStream OpenForRead(string path)
+    {
+        try
+        {
+            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        }
+        catch (DirectoryNotFoundException e)
+        {
+            throw new FileNotFoundException(e.Message, path, e);
+        }
+        catch (Exception e) when (e is IOException or ArgumentException)
+        {
+            throw;
+        }
+        catch (Exception e)
+        {
+            throw new IOException(e.Message, e);
+        }
     }
 
     private static Assembly LoadImage(AssemblyLoadContext alc, byte[] image)

@@ -15,7 +15,7 @@ namespace Vouchfx.Cli.Tests;
 /// fresh reference, because a test may rewrite that file at the same path. The platform rule is the same
 /// as the product's <c>RoslynScriptCompiler.GetReference</c>, duplicated here because test projects must not
 /// reach into product internals for it. The product also caches other paths by file content; this helper
-/// deliberately does not, so a test that rewrites its own file always sees the new bytes.
+/// deliberately does not: kept simple, as test fixtures are tiny and short-lived.
 /// </remarks>
 internal static class PlatformMetadataReferences
 {
