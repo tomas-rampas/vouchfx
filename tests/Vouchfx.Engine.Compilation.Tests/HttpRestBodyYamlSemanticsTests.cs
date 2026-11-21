@@ -924,6 +924,91 @@ public sealed class HttpRestBodyYamlSemanticsTests
         RefuseBody(yaml);
     }
 
+    /// <summary>
+    /// Text that is not a finite number (a plain <c>NaN</c>, <c>Infinity</c> or <c>1e400</c>,
+    /// or a <c>!!str</c>-tagged <c>NaN</c>), a <c>!!timestamp</c> value YAML cannot read as a
+    /// date, and the non-specific tag on <c>NaN</c> all pass schema validation and are sent as
+    /// the text written.
+    /// </summary>
+    [Theory]
+    [InlineData("NaN", "{\"v\":\"NaN\"}")]
+    [InlineData("-Infinity", "{\"v\":\"-Infinity\"}")]
+    [InlineData("1e400", "{\"v\":\"1e400\"}")]
+    [InlineData("!!str NaN", "{\"v\":\"NaN\"}")]
+    [InlineData("!!timestamp abc", "{\"v\":\"abc\"}")]
+    [InlineData("! NaN", "{\"v\":\"NaN\"}")]
+    public void Engine_NonFiniteOrUnreadableTaggedText_ValidatesAndIsSentAsText(string value, string expectedBody)
+    {
+        var yaml = ValidSuiteWithValue(value);
+
+        var validation = DocumentValidator.Validate(yaml, s_registry);
+        Assert.True(validation.IsValid, string.Join("; ", validation.Errors.Select(e => e.Message)));
+        Assert.Equal(expectedBody, BindBody(yaml));
+    }
+
+    /// <summary>
+    /// An unknown tag on <c>NaN</c> now passes the schema bridge (the text is read as the
+    /// text written), where it used to stop the suite unlocated; the binder still refuses
+    /// the tag, naming the step and the line.
+    /// </summary>
+    [Fact]
+    public void Engine_UnknownTagOnNaN_PassesTheBridge_BinderRefuses()
+    {
+        var yaml = ValidSuiteWithValue("!money NaN");
+
+        Assert.True(DocumentValidator.Validate(yaml, s_registry).IsValid);
+        var refusal = RefuseBody(yaml);
+        Assert.Contains("uses the YAML tag '!money'", refusal, StringComparison.Ordinal);
+        Assert.Contains("step 'agree'", refusal, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <c>!!int 0o17</c> is an integer in YAML's core schema that the YAML library cannot
+    /// read. Schema validation accepts it as text, and the binder's conversion rules decide
+    /// what is sent: 15.
+    /// </summary>
+    [Fact]
+    public void Engine_IntTaggedOctal_ValidatesAndSendsFifteen()
+    {
+        var yaml = ValidSuiteWithValue("!!int 0o17");
+
+        var validation = DocumentValidator.Validate(yaml, s_registry);
+        Assert.True(validation.IsValid, string.Join("; ", validation.Errors.Select(e => e.Message)));
+        Assert.Equal("{\"v\":15}", BindBody(yaml));
+    }
+
+    /// <summary>
+    /// <c>!!float NaN</c> passes schema validation as text; the binder, which owns what a
+    /// tag means, refuses it with the step and the line, as JSON has no NaN.
+    /// </summary>
+    [Fact]
+    public void Engine_FloatTaggedNaN_PassesTheBridge_BinderRefusesWithLocation()
+    {
+        var yaml = ValidSuiteWithValue("!!float NaN");
+
+        Assert.True(DocumentValidator.Validate(yaml, s_registry).IsValid);
+        var refusal = RefuseBody(yaml);
+        Assert.Contains("step 'agree'", refusal, StringComparison.Ordinal);
+        Assert.Contains("tags the value at line 12, column 10 as !!float", refusal, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <c>!!map</c> on a scalar passes schema validation as the text written (the YAML
+    /// library cannot read <c>abc</c> as a mapping); the binder refuses a collection tag on a
+    /// scalar, naming the step and the line.
+    /// </summary>
+    [Fact]
+    public void Engine_MapTaggedScalar_PassesTheBridge_BinderRefusesWithLocation()
+    {
+        var yaml = ValidSuiteWithValue("!!map abc");
+
+        var validation = DocumentValidator.Validate(yaml, s_registry);
+        Assert.True(validation.IsValid, string.Join("; ", validation.Errors.Select(e => e.Message)));
+        var refusal = RefuseBody(yaml);
+        Assert.Contains("step 'agree'", refusal, StringComparison.Ordinal);
+        Assert.Contains("uses the YAML tag '!!map' on a scalar at line 12, column 10", refusal, StringComparison.Ordinal);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     /// <summary>A one-step document whose body is <c>{ v: VALUE }</c>; VALUE starts at line 8, column 10.</summary>

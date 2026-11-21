@@ -10,12 +10,14 @@
 # reused through aliases (inside a body and across steps), `<<` merge keys, a quoted
 # and a plain scalar reached through an alias, and explicit core tags (`!!str 123`,
 # `!!int "5"`, `!!float`, `!!bool`, `!!timestamp`, which win over quoting).
-# The last step, zeb-67-body-rules, pins one value per ZEB-67 rule: merge keys applied,
-# block scalars always strings, a plain empty value null, core tags honoured, and 1e400
-# sent as a string. Not pinned here because schema validation refuses the whole document
-# before the binder runs: the plain words NaN, Infinity, -Infinity and INFINITY, a tag of
-# `!!null` (unresolved tag) and an `!!int 0o17` octal; the binder rules for those are
-# reachable only by binding without validating, as the HttpRest unit rows do.
+# The sixth step pins one value per body rule: merge keys applied, block
+# scalars always strings, a plain empty value null, core tags honoured, and 1e400
+# sent as a string. The last step, non-finite-and-unreadable-tags, pins the values
+# schema validation used to refuse the whole document for and now accepts as text: the
+# plain words NaN and Infinity, a plain out-of-range number (1e400), `!!str NaN`, and an
+# `!!int 0o17` octal, which the binder sends as 15. Still refused before the binder
+# runs, and so not pinned here: a tag of `!!null` (unresolved tag); the binder rules for
+# it are reachable only by binding without validating, as the HttpRest unit rows do.
 #
 # The golden records whatever the engine does today; nothing here is a statement of
 # what it should do. Used only by EmittedCodeBaselineTests; no topology is started.
@@ -194,3 +196,19 @@ steps:
       layered:
         <<: [{ region: us, tier: gold }, *zebDefaults]
         tier: silver
+
+  # Values schema validation accepts as text (a plain NaN or Infinity, an out-of-range
+  # number, a string tag, an integer tag its YAML library cannot read), so the binder's
+  # own conversion rules decide what is sent.
+  - id: non-finite-and-unreadable-tags
+    type: http.rest
+    target: app
+    method: POST
+    path: /non-finite
+    body:
+      plainNaN: NaN
+      plainInfinity: Infinity
+      negativeInfinity: -Infinity
+      outOfRange: 1e400
+      tagStrNaN: !!str NaN
+      tagIntOctal: !!int 0o17

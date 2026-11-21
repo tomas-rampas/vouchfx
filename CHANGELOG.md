@@ -21,6 +21,14 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Fixed
+
+- Schema validation no longer refuses a suite that contains a plain `NaN`, `Infinity` or `-Infinity` (in any letter case), `!!str NaN`, or a tagged value that its YAML library cannot read as the tagged type, such as `!!int 0o17`, `!!int abc`, `!!float NaN`, `!!bool maybe`, `!!timestamp abc` or `!!map abc`, quoted or not. These used to stop with a generic "Failed to parse YAML: Exception during deserialization" and no location. Such a value is now read as the text written, and the rules of DSL §5.1 then decide what an `http.rest` structured body sends: `!!int 0o17` is sent as 15 and `!!timestamp abc` as `"abc"`, while `!!float NaN` and `!!map abc` are refused with the step and the line. An application tag on `NaN` or `Infinity` (`!money NaN`) now passes validation and is refused by the body conversion with the step and the line, and the non-specific tag (`! NaN`) sends the text, `"NaN"`. A tag is interpreted only in an `http.rest` structured body; elsewhere in a suite, a tagged value that validates is used as the text written. Every other scalar that validated before keeps its type and value: `!!int 0x1F` is still 31, `!!int 1.5` is still the number 1.5, `!!bool yes` and `!!bool 1` keep their reading, `!!float .inf` is still the text `Infinity`, and `!!int 200` stays an integer. A tag that schema validation cannot read at all, such as `!!null ~`, `!!binary aGk=`, `!money abc` or `!!seq [1, 2]`, is still refused there with no location; DSL §5.1 gives the rule. This also supersedes the limit stated in the 1.4.0 entries that schema validation refuses a plain `NaN` or `Infinity`, or a tagged value that does not match its tag; quoting is no longer needed.
+
+### Changed
+
+- Schema validation now reads a `!!str`-tagged number or boolean as a string, as DSL §5.1 describes: `!!str 17` was read as the number 17 and is now the string `17`, and `!!str true` was read as `true` and is now the string `true`. A `!!str` tag gives a string, except on a null spelling (`~`, `null` or an empty value), which stays null. Because of this, a suite can now be refused that validated before: a field that requires a number or a boolean and is written with a `!!str` tag (`continueOnFailure: !!str true`, `healthCheck.port: !!str 8080`) is refused with its location, where it used to pass. Remove the tag. A plain out-of-range number such as `1e400` is likewise now the text written, where it used to be read as the string `Infinity`.
+
 ## [1.4.0] — 2026-11-21
 
 1.4.0 is the first release that targets .NET 10. 1.3.0 was not published; the changes that were prepared under that number ship in this release and are included below.
