@@ -924,6 +924,70 @@ public sealed class HttpRestBodyYamlSemanticsTests
         RefuseBody(yaml);
     }
 
+    /// <summary>
+    /// A plain <c>NaN</c> or <c>Infinity</c> in a structured body passes schema validation
+    /// (it is text, not a number) and is sent as the text written.
+    /// </summary>
+    [Theory]
+    [InlineData("NaN", "{\"v\":\"NaN\"}")]
+    [InlineData("-Infinity", "{\"v\":\"-Infinity\"}")]
+    [InlineData("1e400", "{\"v\":\"1e400\"}")]
+    [InlineData("!!str NaN", "{\"v\":\"NaN\"}")]
+    public void Engine_PlainNaN_ValidatesAndIsSentAsText(string value, string expectedBody)
+    {
+        var yaml = ValidSuiteWithValue(value);
+
+        var validation = DocumentValidator.Validate(yaml, s_registry);
+        Assert.True(validation.IsValid, string.Join("; ", validation.Errors.Select(e => e.Message)));
+        Assert.Equal(expectedBody, BindBody(yaml));
+    }
+
+    /// <summary>
+    /// An unknown tag on <c>NaN</c> now passes the schema bridge (the text is read as the
+    /// text written), where it used to stop the suite unlocated; the binder still refuses
+    /// the tag, naming the step and the line.
+    /// </summary>
+    [Fact]
+    public void Engine_UnknownTagOnNaN_PassesTheBridge_BinderRefuses()
+    {
+        var yaml = ValidSuiteWithValue("!money NaN");
+
+        Assert.True(DocumentValidator.Validate(yaml, s_registry).IsValid);
+        var refusal = RefuseBody(yaml);
+        Assert.Contains("uses the YAML tag '!money'", refusal, StringComparison.Ordinal);
+        Assert.Contains("step 'agree'", refusal, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <c>!!int 0o17</c> is an integer in YAML's core schema that the YAML library cannot
+    /// read. Schema validation accepts it as text, and the binder's conversion rules decide
+    /// what is sent: 15.
+    /// </summary>
+    [Fact]
+    public void Engine_IntTaggedOctal_ValidatesAndSendsFifteen()
+    {
+        var yaml = ValidSuiteWithValue("!!int 0o17");
+
+        var validation = DocumentValidator.Validate(yaml, s_registry);
+        Assert.True(validation.IsValid, string.Join("; ", validation.Errors.Select(e => e.Message)));
+        Assert.Equal("{\"v\":15}", BindBody(yaml));
+    }
+
+    /// <summary>
+    /// <c>!!float NaN</c> passes schema validation as text; the binder, which owns what a
+    /// tag means, refuses it with the step and the line, as JSON has no NaN.
+    /// </summary>
+    [Fact]
+    public void Engine_FloatTaggedNaN_PassesTheBridge_BinderRefusesWithLocation()
+    {
+        var yaml = ValidSuiteWithValue("!!float NaN");
+
+        Assert.True(DocumentValidator.Validate(yaml, s_registry).IsValid);
+        var refusal = RefuseBody(yaml);
+        Assert.Contains("step 'agree'", refusal, StringComparison.Ordinal);
+        Assert.Contains("tags the value at line 12, column 10 as !!float", refusal, StringComparison.Ordinal);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     /// <summary>A one-step document whose body is <c>{ v: VALUE }</c>; VALUE starts at line 8, column 10.</summary>
