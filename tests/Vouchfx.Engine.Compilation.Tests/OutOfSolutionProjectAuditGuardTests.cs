@@ -21,7 +21,8 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// Deliberately not covered, so the limit is stated rather than silent: packages that arrive
 /// through an ancestor <c>Directory.Build.props</c> or <c>Directory.Build.targets</c>, through
 /// <c>GlobalPackageReference</c>, or through an import that is not a literal path (properties,
-/// wildcards) or sits more than one level away; MSBuild is not evaluated. Project types other than
+/// wildcards), that names a file outside the project's own directory, or that is made inside an
+/// imported file; MSBuild is not evaluated. Project types other than
 /// the four above, and files inside hidden directories, are not enumerated.
 /// </para>
 /// </remarks>
@@ -44,11 +45,13 @@ public sealed class OutOfSolutionProjectAuditGuardTests
             .Select(path => Path.GetRelativePath(root, path).Replace('\\', '/'))
             .Where(relative => !inSolution.Contains(relative))
             .Where(relative => HasPackageReferences(Path.Combine(root, relative)))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var listed = ReadOutOfSolutionList(workflow).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .ToHashSet(StringComparer.Ordinal);
+        var listed = ReadOutOfSolutionList(workflow).ToHashSet(StringComparer.Ordinal);
 
-        var missing = computed.Except(listed, StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).ToList();
-        var surplus = listed.Except(computed, StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).ToList();
+        // Case-sensitive on purpose: the scan step runs on Linux, where a listed path whose case
+        // differs from the file on disk is not found.
+        var missing = computed.Except(listed, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        var surplus = listed.Except(computed, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
 
         Assert.True(
             missing.Count == 0 && surplus.Count == 0,
@@ -147,7 +150,10 @@ public sealed class OutOfSolutionProjectAuditGuardTests
                     .Where(f => ProjectExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase)));
                 foreach (var child in Directory.EnumerateDirectories(current))
                 {
-                    if (!IsSkippedDirectory(Path.GetFileName(child)))
+                    // A symbolic link to a directory is not followed, so a link back up the tree
+                    // cannot make the walk loop.
+                    if (!IsSkippedDirectory(Path.GetFileName(child))
+                        && !File.GetAttributes(child).HasFlag(FileAttributes.ReparsePoint))
                     {
                         pending.Push(child);
                     }
