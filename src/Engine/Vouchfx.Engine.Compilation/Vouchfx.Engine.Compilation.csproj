@@ -87,6 +87,13 @@
     <ProjectReference Include="..\..\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
   </ItemGroup>
 
+  <!-- DocumentValidator and the schema bridge load YAML themselves, and this project
+       does not reference Authoring. The limit is internal, so linking the source keeps
+       it off the published surface and adds no package dependency. -->
+  <ItemGroup>
+    <Compile Include="..\Vouchfx.Engine.Authoring\YamlNestingLimit.cs" Link="Shared\YamlNestingLimit.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <EmbeddedResource Include="Schema\root-language-schema.json" />
   </ItemGroup>
