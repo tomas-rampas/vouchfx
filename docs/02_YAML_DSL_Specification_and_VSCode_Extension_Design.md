@@ -499,10 +499,13 @@ Four rules apply to the values; the second and the fourth differ from a service'
   connection string the engine hands the steps of every scenario that targets it (for those two
   kinds, a service's `${conn:<dependency>}` carries only host and port). Like **every** rule above
   — `${secret:…}` included — this check runs only on the `run` path and is **invisible to `vouchfx
-  validate`**, which never builds a topology; the refusal is reported as **Inconclusive** (§12.1). The MCP server's `validate_suite` at the `semantic` or `full` level reports the same mistake before a run, as diagnostic [`VFX-D-1213`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1213.html).
+  validate`**, which never builds a topology; the refusal is reported as **Inconclusive** (§12.1).
   When that refusal is the run's only outcome, nothing has executed and the run exits 4 with or
   without either gating flag. A passing sibling cannot hide this authoring refusal; an already-selected
   non-zero code is preserved. See the [exit-code policy](01_Technical_Architecture_and_Engineering_Blueprint.md#164-exit-codes).
+  The MCP server's `validate_suite` at the `semantic` or `full` level reports the same mistake
+  before a run, as diagnostic
+  [`VFX-D-1213`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1213.html).
 
 Variables set by Aspire internally, rather than by the engine, are not detected and will silently take
 the author's value instead; a dependency's own image may also read variables neither the engine nor

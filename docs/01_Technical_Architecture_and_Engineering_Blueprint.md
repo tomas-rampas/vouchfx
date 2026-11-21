@@ -71,7 +71,7 @@ Four classes of actor interact with the platform, and each shapes a different pa
 
 The architecture is evaluated against seven goals. They are listed in priority order, because several of them trade against one another and the ordering tells an engineer which way to resolve a conflict.
 
-1. **Topological parity. **An identical test suite must execute unchanged on a developer laptop and inside a CI pipeline, both on local Docker, and on the planned SaaS cloud fabric (§6–7, proposed behaviour rather than capabilities of the installed CLI). Parity outranks raw performance, because eliminating the “works on my machine” failure mode is the platform's central promise.
+1. **Topological parity. **An identical test suite must execute unchanged on a developer laptop and inside a CI pipeline (each on local Docker today) and on the planned SaaS cloud fabric (§6, §7.2; proposed behaviour rather than capabilities of the installed CLI). Parity outranks raw performance, because eliminating the “works on my machine” failure mode is the platform's central promise.
 1. **Determinism under asynchrony. **Distributed tests are inherently flaky; the engine, not the test author, owns retry, polling, and backoff so that results do not depend on hardware speed.
 1. **Bounded resource consumption. **Dynamically compiled scripts must be fully reclaimable; a long-running suite must not leak assemblies, memory, or orphaned containers.
 1. **Isolation. **Concurrent test runs, and concurrent tenants, must not observe one another's data, ports, or containers.
@@ -95,7 +95,7 @@ The platform is best understood as five cooperating layers. A test definition en
 | **2. Compilation** | Translate validated YAML into a cached, executable C# delegate. | YAML parser, AST, CSX code generation, Roslyn Scripting API. |
 | **3. Orchestration** | Provision the system under test and its dependencies; resolve endpoints. | .NET Aspire AppHost, health-gated startup. |
 | **4. Execution** | Run the compiled delegate against the orchestrated topology and collect assertions. | Roslyn delegate host, collectible AssemblyLoadContext, Polly resilience. |
-| **5. Infrastructure fabric** | Decide where containers physically run — local Docker socket (laptop and CI) today; the SaaS cloud and on-premises cluster fabrics are planned (§6–7, proposed behaviour). | Docker through Aspire's DCP; future design: per-session remote runners, SSH session channel, lease-based reaping, Kubernetes. |
+| **5. Infrastructure fabric** | Decide where containers physically run — local Docker socket (laptop and CI) today; the SaaS cloud and on-premises cluster fabrics are planned (§6, §7.2–7.3; proposed behaviour). | Docker through Aspire's DCP; future design: per-session remote runners, SSH session channel, lease-based reaping, Kubernetes. |
 
 *Table 3.1 — The five architectural layers and their contracts.*
 
