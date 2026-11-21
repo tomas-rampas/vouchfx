@@ -72,6 +72,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- YamlStream.Load hashes mapping keys with no cycle check. This guard is internal, and
+         Compilation does not reference Authoring, so the source is linked rather than exposed
+         as a public type on the published contract surface. -->
+    <Compile Include="..\Vouchfx.Engine.Authoring\YamlAnchorCycleGuard.cs" Link="YamlAnchorCycleGuard.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
     <PackageReference Include="JsonSchema.Net" />
     <PackageReference Include="YamlDotNet" />

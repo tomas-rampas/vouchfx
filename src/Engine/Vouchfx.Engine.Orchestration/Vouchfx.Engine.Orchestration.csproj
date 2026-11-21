@@ -119,6 +119,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Same linked guard as Compilation. Orchestration references Authoring but cannot see
+         its internals, and a public type would ship on the published Authoring package. -->
+    <Compile Include="..\Vouchfx.Engine.Authoring\YamlAnchorCycleGuard.cs" Link="YamlAnchorCycleGuard.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
     <!-- EnvironmentMapper consumes EnvironmentSpec / ServiceSpec / DependencySpec from Authoring.
          Authoring → Abstractions + Sdk + YamlDotNet; Orchestration → Authoring is acyclic. -->

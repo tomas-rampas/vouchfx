@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Sdk;
+using Vouchfx.Yaml;
 using YamlDotNet.RepresentationModel;
 
 namespace Vouchfx.Engine.Orchestration.Environments;
@@ -39,8 +40,14 @@ internal sealed record ComposeConfiguration(
         EnvironmentBindingException.TrackInput(inputFiles, configPath);
         var configDirectory = Path.GetDirectoryName(configPath)!;
         var bytes = ReadInput(configPath);
+        var configText = Encoding.UTF8.GetString(bytes);
+        if (YamlAnchorCycleGuard.Find(configText) is { } configCycle)
+        {
+            throw new ArgumentException(configCycle.Message);
+        }
+
         var yaml = new YamlStream();
-        try { yaml.Load(new StringReader(Encoding.UTF8.GetString(bytes))); }
+        try { yaml.Load(new StringReader(configText)); }
         catch (YamlDotNet.Core.YamlException) { throw new ArgumentException("Compose configuration: invalid YAML. Check its syntax and duplicate keys."); }
         if (yaml.Documents.Count != 1 || yaml.Documents[0].RootNode is not YamlMappingNode root)
             throw new ArgumentException("Compose configuration must contain one mapping document.");
@@ -162,8 +169,14 @@ internal sealed record ComposeConfiguration(
 
     private static List<string> ManifestEnvironmentFiles(byte[] bytes, string projectDirectory, Action<string> trackInput)
     {
+        var manifestText = Encoding.UTF8.GetString(bytes);
+        if (YamlAnchorCycleGuard.Find(manifestText) is { } manifestCycle)
+        {
+            throw new ArgumentException(manifestCycle.Message);
+        }
+
         var manifest = new YamlStream();
-        try { manifest.Load(new StringReader(Encoding.UTF8.GetString(bytes))); }
+        try { manifest.Load(new StringReader(manifestText)); }
         catch (YamlDotNet.Core.YamlException) { throw new ArgumentException("Compose manifest: invalid YAML; check syntax and duplicate keys."); }
         var referenced = new List<string>();
         var mappings = new ManifestInputMappings();
