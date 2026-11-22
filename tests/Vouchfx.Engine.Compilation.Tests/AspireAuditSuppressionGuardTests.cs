@@ -41,7 +41,8 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// skipped or Windows-special segment, ending in <c>.props</c> or <c>.targets</c>. A hidden segment
 /// starts with a dot and is not <c>.</c> or <c>..</c>; a skipped segment is named <c>bin</c>,
 /// <c>obj</c> or <c>node_modules</c>, compared without regard to case or to trailing dots and spaces;
-/// these match the directories the walk skips, and more. A Windows-special segment holds <c>~</c> (a
+/// these cover the directories the walk skips, also when written in another case or with trailing
+/// dots or spaces. A Windows-special segment holds <c>~</c> (a
 /// possible short name) or a <c>:</c> other than a leading drive letter (an alternate data stream).
 /// (b) <c>$([MSBuild]::GetPathOfFileAbove('&lt;file&gt;', '&lt;start&gt;'))</c>, with each argument
 /// in single quotes and the start optional, where the file argument is a path as in (a), the start
@@ -751,7 +752,7 @@ public sealed class AspireAuditSuppressionGuardTests
         Assert.True(
             SetsWarningsAsErrorsUnconditionally(rootProps),
             "The root Directory.Build.props must set TreatWarningsAsErrors to true in a PropertyGroup directly under "
-            + "Project, with no Condition on it or on its group, so that every project that imports it treats warnings, "
+            + "Project, with no Condition on it, its group or the Project element, so that every project that imports it treats warnings, "
             + "NU190x audit warnings among them, as errors unless a later file changes that, which the check above "
             + "refuses in the files this guard reads. A setting inside a Choose, a Target or an item does not count. "
             + DismissalHint);
