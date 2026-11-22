@@ -10,6 +10,16 @@
 #   workflow_dispatch     Validate a candidate without publishing.
 # Tag pushes, branch pushes and pull requests never start this workflow.
 #
+# Release gate
+# ------------
+# Attestation and cosign signing (`sign-and-attest`) and publication
+# (`publish-release`, and so `publish-marketplace`) wait for the Docker
+# integration lane (the `docker-integration` job) to pass on this run's commit.
+# The build jobs are not gated: build-msi, build-deb and build-pkg still sign or
+# notarise at build time, where those secrets are configured, whatever the
+# lane's result. With the lane, a run is expected to take about 80 minutes. The
+# comment on that job lists what is and is not withheld.
+#
 # Keyless signing and publishing model — no long-lived private key or API key stored as a secret
 # --------------------------------------------------------------------------------------------------
 #   1. SLSA provenance (actions/attest-build-provenance, SHA-pinned below)
@@ -111,6 +121,49 @@ jobs:
     with:
       reviewed_sha: ${{ github.sha }}
 
+  # ===========================================================================
+  # docker-integration — release gate
+  # The Docker / Aspire integration lane must pass on this run's commit before
+  # anything is attested, cosign-signed or published. It has no `needs`, so it
+  # starts with the run, beside the builds. It passed in about 75 minutes in CI,
+  # so a release run is expected to take about 80 minutes.
+  #
+  # WITHHELD when the lane is red, cancelled, timed out or skipped (the two jobs
+  # below list it in `needs`, so they and everything after them are skipped):
+  # build-provenance attestations, cosign signatures, the NuGet package GPG
+  # signature, release assets, the NuGet pushes and the Marketplace extension.
+  #
+  # NOT WITHHELD: the GitHub Release itself (tag and notes) is already public
+  # when this workflow starts, and the build jobs are deliberately not gated.
+  # The floating tags (v1-alpha, v1-rc, v1) are not withheld either:
+  # move-floating-tag.yml runs on the same `release: published` event and does not
+  # wait for this workflow, so a red lane does not stop it moving a floating tag to
+  # the release commit. Gating it is a separate change.
+  # Whatever the lane result, the installers are still built and, where those
+  # secrets are configured, signed with the project's keys (Authenticode, the
+  # .deb GPG signature) or, for the .pkg, submitted to Apple for notarisation. They
+  # stay downloadable as run artefacts (msi-installer, deb-package, pkg-installer,
+  # 30 days) by anyone who can see this run, which for this public repository
+  # is anyone signed in to GitHub. The other build outputs (nuget-package,
+  # publish-archives, sbom, vsix) are run artefacts in the same way, with no
+  # attestation or cosign signature.
+  #
+  # A flaky lane is expected to be recoverable with "Re-run failed jobs" on this
+  # run (not yet exercised on a release run); there is no bypass input, variable
+  # or label. The workflow_dispatch preflight runs the lane too (no `if` here),
+  # so a candidate is checked before it is released.
+  #
+  # Calling it is safe because the called workflow has exactly one job and that
+  # job has no `if`: a reusable-workflow call whose inner jobs are all skipped
+  # can report success, which would open the gate. Keep it that way.
+  # ===========================================================================
+  docker-integration:
+    name: Docker integration
+    permissions:
+      contents: read
+    uses: ./.github/workflows/docker-integration.yml
+    with:
+      reviewed_sha: ${{ github.sha }}
 
   # ===========================================================================
   # build-dotnet
@@ -772,7 +825,9 @@ jobs:
   sign-and-attest:
     name: Attest (SLSA provenance) and sign (cosign keyless, GPG)
     runs-on: ubuntu-latest
-    needs: [build-dotnet, build-vsix, build-msi, build-deb, build-pkg]
+    # docker-integration is the release gate: no attestation or signature is made
+    # for a commit whose Docker lane has not passed.
+    needs: [docker-integration, build-dotnet, build-vsix, build-msi, build-deb, build-pkg]
 
     permissions:
       id-token: write      # mint GitHub OIDC token for Fulcio + cosign
@@ -1359,7 +1414,10 @@ jobs:
   publish-release:
     name: Publish artifacts to GitHub Release and NuGet
     runs-on: ubuntu-latest
-    needs: [tls-transport, build-dotnet, sign-and-attest, smoke-test-packaged-tool, smoke-test-distribution-platforms]
+    # docker-integration is the release gate: no release asset or NuGet push for a
+    # commit whose Docker lane has not passed. Listed here as well as through
+    # sign-and-attest so the gate does not depend on the transitive edge.
+    needs: [docker-integration, tls-transport, build-dotnet, sign-and-attest, smoke-test-packaged-tool, smoke-test-distribution-platforms]
     # Smoke-test: dispatch runs never publish (every step below is
     # tag/release-gated), but the artifact downloads used to run
     # unconditionally and failed hard because the cosign/GPG steps skip on

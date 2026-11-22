@@ -29,12 +29,84 @@ published. Pushing a version tag alone does not start the pipeline. Manual
    as pre-releases.
 6. Click **Publish release**. Publishing a reviewed draft or creating a published
    Release through the GitHub API emits the same event.
-7. The pipeline builds all artifacts, signs them, and attaches them to the
-   release automatically.
+7. The pipeline builds all artifacts. Once the Docker integration lane has
+   passed on the release commit (see below), it attests and cosign-signs them
+   and attaches them to the release automatically. Expect a run to take about
+   80 minutes, not the 15 or so it took before the lane joined it.
 
 A tag push followed by Release publication starts one publishing run. A newer
 run does not automatically cancel an existing run (`cancel-in-progress: false`);
 manual cancellation remains possible.
+
+### The Docker integration gate
+
+Every release run, including the manual preflight, calls the Docker integration
+lane (the `docker-integration` job, which runs
+`.github/workflows/docker-integration.yml`) at the commit being released. The
+lane starts with the run, beside the builds. It took about 75 minutes in CI, so
+expect a release run to take about 80 minutes. The attestation and signing job
+(`sign-and-attest`) and the publication job (`publish-release`) both need it, so
+the Marketplace job, which needs both, waits for it too.
+
+If the lane fails, is cancelled, times out (its limit is 120 minutes) or is
+skipped, these are **withheld**: build-provenance attestations, cosign
+signatures, the NuGet package signature, the release assets, the NuGet pushes
+and the Marketplace extension.
+
+These are **not** withheld:
+
+- The GitHub Release itself. Its tag and notes are public before the workflow
+  starts, so a red lane leaves a public release with no assets and nothing on
+  NuGet.org.
+- The installer builds. They still run and, where those secrets are
+  configured, are signed with the project's keys (Authenticode for the MSI and
+  `vouchfx.exe`, a GPG signature for the `.deb`) or, for the `.pkg`, submitted
+  to Apple for notarisation. The installers stay downloadable as run
+  artefacts (`msi-installer`, `deb-package`, `pkg-installer`) for 30 days by
+  anyone signed in to GitHub, because this repository is public. Do not treat
+  them as released, and do not point anyone at them.
+- The other build outputs. The nupkg (`nuget-package`), per-RID archives
+  (`publish-archives`), SBOM (`sbom`) and `.vsix` (`vsix`) are built and stay
+  downloadable as run artefacts for 30 days, with no attestation or cosign
+  signature. Do not treat them as released either.
+- The floating tags (`v1-alpha`, `v1-rc`, `v1`). `move-floating-tag.yml` runs on the
+  same `release: published` event and does not wait for this workflow, so a red
+  lane does not stop it moving a floating tag to the release commit. Gating it is
+  a separate change.
+
+What to do about a red or timed-out lane on a release that is already public:
+
+1. Read the lane's failure in the job expected to be shown as
+   `Docker integration / Aspire topology and provider tests`. If it is a
+   transient fault (a registry stall or rate limit, a runner fault), use
+   **Re-run failed jobs** on the release run. That is expected to re-run the
+   lane and, if it passes, `sign-and-attest`, `publish-release` and the
+   Marketplace job on the same commit as the first attempt. It has not yet been
+   exercised on a release run, so confirm that those jobs ran. Do not move the
+   tag before a re-run: the Marketplace job's checkout is expected to refuse a
+   moved tag, and the other jobs would publish the original commit under a tag
+   that no longer points at it.
+2. If it is a real defect, or the pre-pull reports that a pinned image no longer
+   exists, do not re-run: a re-run tests the same commit and the same image
+   list. Fix it, and ship a new patch version from a new commit. The public
+   release with no assets stays in place; you may edit its notes to say that it
+   was not published to NuGet.org. If this is a GA v1.y.z release,
+   `move-floating-tag.yml` has already moved `v1` to this commit, so consumers
+   who reference `v1` (the reusable `vouchfx-run.yml` workflow at `@v1`, or the
+   GitLab template with `ref: v1`) now get it. Until the patch ships, run
+   **Move floating convenience tag** (`move-floating-tag.yml`) by hand with the
+   last good GA release tag (`v1.y.z` with no pre-release suffix; a pre-release
+   tag never moves `v1`, and the run still succeeds), and confirm that its log
+   reports `Moved 'v1'`.
+3. A timeout (the job ends at 120 minutes) is not known to be transient. Re-run
+   once only if the log shows the time went to the pre-pull or to a runner
+   stall; otherwise treat it as step 2.
+4. There is no bypass: no input, variable or label skips the lane. Do not
+   disable the job or edit the workflow to publish a release the lane did not
+   pass.
+
+The manual preflight (`workflow_dispatch`) runs the lane as well, so use it to
+find a failing lane before you publish the Release.
 
 ### Release-time documentation checklist
 
@@ -72,8 +144,10 @@ after publication:
 - In the GitHub Actions UI, select `Release (signed, provenance)` and
   click **Run workflow**.
 - Select the reviewed candidate ref and enter the version to validate.
-- The pipeline builds all artifacts (nupkg, per-RID tarballs, SBOM, VSIX,
-  MSI, deb, pkg), creates provenance attestations and runs distribution checks.
+- The pipeline runs the Docker integration lane (it took about 75 minutes in CI; see
+  [The Docker integration gate](#the-docker-integration-gate)), builds all
+  artifacts (nupkg, per-RID tarballs, SBOM, VSIX, MSI, deb, pkg), creates
+  provenance attestations once the lane has passed and runs distribution checks.
 - **NuGet, GitHub Release and Marketplace publication are skipped.** The
   cosign steps are also skipped; optional certificate-based signing remains
   dependent on configured secrets.

@@ -2,9 +2,12 @@
 #
 # Reusable workflow (workflow_call only) that runs the Docker-dependent Aspire
 # integration tests, the ones carrying [Trait("requires","docker")].  It is
-# called by build.yml's `integration` job (its only caller) on the daily schedule
-# and on manual dispatch; build.yml's `integration-gate` job reports the lane's
-# result under the required check name `Integration tests — Docker / Aspire`.
+# called by two workflows. build.yml's `integration` job calls it on the daily
+# schedule and on manual dispatch; build.yml's `integration-gate` job reports the
+# lane's result under the required check name `Integration tests — Docker / Aspire`.
+# release.yml's `docker-integration` job calls it on every release run, including
+# the manual-dispatch preflight, and is the gate that `sign-and-attest` and
+# `publish-release` need.
 #
 # The caller passes the exact commit to test as `reviewed_sha`, and it must be the
 # calling run's own `github.sha`: the lane's evidence records the run's commit
@@ -42,13 +45,24 @@ jobs:
   # ubuntu-22.04 runners include Docker Engine, which is required for the
   # Aspire topology (§4).  Tests decorated with
   # [Trait("requires","docker")] run here.  When and on which events the lane
-  # runs is decided by the caller (build.yml's `integration` job); this job has
-  # no `if` and no `needs` of its own.
+  # runs is decided by the caller (build.yml's `integration` job or release.yml's
+  # `docker-integration` job); this job has no `if` and no `needs` of its own.
   #
   # Crash-dump capture (mini in CI; the README's local command uses full)
   # aids diagnosis of #378-class intermittencies without demoting failures.
   integration:
     name: Aspire topology and provider tests
+    # Job-level bound. The lane passed in 75 minutes on main (run 45019168197:
+    # about 2 minutes of pre-pull and 71 in the integration-test step), so 120
+    # leaves 45 minutes of headroom, and a hang ends at 120 minutes instead of
+    # GitHub's 360-minute default. Only the pre-pull step (25 minutes) and three
+    # diagnostic steps (2 + 3 + 2) carry their own budgets; the integration-test
+    # step has none, so this bound is what stops a hung test run. A run whose
+    # pull takes nearly its 25-minute budget and is otherwise typical (73 minutes)
+    # would take about 98, or 101 with the failure-only capture step. The release
+    # workflow's gate depends on this job finishing, so a timeout here withholds
+    # the release's signing and publication just as a failure does.
+    timeout-minutes: 120
     # MongoDB 7.0.45 exits on kernels >=6.19; ubuntu-latest supplied kernel 7.0.
     # Native evidence: actions/runs/39501778120. Keep images and test gates intact.
     runs-on: ubuntu-22.04

@@ -397,7 +397,8 @@ and workflow-contract jobs on each pull request; they are described in
 [CI integration](https://vouchfx.io/ci-integration/#this-repositorys-own-ci-layout). The Linux
 **integration** job for Docker/Aspire tests runs daily on `main` and on manual dispatch from any branch
 (Actions tab, CI, Run workflow, choose the branch) rather than on each pull request or push, so a
-failure there surfaces on the next daily run, not before merge.
+failure there surfaces on the next daily run, not before merge. The release workflow runs the same
+tests as a gate on every release run.
 
 <details>
 <summary><strong>Repository layout</strong></summary>
