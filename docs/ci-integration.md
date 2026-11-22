@@ -677,13 +677,22 @@ The Docker integration suite does not run on pull requests or pushes. Its steps 
 workflow `.github/workflows/docker-integration.yml`, which the `integration` job in `build.yml` calls
 at the commit under test; the job's `if:` keeps it to the daily run on `main`, scheduled for
 06:17 UTC, and to manual dispatch from any branch. A Docker-test failure therefore surfaces on the
-next daily run, not before merge. The `integration-gate` job in `build.yml` reports the lane's result
+next daily run, not before merge. The lane's job has a 120-minute timeout. The release workflow
+(`release.yml`) calls the same lane on every release run, including its manual preflight, as a
+gate: `sign-and-attest` and `publish-release` need it, so for a commit on which it has not passed
+no attestation, cosign signature or NuGet package signature is made, nothing is attached to the
+release, and nothing is published to NuGet.org or the Marketplace. The build jobs still run: the
+installers are signed or notarised where those secrets are configured, and the packages, archives,
+SBOM, extension and installers stay downloadable as run artefacts. `RELEASING.md` says what a red
+lane leaves behind. The
+`integration-gate` job in `build.yml` reports the lane's result
 under the required check name **Integration tests — Docker / Aspire**: on a pull request that check
 is reported as skipped, which is expected, and on a run where the lane ran it fails unless the lane
 succeeded. On a cancelled run, including a pull-request or push run that a newer one superseded, the
 check reports failure (it used to report cancelled), like the TLS gate; its error message names the
 lane's result, and `cancelled` there means the run was cancelled, not that a test failed.
-The lane's logs are in the job `Docker integration lane / Aspire topology and provider tests`.
+The lane's logs are in the job `Docker integration lane / Aspire topology and provider tests`; in a
+release run the job is expected to be shown as `Docker integration / Aspire topology and provider tests`.
 
 Failures no longer depend on someone watching the Actions tab for those daily runs.
 `scheduled-run-alerts.yml` opens one issue per workflow, titled "Scheduled run alert", when a

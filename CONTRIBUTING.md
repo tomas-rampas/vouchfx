@@ -260,7 +260,7 @@ Refer to:
 
 If you want to contribute to the vouchfx engine itself (rather than writing a provider), start with the [public roadmap](docs/roadmap.md) for where the project is heading, and the architecture and specification documents in [`docs/`](docs/) for how the system is built. [`GOVERNANCE.md`](GOVERNANCE.md) describes how decisions are made.
 
-The Docker integration suites no longer run on pull requests or pushes; they run daily on `main` and on manual dispatch. If your change touches orchestration, topology or the engine, run them on your branch before merging. [This repository's own CI layout](docs/ci-integration.md#this-repositorys-own-ci-layout) explains how.
+The Docker integration suites no longer run on pull requests or pushes; they run daily on `main` and on manual dispatch, and the release workflow runs them as a gate on every release run. If your change touches orchestration, topology or the engine, run them on your branch before merging. [This repository's own CI layout](docs/ci-integration.md#this-repositorys-own-ci-layout) explains how.
 
 All contributions must honour the hard invariants in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
 

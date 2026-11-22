@@ -443,8 +443,11 @@ class DockerIntegrationReusableWorkflowTests(unittest.TestCase):
         for path, key, value in walk(self.docker):
             self.assertNotEqual("secrets", key, path)
             if isinstance(value, str):
-                # Any use of the secrets context inside an expression: secrets.X, secrets[...], toJSON(secrets).
-                self.assertIsNone(re.search(r"\$\{\{[^}]*\bsecrets\b", value), path)
+                # Any use of the secrets context inside an expression, in any letter case, with
+                # string literals skipped as the runner does: secrets.X, secrets[...],
+                # toJSON(secrets), format('{{{0}}}', toJSON(secrets)).
+                self.assertIsNone(re.search(r"\$\{\{(?:'[^']*'|(?!\}\})[^'])*?\bsecrets\b", value,
+                                            re.IGNORECASE | re.DOTALL), path)
         workflows = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
         self.assertIn(DOCKER_WORKFLOW, workflows)
         for path in workflows:
@@ -493,6 +496,31 @@ class DockerIntegrationReusableWorkflowTests(unittest.TestCase):
         self.assertEqual({"VOUCHFX_TOPOLOGY_PR_HEAD_SHA": REVIEWED_SHA}, self.lane["env"])
         self.assertNotEqual(REQUIRED_DOCKER_CHECK, self.lane["name"])
         self.assertNotIn("${{", self.lane["name"])
+
+    def test_no_callee_condition_depends_on_the_event_or_ref(self):
+        # The lane has callers on different events (schedule and manual dispatch in build.yml;
+        # the published release and manual dispatch in release.yml) and must run the same
+        # steps for each: a condition that reads the run's context would skip steps for one
+        # caller while the lane still reported success.
+        conditions = [("job", self.lane["if"])] if "if" in self.lane else []
+        conditions += [(step.get("name", index), step["if"])
+                       for index, step in enumerate(self.lane["steps"]) if "if" in step]
+        self.assertTrue(conditions)
+        for where, condition in conditions:
+            with self.subTest(where=where):
+                self.assertIsNone(re.search(r"(?<![\w.-])(github|env|vars|inputs)(?![\w-])|event_name",
+                                            str(condition), re.IGNORECASE),
+                                  "the lane has callers on different events and must run the same "
+                                  "steps for each")
+
+    def test_lane_job_has_a_120_minute_timeout_and_the_callee_stays_one_unconditional_job(self):
+        # The release workflow gates signing and publication on this job. A hang must
+        # end in a failure well before GitHub's 360-minute default, and the callee must
+        # keep exactly one job without an `if`: a call whose inner jobs are all skipped
+        # can report success, which would open the gate.
+        self.assertEqual(120, self.lane["timeout-minutes"])
+        self.assertEqual([DOCKER_JOB], list(self.docker["jobs"]))
+        self.assertNotIn("if", self.lane)
 
     def test_callee_checks_out_and_asserts_the_reviewed_sha(self):
         checkout, confirm = self.lane["steps"][:2]
@@ -549,9 +577,19 @@ class DockerIntegrationReusableWorkflowTests(unittest.TestCase):
                    if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
         self.assertEqual(len(uploads), len(set(uploads)))
         self.assertEqual(DOCKER_ARTEFACTS, set(uploads))
-        others = [s["with"]["name"] for job in self.build["jobs"].values() for s in job.get("steps", [])
-                  if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
-        self.assertFalse(DOCKER_ARTEFACTS & set(others))
+        # Every workflow that calls the lane shares a run with its four artefact names.
+        callers = {}
+        for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+            data = workflow(path)
+            if any(job.get("uses") == "./.github/workflows/docker-integration.yml"
+                   for job in data.get("jobs", {}).values()):
+                callers[path.name] = data
+        self.assertEqual({"build.yml", "release.yml"}, set(callers))
+        for name, data in callers.items():
+            with self.subTest(workflow=name):
+                others = [s["with"]["name"] for job in data["jobs"].values() for s in job.get("steps", [])
+                          if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
+                self.assertFalse(DOCKER_ARTEFACTS & set(others))
 
     def test_caller_passes_only_reviewed_sha_and_keeps_its_schedule(self):
         self.assertEqual({"name", "needs", "if", "uses", "with"}, set(self.caller))

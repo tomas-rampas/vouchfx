@@ -19,7 +19,33 @@ grants `contents: read`, and runs one job with no `if` or `needs` that checks ou
 `reviewed_sha` and stops unless HEAD is that commit. In `build.yml`, the
 `integration` job calls it with `reviewed_sha` only and keeps the lane's `needs` and
 `if`, and `integration-gate` carries the required check name and fails when the lane
-failed or was cancelled. No workflow uses `secrets: inherit`.
+failed or was cancelled. The lane job also has a 120-minute `timeout-minutes`, and the
+artefact names the lane uploads must not clash with those uploaded in either calling
+workflow. No workflow uses `secrets: inherit`. No job or step `if` in the lane
+reads the `github`, `env`, `vars` or `inputs` context, because the lane has callers on
+different events and must run the same steps for each.
+
+The release workflow is the lane's second caller. `test_release_workflow.py` pins
+the `docker-integration` job in `release.yml` (the same `uses`, `reviewed_sha`
+and `contents: read`, no `if`, no `needs`), requires `sign-and-attest` and
+`publish-release` to need it, and derives from the parsed workflow which jobs
+have a side effect (a secret, any `secrets` reference inside an expression, a
+`HAS_*` condition, any `write` permission, or an attest, cosign or publish step or
+command). Each such job must be reachable from the gate through `needs`, except
+`build-msi`, `build-deb` and `build-pkg`, which sign or notarise at build time and
+are allowlisted by name with their exact set of reasons; the test fails if a set
+changes, and it also fails when a step gains a further distinct matched command.
+The recogniser is a tripwire for the ordinary ways a side effect is added (a secret,
+a write permission, a known signing or publishing action or command), not a proof
+that no side effect exists: it does not see an unauthenticated network call, an
+effect inside a called reusable workflow, or a command not on its list that uses no
+secret. A separate test pins
+the workflow-level `permissions` to `contents: read` and requires no secret in the
+workflow-level `env`. No job downstream of the gate may use any status-check
+function (`always()`, `success()`, `failure()`, `cancelled()`, in any letter case)
+in its job-level `if`. Every `actions/checkout` step in `release.yml` must omit `ref` or
+set it to `${{ github.sha }}`, because the gate tests the run's commit and every build
+must ship that same commit.
 
 The release contract also requires exactly one public publishing trigger
 (`release: published`) and preserves the non-publishing manual dispatch. It runs
