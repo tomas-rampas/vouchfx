@@ -12,7 +12,8 @@
 
     It also hosts the other pieces that would otherwise be duplicated across test
     assemblies: TestCertificateAuthority / TestCertificateStoreGuard (the mTLS
-    certificate bed), ChildProcess.KillTreeQuietly (the guarded tree-kill every
+    certificate bed and the database-server TLS bed - WriteDatabaseServerSuiteDirectory, used by
+    Vouchfx.Steps.DbAssert.Postgres.Tests), ChildProcess.KillTreeQuietly (the guarded tree-kill every
     child-process launch site calls from its `finally`, lifted here by #475 once a
     second assembly needed it), HostPathDisclosure.AssertNoAbsoluteHostPath (the
     "no resolved host path reached this channel" property, lifted here by #473 after

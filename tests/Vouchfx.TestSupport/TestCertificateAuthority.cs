@@ -596,13 +596,23 @@ public static class TestCertificateAuthority
     /// <remarks>
     /// Generated per call and never committed: a checked-in certificate expires, and a checked-in key
     /// is a secret. Every authority subject carries <see cref="ProcessToken"/>, so the store guard that
-    /// protects the other beds covers these too. Private keys are restricted to their owner where the
-    /// platform supports it.
+    /// protects the other beds covers these too. A directory this call creates is owner-only (0700), and
+    /// each private key is created owner-only (0600) rather than written with the process umask and
+    /// narrowed afterwards, where the platform has POSIX permissions; a directory that already exists
+    /// keeps its mode. This writer's own file creation does not touch the helpers the older beds use.
     /// </remarks>
     public static void WriteDatabaseServerSuiteDirectory(string directory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
-        Directory.CreateDirectory(directory);
+        if (OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(directory);
+        }
+        else
+        {
+            Directory.CreateDirectory(
+                directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
 
         var now = DateTimeOffset.UtcNow;
 
@@ -648,7 +658,19 @@ public static class TestCertificateAuthority
             void WriteKey(string name, string pem)
             {
                 var path = Path.Combine(directory, name);
-                File.WriteAllText(path, pem);
+                var options = new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None };
+                if (!OperatingSystem.IsWindows())
+                {
+                    options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+                }
+
+                using (var stream = new FileStream(path, options))
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write(pem);
+                }
+
+                // Only matters when the file already existed (its mode is then kept at creation).
                 RestrictToOwner(path);
             }
 

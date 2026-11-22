@@ -130,16 +130,23 @@ internal static class PostgresStepHarness
         new(StringComparer.Ordinal);
 
     /// <summary>The single-column "{expected}" step for a rendering case, compiled once per process.</summary>
-    public static CompiledPostgresStep CompiledFor(RenderCase renderCase) =>
-        s_compiled.GetOrAdd(renderCase.Sql, sql => CompileSingleColumn("pin", sql, "v"));
+    public static CompiledPostgresStep CompiledFor(RenderCase renderCase) => CompiledForQuery(renderCase.Sql);
+
+    /// <summary>The "{expected}" step for <paramref name="column"/> of <paramref name="sql"/>, compiled once per process.</summary>
+    public static CompiledPostgresStep CompiledForQuery(string sql, string column = "v") =>
+        s_compiled.GetOrAdd(column + "|" + sql, _ => CompileSingleColumn("pin", sql, column));
 
     /// <summary>
     /// What the step compares for <paramref name="renderCase"/>: runs it with an expectation that
     /// cannot match and reads the <c>actual</c> text out of the failure observation.
     /// </summary>
-    public static async Task<string> RenderedAsync(RenderCase renderCase, string connectionString)
+    public static Task<string> RenderedAsync(RenderCase renderCase, string connectionString) =>
+        RenderedAsync(renderCase.Sql, connectionString);
+
+    /// <summary>As <see cref="RenderedAsync(RenderCase, string)"/>, for a query that is not a matrix row.</summary>
+    public static async Task<string> RenderedAsync(string sql, string connectionString)
     {
-        var outcome = await CompiledFor(renderCase).RunAsync(
+        var outcome = await CompiledForQuery(sql).RunAsync(
             connectionString,
             new Dictionary<string, string>(StringComparer.Ordinal) { ["expected"] = "\u0001 matches nothing" });
         return ActualOf(outcome);
@@ -161,12 +168,12 @@ internal static class PostgresStepHarness
     }
 
     /// <summary>
-    /// Normalises the no-break space ICU puts before the AM/PM designator (U+202F, ICU 72 and later)
-    /// to an ordinary space, so one literal serves every platform. The step itself does NOT
-    /// normalise: on ICU 72+ an expectation written with an ordinary space does not match.
+    /// Normalises the narrow no-break space ICU puts before the AM/PM designator (U+202F, ICU 72 and
+    /// later) to an ordinary space, so one literal serves every platform. The step itself does NOT
+    /// normalise: on ICU 72+ an expectation written with an ordinary space does not match. Only
+    /// U+202F is replaced: no pinned literal needs U+00A0.
     /// </summary>
-    public static string NormaliseSpaces(string text) =>
-        text.Replace('\u202f', ' ').Replace('\u00a0', ' ');
+    public static string NormaliseSpaces(string text) => text.Replace('\u202f', ' ');
 
     /// <summary>
     /// The CLR type Npgsql reports for column 0 and the CLR type of the value the emitted helper's

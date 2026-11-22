@@ -6,9 +6,14 @@
 // Docker-backed fixtures use for inspection and teardown, with ChildProcess.KillTreeQuietly as the one
 // guarded tree kill. Nothing here is product code.
 //
-// Teardown: every container carries the label below and is removed with `docker rm -f` on dispose.
+// Teardown: every container carries the label below and is removed with `docker rm -f -v` (the
+// -v also removes the postgres image's anonymous data volume), on dispose and on a failed start.
 // A test process killed before dispose leaves its containers behind; they are named
 // vouchfx-pgpin-* and labelled, so `docker ps -a --filter label=...` finds them.
+//
+// The generated password is handed to docker through the child process's environment (`-e NAME`
+// with no value), so it never appears in a docker argument list that `ps` can show.
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using Vouchfx.TestSupport;
@@ -25,24 +30,26 @@ internal sealed class PostgresDockerContainer : IAsyncDisposable
     private static readonly TimeSpan s_commandTimeout = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan s_readyTimeout = TimeSpan.FromSeconds(120);
 
+    private const string PasswordVariable = "POSTGRES_PASSWORD";
+
+    private readonly string _password;
+
     private PostgresDockerContainer(string name, int port, string password)
     {
         Name = name;
         Port = port;
-        Password = password;
+        _password = password;
     }
 
     public string Name { get; }
 
     public int Port { get; }
 
-    public string Password { get; }
-
     /// <summary>Connection string for the container, with <paramref name="extra"/> appended (start it with ';').</summary>
     public string ConnectionString(string extra = "") =>
         string.Create(
             CultureInfo.InvariantCulture,
-            $"Host=127.0.0.1;Port={Port};Username=postgres;Password={Password};Database=postgres;Pooling=false{extra}");
+            $"Host=127.0.0.1;Port={Port};Username=postgres;Password={_password};Database=postgres;Pooling=false{extra}");
 
     /// <summary>Starts a plain (non-TLS) server.</summary>
     public static Task<PostgresDockerContainer> StartPlainAsync() => StartAsync(null, null);
@@ -56,6 +63,7 @@ internal sealed class PostgresDockerContainer : IAsyncDisposable
         var name = "vouchfx-pgpin-" + Guid.NewGuid().ToString("N")[..10];
         var password = Guid.NewGuid().ToString("N");
         var tls = certificatePath is not null;
+        var environment = new Dictionary<string, string>(StringComparer.Ordinal) { [PasswordVariable] = password };
         try
         {
             if (tls)
@@ -69,7 +77,8 @@ internal sealed class PostgresDockerContainer : IAsyncDisposable
                     "exec docker-entrypoint.sh postgres -c ssl=on " +
                     "-c ssl_cert_file=/tls/server.crt -c ssl_key_file=/tls/server.key";
                 await DockerAsync(
-                    "create", "--name", name, "--label", Label, "-e", "POSTGRES_PASSWORD=" + password,
+                    environment, true,
+                    "create", "--name", name, "--label", Label, "-e", PasswordVariable,
                     "-p", "127.0.0.1::5432", "--entrypoint", "bash", Image, "-c", script);
                 await DockerAsync("cp", certificatePath!, name + ":/tmp/server.crt");
                 await DockerAsync("cp", keyPath!, name + ":/tmp/server.key");
@@ -78,7 +87,8 @@ internal sealed class PostgresDockerContainer : IAsyncDisposable
             else
             {
                 await DockerAsync(
-                    "run", "-d", "--name", name, "--label", Label, "-e", "POSTGRES_PASSWORD=" + password,
+                    environment, true,
+                    "run", "-d", "--name", name, "--label", Label, "-e", PasswordVariable,
                     "-p", "127.0.0.1::5432", Image);
             }
 
@@ -109,23 +119,28 @@ internal sealed class PostgresDockerContainer : IAsyncDisposable
         }
         catch
         {
-            await DockerAsync(false, "rm", "-f", name);
+            try
+            {
+                await DockerAsync(false, "rm", "-f", "-v", name);
+            }
+            catch (Exception cleanup) when (cleanup is Win32Exception or OperationCanceledException or InvalidOperationException)
+            {
+                // A failed cleanup must not replace the start failure being rethrown.
+            }
+
             throw;
         }
     }
 
     public async ValueTask DisposeAsync() => await DockerAsync(false, "rm", "-f", "-v", Name);
 
-    /// <summary>Names of the labelled containers that still exist (for the fixtures' own teardown checks).</summary>
-    public static async Task<string[]> LeftoverNamesAsync()
-    {
-        var result = await DockerAsync(false, "ps", "-a", "--filter", "label=" + Label, "--format", "{{.Names}}");
-        return result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    }
+    private static Task<DockerResult> DockerAsync(params string[] arguments) => DockerAsync(null, true, arguments);
 
-    private static Task<DockerResult> DockerAsync(params string[] arguments) => DockerAsync(true, arguments);
+    private static Task<DockerResult> DockerAsync(bool throwOnFailure, params string[] arguments) =>
+        DockerAsync(null, throwOnFailure, arguments);
 
-    private static async Task<DockerResult> DockerAsync(bool throwOnFailure, params string[] arguments)
+    private static async Task<DockerResult> DockerAsync(
+        IReadOnlyDictionary<string, string>? environment, bool throwOnFailure, params string[] arguments)
     {
         var startInfo = new ProcessStartInfo("docker")
         {
@@ -136,6 +151,14 @@ internal sealed class PostgresDockerContainer : IAsyncDisposable
         foreach (var argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
+        }
+
+        if (environment is not null)
+        {
+            foreach (var (key, value) in environment)
+            {
+                startInfo.Environment[key] = value;
+            }
         }
 
         using var timeout = new CancellationTokenSource(s_commandTimeout);

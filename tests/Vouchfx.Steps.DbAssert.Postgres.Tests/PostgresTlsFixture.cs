@@ -1,6 +1,13 @@
 // A TLS-enabled PostgreSQL fixture: five TLS containers, one per server-certificate shape, plus one
 // server without TLS, started concurrently from certificates generated at test time (never
 // committed) by TestCertificateAuthority.WriteDatabaseServerSuiteDirectory.
+//
+// This fixture is the only place in this project that generates certificates, and it belongs to a
+// requires=docker class, so the assembly's final guard (CertificateStoreHygieneGuardTests) never runs in
+// a process that generated any. DisposeAsync therefore runs the same residue sweep itself, after the
+// servers are removed: TestCertificateStoreGuard.SweepProcessResidue scans the Windows intermediate-CA
+// stores for certificates carrying this process's token, removes what it can, and describes what it
+// found; it is a no-op off Windows.
 using Vouchfx.TestSupport;
 using Xunit;
 
@@ -108,5 +115,8 @@ public sealed class PostgresTlsFixture : IAsyncLifetime
         {
             // A leftover temp directory is not worth failing a teardown over.
         }
+
+        // Last, so the servers and files are gone whatever the sweep reports.
+        Assert.Null(TestCertificateStoreGuard.SweepProcessResidue());
     }
 }

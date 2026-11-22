@@ -27,7 +27,9 @@ public sealed class CertificateStoreGuardLastOrderer : ITestCollectionOrderer
 public sealed class CertificateStoreHygieneGuardTests
 {
     // The existing guard scopes cleanup to this process token and exact owned thumbprints.
-    // This does not reclaim earlier processes' residue or abandoned private-key files.
+    // This does not reclaim earlier processes' residue or abandoned private-key files. In this project
+    // only the Docker-only PostgresTlsFixture generates certificates, so this test sees certificates
+    // only in a run that also ran the Docker lane; that fixture sweeps for itself on dispose.
     [Fact]
     [Trait("requires", "none")]
     public void SuiteLeavesNoCertificateOfItsOwnInTheIntermediateCaStores()

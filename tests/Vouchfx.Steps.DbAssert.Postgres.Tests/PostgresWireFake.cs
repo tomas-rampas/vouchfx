@@ -47,10 +47,23 @@ internal sealed class PostgresWireFake : IDisposable
     /// <summary>Result-column format codes (0 = text, 1 = binary) of every Bind received.</summary>
     public ConcurrentQueue<short[]> ResultFormats { get; } = new();
 
-    /// <summary>Number of connections that opened with an SSLRequest.</summary>
-    public int SslRequests => Volatile.Read(ref _sslRequests);
+    /// <summary>
+    /// Waits (bounded) for every accepted connection to finish, then returns how many ended in an
+    /// exception instead of closing cleanly: the measure of whether a malformed client could fault the fake.
+    /// </summary>
+    public async Task<int> FaultedConnectionsAfterSettlingAsync(TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (_connections.Any(t => !t.IsCompleted) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(20).ConfigureAwait(false);
+        }
 
-    private int _sslRequests;
+        return _connections.Count(t => t.IsFaulted);
+    }
+
+    /// <summary>The largest message body the fake will read; a client claiming more is disconnected.</summary>
+    private const int MaxMessageBytes = 1024 * 1024;
 
     private async Task AcceptLoopAsync()
     {
@@ -87,9 +100,13 @@ internal sealed class PostgresWireFake : IDisposable
                 var code = BinaryPrimitives.ReadInt32BigEndian(head.AsSpan(4));
                 if (code == 80877103)
                 {
-                    Interlocked.Increment(ref _sslRequests);
                     await stream.WriteAsync(new byte[] { (byte)'N' }, ct).ConfigureAwait(false);
                     continue;
+                }
+
+                if (length < 8 || length > MaxMessageBytes)
+                {
+                    return; // Not a startup message this fake can read: close the connection.
                 }
 
                 var body = await ReadExactAsync(stream, length - 8, ct).ConfigureAwait(false);
@@ -122,6 +139,11 @@ internal sealed class PostgresWireFake : IDisposable
             {
                 var type = (char)(await ReadExactAsync(stream, 1, ct).ConfigureAwait(false))[0];
                 var len = BinaryPrimitives.ReadInt32BigEndian(await ReadExactAsync(stream, 4, ct).ConfigureAwait(false));
+                if (len < 4 || len > MaxMessageBytes)
+                {
+                    return; // A length no protocol message can have: close the connection.
+                }
+
                 var body = await ReadExactAsync(stream, len - 4, ct).ConfigureAwait(false);
 
                 switch (type)
@@ -180,9 +202,11 @@ internal sealed class PostgresWireFake : IDisposable
             }
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException
-                                       or SocketException or EndOfStreamException)
+                                       or SocketException or EndOfStreamException
+                                       or ArgumentOutOfRangeException or IndexOutOfRangeException)
         {
-            // The client went away or the fake is shutting down.
+            // The client went away, the fake is shutting down, or the client sent a message too short
+            // for the fields it claims (the span reads in the parsers throw the last two).
         }
         finally
         {
@@ -306,6 +330,11 @@ internal sealed class PostgresWireFake : IDisposable
     private static string ReadCString(byte[] buffer, int offset, out int next)
     {
         var end = Array.IndexOf(buffer, (byte)0, offset);
+        if (end < 0)
+        {
+            throw new EndOfStreamException("A C-string with no terminator.");
+        }
+
         next = end + 1;
         return Encoding.UTF8.GetString(buffer, offset, end - offset);
     }
