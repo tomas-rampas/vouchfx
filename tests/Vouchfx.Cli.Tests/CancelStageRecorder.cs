@@ -228,13 +228,29 @@ internal sealed class CancelStageRecorder
     // Observed 6.1 s, +10 threads (1.64 a second), +14 completed, CPU about 2% of 18 CPUs (the load
     // harness polled a directory every 5 ms throughout, which is CPU of its own).
     // The injection rate is the runtime's starvation heuristic at work, not a constant of it, so the
-    // guide quotes it as this host's figure.
+    // guide does not quote this host's figure as a rate to expect. The rule it states was read from
+    // the .NET 10 thread-pool source by a reviewer and then measured: with the same 40 blocked pipe
+    // reads on 18 CPUs, a gap of 12.3 s and 1.94 threads a second with no other load, against 0.17
+    // threads a second with 18 CPU-bound threads running. It is the reviewer's reading and one host's
+    // measurement, not a guarantee of the runtime.
+    //
+    // WHICH GAPS WAIT FOR THE POOL (read from SystemProcessRunner.Run): only SignalReturned to
+    // Observed, where the runner's continuation after its delay race needs a pool thread. Observed,
+    // KillIssued, KillReturned, StreamsDisposed, Thrown and ProcessDisposed are reported one after
+    // another on the runner's own thread without yielding, so a long gap between them is that
+    // thread's own call. ChildExited (this test's death poll) and ReadersDrained (a task continuation)
+    // are stamped on other threads and can land inside such a gap and split it in two.
     private const string ReadingGuide =
-        "Reading the brackets: work items completing mean the pool was running other work ahead of whatever waited, a busy pool, and the CPU share says whether that work computed (near 100%) or mostly waited (a few percent). "
+        "Reading the brackets: only the gap into Observed (from SignalReturned) waits for a pool thread. "
+        + "The stages from Observed through ProcessDisposed are reported one after another on the runner's own thread without yielding, so a long gap between them is that stage's own call, the first suspect, and nothing waited for the pool; "
+        + "there the brackets show only what the rest of the process did meanwhile: a CPU share near one CPU's worth (about 1/N of the N CPUs) is that thread computing, "
+        + "and counters standing still fit that call blocked in the operating system as well as a stalled host. "
+        + "ChildExited and ReadersDrained are stamped on other threads and can land inside such a gap and split it in two, so t= gives the total. "
+        + "Where something did wait for a pool thread, work items completing mean the pool was running other work ahead of whatever waited, a busy pool, and the CPU share says whether that work computed (near 100%) or mostly waited (a few percent). "
         + "Threads growing while few work items complete and the CPU share stays low mean pool threads blocked in waits, which is starvation too: "
-        + "above its minimum the pool adds threads slowly (measured at 1.6 to 1.9 a second on an 18-CPU macOS host with .NET 10, which is the runtime's thread-injection behaviour on that host, not a constant). "
+        + "above its minimum the pool adds threads slowly, and how slowly depends on the host. In .NET 10's thread pool, as read from its source and measured on one host, it adds one thread per half-second while CPU use is under 80% (machine-wide on Windows, this process on Linux and macOS) and only one every few seconds above that, so on a busy 2-4 core runner a blocked pool may gain just one to three threads across ten seconds. Any growth is not a stall. "
         + "Threads, work items and CPU all standing still mean the host itself stalled, because the pool's own thread injector cannot run either. "
-        + "A non-zero pending count is work queued with no pool thread free to take it, so anything queued at that moment, the runner's continuation included, waited behind it. "
+        + "A pending count above zero is work queued with no pool thread free to take it, so anything queued at that moment, the runner's continuation included, waited behind it; a pending of one or two can be transient, such as that continuation just queued. "
         + "CPU time and work items are process-wide and include other tests running alongside.";
 
     private PoolSample? SampleOf(CancelStage stage) => Volatile.Read(ref _samples[(int)stage]);

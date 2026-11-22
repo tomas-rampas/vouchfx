@@ -567,6 +567,9 @@ public sealed class SystemProcessRunnerTests
     /// Also the further wait <see cref="DescribeSlowUnwindAsync"/> allows a cancelled <c>Run</c>
     /// that missed <see cref="RunUnwindSlack"/>, in row 5 only for the cancel-stage timeline in
     /// its failure message and in the cancel-stage ordering row as the rest of that row's bound.
+    /// The hook-variant cancellation theory
+    /// (<c>Run_WhenTheCallerCancels_KillsTheChildWhateverTheHookDoes</c>) also uses
+    /// <see cref="RunUnwindSlack"/> plus this window directly, as its fail-fast bound.
     /// </remarks>
     private static readonly TimeSpan DrainWindow = TimeSpan.FromSeconds(10);
 
@@ -1199,10 +1202,10 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="ChildLifetime"/>. Milder than the same hole on rows 1 and 2, and deliberately
     /// described that way: there an orphan could hide behind a LATER attempt that passed, whereas a
     /// failure here is read by whoever ran the suite. Hygiene on a red row, not a leak test failing
-    /// to fail. It is the header's original ×1 gap on one of the three rows still carrying it (the
-    /// cancel-stage ordering row and the hook-variant cancellation row, which reclaim in their
-    /// <c>finally</c>, are the others) — ×1 because
-    /// this row runs once and never escalates, which #539 did not change.
+    /// to fail. It is the header's original ×1 gap — ×1 because this row runs once and never
+    /// escalates, which #539 did not change. The cancel-stage ordering row and the hook-variant
+    /// cancellation row share that ×1 gap with it: their <c>finally</c> reclaim closes the
+    /// late-write slice of it, as this row's does, and not the child that never writes a pid.
     /// </para>
     /// <para>
     /// <strong>IT TAKES THAT LOOK IN TWO PLACES, AND THE SPLIT IS #539.</strong> The body keeps
@@ -1316,7 +1319,8 @@ public sealed class SystemProcessRunnerTests
             // answered by the pre-launch ThrowIfCancellationRequested, which would leave the row
             // asserting nothing about a live child. The instant the wait returned is kept for the
             // slow-unwind death poll's deadline; it is taken on the waiting thread so that the
-            // await's own continuation latency does not move it later.
+            // await's own continuation latency does not move it later. (CancelStage diagnostic
+            // scaffolding: the stamp exists only for DescribeSlowUnwindAsync.)
             long pidReadAt = 0;
             pid = await Task.Run(
                 () =>
@@ -1570,6 +1574,7 @@ public sealed class SystemProcessRunnerTests
         int? pid = null;
         try
         {
+            // The same stamp as row 5's, for DescribeSlowUnwindAsync (CancelStage diagnostic scaffolding).
             long pidReadAt = 0;
             pid = await Task.Run(
                 () =>
@@ -1690,6 +1695,11 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="RunUnwindSlack"/> plus <see cref="DrainWindow"/>, and the teardown is the one
     /// every killing <c>finally</c> here carries — a <c>pid is null</c>-guarded reclaim, then the
     /// kill.
+    /// </para>
+    /// <para>
+    /// This theory has no recorder, so a red case of it prints no cancel-stage timeline. A red case
+    /// on Windows is the same incident as the cancellation row: read it through that row's timeline
+    /// or the ordering row's.
     /// </para>
     /// </remarks>
     /// <param name="hook"><c>none</c> for no hook; <c>throws</c> for a hook that throws at every stage.</param>
@@ -1846,6 +1856,9 @@ public sealed class SystemProcessRunnerTests
         Assert.Contains("ChildExited", text, StringComparison.Ordinal);
         Assert.Contains("[observed after the child's own lifetime could have ended, so it does not show that the kill landed]", text, StringComparison.Ordinal);
         Assert.Single(System.Text.RegularExpressions.Regex.Matches(text, "Reading the brackets"));
+        Assert.Contains("only the gap into Observed (from SignalReturned) waits for a pool thread", text, StringComparison.Ordinal);
+        Assert.Contains("that stage's own call, the first suspect", text, StringComparison.Ordinal);
+        Assert.Contains("Any growth is not a stall", text, StringComparison.Ordinal);
         Assert.DoesNotContain('\n', text);
     }
 

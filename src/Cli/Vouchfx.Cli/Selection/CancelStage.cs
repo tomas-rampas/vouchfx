@@ -12,7 +12,7 @@
 // records that this code is temporary. Once a failure of the cancellation row has been read off its
 // timeline and the slow stage named, this enum, the runner's hook, its call sites and the test
 // project's recorder can be deleted together. Every one of those pieces names the CancelStage type,
-// so the compiler's own references to it are the list of what to delete.
+// so the compiler's own references to it, and a search for the name, are the list of what to delete.
 //
 // WHAT IT IS NOT. SystemProcessRunner.Instance carries no hook, so production pays only null tests,
 // and the hook is invoked on the cancel path only. A hook that throws is ignored (the runner calls
