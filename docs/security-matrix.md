@@ -34,6 +34,9 @@ container starts.
   HTTPS, presenting a client certificate, against any declared service.
 - **Everything else** — RabbitMQ, NATS, MongoDB, Redis, PostgreSQL, SQL Server, MySQL,
   Elasticsearch, and the remaining families — **not** reachable over a secured connection in 1.0.
+  For PostgreSQL that means there is no `security:` declaration and no checked certificate.
+  A server that offers TLS is not refused: Npgsql's default is `Prefer`, described under
+  [PostgreSQL and the driver default](#postgresql-and-the-driver-default).
 
 ## Server material and client expectations
 
@@ -191,7 +194,7 @@ Every Core provider, and what it can reach.
 | `cache-assert.redis` | `redis` dependency | No | Server-side TLS deferred |
 | `mq-publish.azureservicebus` | `azureservicebus` dependency | No | Reaches the engine-provisioned emulator only |
 | `mq-expect.azureservicebus` | `azureservicebus` dependency | No | Reaches the engine-provisioned emulator only |
-| `db-assert.postgres` | `postgres` dependency | No | Deferred |
+| `db-assert.postgres` | `postgres` dependency | No | No `security:` block. The driver default is `Prefer`; see below |
 | `db-assert.mysql` | `mysql` dependency | No | Deferred |
 | `db-assert.sqlserver` | `sqlserver` dependency | No | Deferred |
 | `db-assert.mongodb` | `mongodb` dependency | No | Server-side TLS deferred; mutual TLS further out |
@@ -202,6 +205,19 @@ Every Core provider, and what it can reach.
 | `webhook-listen.http` | — (engine-hosted listener) | **Yes** — TLS and mutual TLS from Core 1.1.0 | See *Inbound listeners*, below |
 | `trace-expect.otlp` | — (engine-hosted receiver) | **Yes** — TLS and mutual TLS from Core 1.1.0 | See *Inbound listeners*, below |
 | `script.csharp` | — (no infrastructure target) | Not applicable | Reconciles no target |
+
+### PostgreSQL and the driver default
+
+A `postgres` dependency still cannot carry a `security:` block, and `db-assert.postgres` adds nothing to the connection string it is given. For a managed dependency that string is the one Aspire 13.4.6 builds: `Host`, `Port`, `Username`, `Password` and `Database`, with no `SSL Mode` and no `Timezone`. Npgsql 8.0.9 treats a missing `SSL Mode` as `Prefer`.
+
+What that does, pinned against servers whose certificates come from a private authority:
+
+- The engine's default image, `postgres:18.3`, does not offer TLS, so the session is plaintext.
+- When the server does offer TLS, the session is encrypted and the certificate is not checked. A certificate from an unknown authority, and a certificate issued for another host, both let the step pass.
+- A handshake that fails is an environment error. An unknown authority, a missing intermediate, a name that does not match the host, and a private authority checked against the system roots all report the same observation: `Exception while performing SSL handshake`. A server that refuses the SSL request reports `SSL connection requested. No SSL enabled connection from this host is configured.`
+- Npgsql's `SSL Mode=Require` does not consult a root certificate, even when one is present in the connection string. Only `VerifyCA` and `VerifyFull` use it. A suite has no field that sets any of these; the provider passes Aspire's string through unchanged.
+
+Turning TLS on in a custom image therefore encrypts the session without checking the peer. It does not make the dependency one of the secured targets in the table above.
 
 ## Matrix by dependency kind
 
