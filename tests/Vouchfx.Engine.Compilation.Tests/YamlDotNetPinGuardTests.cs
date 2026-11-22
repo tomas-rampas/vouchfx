@@ -1,13 +1,12 @@
 using System.Xml.Linq;
-using Vouchfx.TestSupport;
 using Xunit;
 using Xunit.Abstractions;
 
 namespace Vouchfx.Engine.Compilation.Tests;
 
 /// <summary>
-/// Fails when the central <c>YamlDotNet</c> pin in <c>Directory.Packages.props</c> leaves major 16,
-/// the ceiling for the whole v1.x engine series.
+/// Fails when any <c>YamlDotNet</c> version in an MSBuild file leaves major 16, the ceiling for the
+/// whole v1.x engine series.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,13 +15,18 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// against YamlDotNet 16. This also keeps the Aspire hold honest: Aspire 13.6.0 and 13.6.5 require
 /// YamlDotNet 18.1.0 or later, so a security update to 13.6.5 that bumps YamlDotNet in the same change
 /// fails here instead of landing. The check reads source pins only, like <c>MySqlConnectorPinGuardTests</c>.
-/// It does not open a nupkg, and it does not evaluate MSBuild, so a version set through a property
-/// fails closed as not a plain numeric version. Raising the ceiling is a v2 engine decision.
+/// It reads the <c>Version</c> and the <c>VersionOverride</c> of every <c>PackageVersion</c>,
+/// <c>PackageReference</c> and <c>GlobalPackageReference</c> whose id, decoded, is YamlDotNet, in every
+/// MSBuild file that <c>AspireAuditSuppressionGuardTests</c> reads, so an override in a project file is
+/// seen too. It does not open a nupkg, and it does not evaluate MSBuild, so a version set through a
+/// property fails closed as not a plain numeric version. Raising the ceiling is a v2 engine decision.
 /// </para>
 /// </remarks>
 public sealed class YamlDotNetPinGuardTests
 {
     private const string PackageId = "YamlDotNet";
+
+    private const string PackagesPropsName = "Directory.Packages.props";
 
     private const int CeilingMajor = 16;
 
@@ -34,27 +38,73 @@ public sealed class YamlDotNetPinGuardTests
     }
 
     [Fact]
-    public void GivenDirectoryPackagesProps_WhenYamlDotNetPinIsRead_ThenItIsOnTheV1Major()
+    public void GivenMsBuildFiles_WhenYamlDotNetVersionsAreRead_ThenEveryOneIsOnTheV1Major()
     {
-        var document = XDocument.Load(Path.Combine(RepoRoot.Resolve(), "Directory.Packages.props"));
-        var versions = document
-            .Descendants()
-            .Where(element => element.Name.LocalName == "PackageVersion")
-            .Where(element => string.Equals((string?)element.Attribute("Include"), PackageId, StringComparison.Ordinal))
-            .Select(element => (string?)element.Attribute("Version"))
-            .ToList();
+        var pins = new List<(string File, string Kind, string Version)>();
+        foreach (var (file, document) in AspireAuditSuppressionGuardTests.LoadedMsBuildDocuments())
+        {
+            pins.AddRange(YamlDotNetVersions(document).Select(p => (file, p.Kind, p.Version)));
+        }
 
-        var versionText = Assert.Single(versions)?.Trim();
-        _output.WriteLine($"Central {PackageId} PackageVersion: {versionText}");
+        _output.WriteLine($"{PackageId} versions: " + string.Join(", ", pins.Select(p => $"{p.File} {p.Kind}={p.Version}")));
+
+        var central = pins.Where(p => p.File == PackagesPropsName && p.Kind == "PackageVersion Version").ToList();
         Assert.True(
-            Version.TryParse(versionText, out var parsed),
-            $"Directory.Packages.props {PackageId} Version '{versionText}' is not a plain numeric version, so this guard "
-            + "cannot check the ceiling and fails closed.");
+            central.Count == 1,
+            $"{PackagesPropsName} must pin {PackageId} exactly once, found {central.Count}.");
+
+        var unreadable = pins.Where(p => !Version.TryParse(p.Version, out _)).ToList();
         Assert.True(
-            parsed!.Major == CeilingMajor,
-            $"Directory.Packages.props pins {PackageId} {versionText}, outside major {CeilingMajor}. YamlDotNet is held at "
-            + $"{CeilingMajor}.x for the whole v1.x engine series because its types are part of the frozen Vouchfx.Sdk v1 "
-            + "surface, and Aspire 13.6.0 and later need YamlDotNet 18.1.0 or later. Revert the bump. Raising the ceiling "
+            unreadable.Count == 0,
+            $"A {PackageId} version is not a plain numeric version, so this guard cannot check the ceiling and fails closed: "
+            + $"[{string.Join("; ", unreadable.Select(p => $"{p.File}: {p.Kind}='{p.Version}'"))}].");
+
+        var outside = pins.Where(p => Version.Parse(p.Version).Major != CeilingMajor).ToList();
+        Assert.True(
+            outside.Count == 0,
+            $"{PackageId} is held at {CeilingMajor}.x for the whole v1.x engine series because its types are part of the frozen "
+            + "Vouchfx.Sdk v1 surface, and Aspire 13.6.0 and 13.6.5 need YamlDotNet 18.1.0 or later. Found outside that major: "
+            + $"[{string.Join("; ", outside.Select(p => $"{p.File}: {p.Kind}={p.Version}"))}]. Revert the bump, or the override. "
+            + "The YamlDotNet hold in .github/dependabot.yml moves together with this ceiling. Raising the ceiling "
             + "is a v2 engine decision and needs a deliberate change to this test.");
+    }
+
+    [Theory]
+    [InlineData("<PackageVersion Include=\"YamlDotNet\" Version=\"16.3.0\" />", 0)]
+    [InlineData("<PackageVersion Include=\"YamlDotNet\" Version=\"18.1.0\" />", 1)]
+    [InlineData("<PackageReference Include=\"YamlDotNet\" />", 0)]
+    [InlineData("<PackageReference Include=\"YamlDotNet\" VersionOverride=\"18.1.0\" />", 1)]
+    [InlineData("<PackageReference Include=\"%59amlDotNet\" VersionOverride=\"18.1.0\" />", 1)]
+    [InlineData("<PackageReference Include=\"yamldotnet\"><VersionOverride>18.1.0</VersionOverride></PackageReference>", 1)]
+    [InlineData("<GlobalPackageReference Include=\"YamlDotNet\" Version=\"18.1.0\" />", 1)]
+    [InlineData("<PackageReference Update=\"YamlDotNet\" Version=\"18.1.0\" />", 1)]
+    [InlineData("<PackageReference Include=\"Newtonsoft.Json\" VersionOverride=\"18.1.0\" />", 0)]
+    public void GivenPackageElement_WhenYamlDotNetVersionsAreRead_ThenEveryFormIsSeen(string element, int expectedVersions)
+    {
+        var document = XDocument.Parse($"<Project><ItemGroup>{element}</ItemGroup></Project>");
+
+        Assert.Equal(expectedVersions, YamlDotNetVersions(document).Count(p => Version.TryParse(p.Version, out var v) && v.Major != CeilingMajor));
+    }
+
+    private static List<(string Kind, string Version)> YamlDotNetVersions(XDocument document)
+    {
+        var result = new List<(string Kind, string Version)>();
+        foreach (var element in document.Descendants().Where(AspireAuditSuppressionGuardTests.IsPackageElement))
+        {
+            if (!string.Equals(AspireAuditSuppressionGuardTests.PackageId(element), PackageId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            foreach (var name in new[] { "Version", "VersionOverride" })
+            {
+                if (AspireAuditSuppressionGuardTests.Metadata(element, name) is { } value)
+                {
+                    result.Add(($"{element.Name.LocalName} {name}", value.Trim()));
+                }
+            }
+        }
+
+        return result;
     }
 }

@@ -107,7 +107,7 @@ updates:
       # not be produced shows there as an error, not as a pull request. NuGet audit in the
       # build reports advisories independently. Security updates also have their own fixed
       # limit of 10 open pull requests; beyond that only the alerts remain.
-      # Aspire is held at the 13.4.x patch line for the v1.x series (ZEB-33). 13.5.x is
+      # Aspire is held at the 13.4.x patch line for the v1.x series. 13.5.x is
       # unpatched for GHSA-f7vh-h5g3-7jrh. Aspire 13.6.0 and 13.6.5 require YamlDotNet
       # 18.1.0 or later, which the YamlDotNet hold below rules out, and 13.6.5 is the only
       # patched release. Patch updates within 13.4.x still flow.
