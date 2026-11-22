@@ -6,10 +6,10 @@ using Xunit.Abstractions;
 namespace Vouchfx.Engine.Compilation.Tests;
 
 /// <summary>
-/// Fails when the Aspire version is not pinned to one value everywhere it is declared: the
+/// Fails when the Aspire version differs between the places this guard reads: the
 /// <c>Aspire.Hosting*</c> package versions and the <c>VouchfxDcpVersion</c> property in the root
-/// <c>Directory.Packages.props</c>, and the <c>Aspire.AppHost.Sdk</c> version of every project that
-/// declares that SDK.
+/// <c>Directory.Packages.props</c>, and the <c>Aspire.AppHost.Sdk</c> version of every declaration
+/// of that SDK in an MSBuild file.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -19,10 +19,16 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// current Aspire minor.
 /// </para>
 /// <para>
-/// This is a bounded text check over MSBuild XML. It reads <c>Directory.Packages.props</c> and every
-/// <c>*.csproj</c> under the repository root, skipping hidden directories and <c>bin</c>, <c>obj</c>
-/// and <c>node_modules</c>. It does not resolve packages or evaluate MSBuild properties. The
-/// minimum counts guard against a broken search passing without checking anything.
+/// This is a bounded text check over MSBuild XML. It reads the root <c>Directory.Packages.props</c>
+/// for the package versions, with their ids decoded and split at <c>;</c>, and every MSBuild file
+/// that <c>AspireAuditSuppressionGuardTests</c> reads for the SDK declarations, so hidden
+/// directories and <c>bin</c>, <c>obj</c> and <c>node_modules</c> are skipped. It does not resolve
+/// packages or evaluate MSBuild properties. The minimum counts, of package versions and of files
+/// that declare the SDK, guard against a broken search passing without checking anything. Accepted
+/// limit: a version an <c>Aspire.Hosting*</c> package gets anywhere else (a <c>VersionOverride</c>, a
+/// project outside central package management) is not compared here;
+/// <c>AspireAuditSuppressionGuardTests</c> refuses one for <c>Aspire.Hosting</c> and
+/// <c>Aspire.Hosting.AppHost</c> while the audit suppression is present.
 /// </para>
 /// </remarks>
 public sealed class AspireVersionLockstepGuardTests
@@ -39,13 +45,11 @@ public sealed class AspireVersionLockstepGuardTests
 
     private const int MinimumHostingPackages = 10;
 
-    private const int MinimumSdkProjects = 3;
+    private const int MinimumSdkFiles = 3;
 
     private const string MoveTogetherHint =
         "The Aspire.Hosting* package versions, VouchfxDcpVersion and every Aspire.AppHost.Sdk version "
         + "must move together in the same change.";
-
-    private static readonly string[] SkippedDirectoryNames = { "bin", "obj", "node_modules" };
 
     private readonly ITestOutputHelper _output;
 
@@ -118,10 +122,11 @@ public sealed class AspireVersionLockstepGuardTests
         var sdks = ReadAppHostSdkDeclarations();
         _output.WriteLine($"{AppHostSdkName} declarations: " + string.Join(", ", sdks.Select(s => $"{s.File}={s.Version}")));
 
+        var declaringFiles = sdks.Select(s => s.File).Distinct(StringComparer.Ordinal).Count();
         Assert.True(
-            sdks.Count >= MinimumSdkProjects,
-            $"Only {sdks.Count} project files declaring {AppHostSdkName} were found, expected at least "
-            + $"{MinimumSdkProjects}. The search is probably broken, so this guard would check nothing.");
+            declaringFiles >= MinimumSdkFiles,
+            $"Only {declaringFiles} MSBuild files declaring {AppHostSdkName} were found, expected at least "
+            + $"{MinimumSdkFiles}. The search is probably broken, so this guard would check nothing.");
 
         var mismatches = sdks
             .Where(s => !string.Equals(s.Version, dcp, StringComparison.Ordinal))
@@ -132,6 +137,19 @@ public sealed class AspireVersionLockstepGuardTests
             mismatches.Count == 0,
             $"The {AppHostSdkName} version is out of step with the Aspire packages. {MoveTogetherHint} "
             + $"Found: [{string.Join("; ", mismatches)}].");
+    }
+
+    [Theory]
+    [InlineData("<Project Sdk=\"Aspire.AppHost.Sdk/13.4.6\" />", "13.4.6")]
+    [InlineData("<Project Sdk=\"Microsoft.NET.Sdk;Aspire.AppHost.Sdk/13.4.6\" />", "13.4.6")]
+    [InlineData("<Project><Sdk Name=\"Aspire.AppHost.Sdk\" Version=\"13.4.6\" /></Project>", "13.4.6")]
+    [InlineData("<Project><Import Project=\"Sdk.props\" Sdk=\"Aspire.AppHost.Sdk\" Version=\"13.6.5\" /></Project>", "13.6.5")]
+    [InlineData("<Project><Import Project=\"Sdk.props\" Sdk=\"Microsoft.NET.Sdk\" Version=\"10.0.0\" /></Project>", null)]
+    public void GivenProjectXml_WhenAppHostSdkVersionsAreRead_ThenEverySpellingIsSeen(string xml, string? expected)
+    {
+        var versions = AppHostSdkVersions(XDocument.Parse(xml));
+
+        Assert.Equal(expected is null ? Array.Empty<string>() : new[] { expected }, versions);
     }
 
     private static string? ReadDcpVersion()
@@ -149,45 +167,48 @@ public sealed class AspireVersionLockstepGuardTests
         LoadPackagesProps()
             .Descendants()
             .Where(e => NameIs(e, "PackageVersion"))
-            .Select(e => (Id: (AttributeValue(e, "Include") ?? string.Empty).Trim(), Version: (AttributeValue(e, "Version") ?? string.Empty).Trim()))
+            .SelectMany(e => AspireAuditSuppressionGuardTests.ItemPackageIds(e)
+                .Select(id => (Id: id, Version: (AttributeValue(e, "Version") ?? string.Empty).Trim())))
             .Where(p => p.Id.StartsWith(HostingPrefix, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
-    private static List<(string File, string Version)> ReadAppHostSdkDeclarations()
+    private static List<(string File, string Version)> ReadAppHostSdkDeclarations() =>
+        AspireAuditSuppressionGuardTests.LoadedMsBuildDocuments()
+            .SelectMany(d => AppHostSdkVersions(d.Document).Select(version => (d.File, version)))
+            .ToList();
+
+    /// <summary>
+    /// The versions of every <c>Aspire.AppHost.Sdk</c> declaration in a project: the <c>&lt;Sdk Name&gt;</c>
+    /// element, the <c>Sdk="Aspire.AppHost.Sdk/1.2.3"</c> attribute of the project, possibly one of several SDKs,
+    /// and the <c>&lt;Import Project="Sdk.props" Sdk="Aspire.AppHost.Sdk" Version="1.2.3" /&gt;</c> form.
+    /// </summary>
+    private static List<string> AppHostSdkVersions(XDocument document)
     {
-        var root = RepoRoot.Resolve();
-        var result = new List<(string File, string Version)>();
-        foreach (var path in EnumerateProjectFiles(root))
+        var result = new List<string>();
+        foreach (var element in document.Descendants().Where(e => NameIs(e, "Sdk")))
         {
-            var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
-            XDocument document;
-            try
+            if (string.Equals(AttributeValue(element, "Name")?.Trim(), AppHostSdkName, StringComparison.OrdinalIgnoreCase))
             {
-                document = XDocument.Load(path);
+                result.Add((AttributeValue(element, "Version") ?? string.Empty).Trim());
             }
-            catch (System.Xml.XmlException exception)
-            {
-                Assert.Fail($"{relative} is not well-formed XML, so the Aspire version guard cannot read it: {exception.Message}");
-                return result;
-            }
+        }
 
-            foreach (var element in document.Descendants().Where(e => NameIs(e, "Sdk")))
+        foreach (var element in document.Descendants().Where(e => NameIs(e, "Import")))
+        {
+            if (string.Equals(AttributeValue(element, "Sdk")?.Trim(), AppHostSdkName, StringComparison.OrdinalIgnoreCase))
             {
-                if (string.Equals(AttributeValue(element, "Name")?.Trim(), AppHostSdkName, StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Add((relative, (AttributeValue(element, "Version") ?? string.Empty).Trim()));
-                }
+                result.Add((AttributeValue(element, "Version") ?? string.Empty).Trim());
             }
+        }
 
-            // The attribute form: <Project Sdk="Aspire.AppHost.Sdk/13.4.6">, possibly one of several SDKs.
-            var projectSdk = document.Root is { } project ? AttributeValue(project, "Sdk") : null;
-            foreach (var entry in (projectSdk ?? string.Empty).Split(';', StringSplitOptions.RemoveEmptyEntries))
+        // The attribute form: <Project Sdk="Aspire.AppHost.Sdk/13.4.6">, possibly one of several SDKs.
+        var projectSdk = document.Root is { } project ? AttributeValue(project, "Sdk") : null;
+        foreach (var entry in (projectSdk ?? string.Empty).Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = entry.Trim().Split('/', 2);
+            if (string.Equals(parts[0], AppHostSdkName, StringComparison.OrdinalIgnoreCase))
             {
-                var parts = entry.Trim().Split('/', 2);
-                if (string.Equals(parts[0], AppHostSdkName, StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Add((relative, parts.Length > 1 ? parts[1].Trim() : string.Empty));
-                }
+                result.Add(parts.Length > 1 ? parts[1].Trim() : string.Empty);
             }
         }
 
@@ -196,29 +217,6 @@ public sealed class AspireVersionLockstepGuardTests
 
     private static XDocument LoadPackagesProps() =>
         XDocument.Load(Path.Combine(RepoRoot.Resolve(), PackagesPropsName));
-
-    private static List<string> EnumerateProjectFiles(string directory)
-    {
-        var pending = new Stack<string>();
-        pending.Push(directory);
-        var files = new List<string>();
-        while (pending.Count > 0)
-        {
-            var current = pending.Pop();
-            files.AddRange(Directory.EnumerateFiles(current).Where(p => p.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)));
-            foreach (var child in Directory.EnumerateDirectories(current))
-            {
-                var name = Path.GetFileName(child);
-                if (!name.StartsWith('.') && !SkippedDirectoryNames.Contains(name, StringComparer.OrdinalIgnoreCase))
-                {
-                    pending.Push(child);
-                }
-            }
-        }
-
-        files.Sort(StringComparer.Ordinal);
-        return files;
-    }
 
     private static bool NameIs(XElement element, string localName) =>
         string.Equals(element.Name.LocalName, localName, StringComparison.OrdinalIgnoreCase);
