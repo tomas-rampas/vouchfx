@@ -117,15 +117,16 @@ Four cases concern the floating tags after the Docker lane has passed. In each,
 "the manual run" means running **Move floating convenience tag**
 (`move-floating-tag.yml`) by hand with a release tag. A manual run has neither
 the commit check nor the no-downgrade check described below, so first confirm
-that the tag and its release are the ones you mean and that the release run for
-that tag passed. Its log reports `Moved '<floating tag>'` on success.
+that the tag and its release are the ones you mean and that, in the release run
+for that tag, the Docker lane and `publish-release` succeeded. Its log reports
+`Moved '<floating tag>'` on success.
 
-**The Marketplace job fails.** `move-floating-tag` needs `publish-marketplace` as
-well as `publish-release`. If the Marketplace job fails after the release assets
-and the NuGet packages are published, the floating tag does not move. Fix the
-cause and use **Re-run failed jobs**. That is expected to re-run the Marketplace
-job and then move the tag; it has not yet been exercised. If the Marketplace
-failure cannot be fixed soon, use the manual run with the release tag.
+**A publication job fails.** `move-floating-tag` needs `publish-release` and
+`publish-marketplace`. If either fails after the lane has passed, the floating
+tag does not move. Fix the cause and use **Re-run failed jobs**. That is expected
+to re-run the failed job and the jobs after it, and then move the tag; it has not
+yet been exercised. If only the Marketplace job failed and it cannot be fixed
+soon, use the manual run with the release tag.
 
 **Only the `move-floating-tag` job fails or is cancelled.** This job runs after
 `publish-release` and `publish-marketplace` have succeeded. If it fails, the
@@ -147,12 +148,17 @@ to do depends on its message:
 - *The remote tags could not be read*, or the job was cancelled. Use **Re-run
   failed jobs**, which is expected to retry only that job; this has not yet been
   exercised. The other route is the manual run with the release tag.
+- *Any other message* (for example `No release found for tag`, which a transient
+  GitHub API error also produces). Check that the release is still published and
+  that its tag still exists, then use **Re-run failed jobs**. If the tag was
+  refused as not valid semver, no floating tag tracks it; do nothing.
 
 **A warning that the floating tag is already on a newer release.** The job can
 end successfully with a warning that names the floating tag and the newer release
 it is on. It moved nothing. That is expected when an older release run finishes,
-or is re-run, after a newer release in the same line has moved the tag. No action
-is needed. To put the tag on the older release anyway, use the manual run.
+or is re-run, after a newer release in the same line has moved the tag, or when
+the release is a patch of an older minor line (a `v1.3.z` after `v1.4.0`). No
+action is needed. To put the tag on the older release anyway, use the manual run.
 
 **A release found defective after it was published.** If a release passed its
 gates, was published, moved `v1` and was later found defective, consumers who
@@ -164,7 +170,7 @@ tag never moves `v1`, and the run still succeeds; a `v1.0.0-rc.N` tag moves
 confirm that its log
 reports `Moved 'v1'`. A manual run has no no-downgrade check, so it moves `v1`
 back to the older release. After that, do not re-run the defective release's
-run, and cancel it if it is still running: the defective release is newer than
+run, and cancel any re-run of it that has started: the defective release is newer than
 the one `v1` is now on, so its `move-floating-tag` job would move `v1` forward
 again.
 

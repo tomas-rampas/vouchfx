@@ -597,6 +597,8 @@ esac
         self.assertLeftAlone(self.run_job("v1.4.9", EXPECTED_SHA, tags), "v1.4.10")
 
     def test_called_path_compares_versions_numerically_and_ignores_build_metadata(self):
+        # release.yml's own version check refuses a `+build` release tag, so only a
+        # `+build` tag in the listing can reach this path from a release run.
         for tag, on_floating, moves in (
                 ("v1.4.9", "v1.4.10", False), ("v1.4.10", "v1.4.9", True),
                 ("v1.9.0", "v1.10.0", False), ("v1.10.0", "v1.9.0", True),

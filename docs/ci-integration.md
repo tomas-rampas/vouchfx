@@ -422,7 +422,9 @@ which force-moves the matching tag to a release's commit. The tag is moved by th
 run, which is expected to start only after the release's checks have passed and its packages have been
 published, so a release that fails its checks is expected to leave the tag where it was. This applies to
 releases tagged on a commit that contains this behaviour. A GitHub Release created or published again for
-an older tag still moves the tag as soon as it is published, with no checks:
+a tag made before this behaviour was added still moves the tag as soon as it is published, with no checks.
+
+The three tags:
 
 | Tag | Tracks | State |
 |---|---|---|
