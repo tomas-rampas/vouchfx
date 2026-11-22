@@ -130,15 +130,21 @@ public sealed class HttpRestStructuredBodyReferenceTests
 
     /// <summary>
     /// Text that would read as a reference only once the JSON between two strings is added
-    /// (a key and its value, two sequence items, two values) is sent literally: nothing is
-    /// resolved, and the step runs.
+    /// (a key and its value, two sequence items, two values) is never resolved at run time.
     /// </summary>
+    /// <remarks>
+    /// A suite holding such a body is refused before the run, because its first string holds
+    /// a <c>${secret:</c> with no closing <c>}</c> (pinned in Vouchfx.Engine.Runtime.Tests,
+    /// HttpRestStructuredBodyCensusTests). These rows bind, emit and run the step directly,
+    /// below that check, to pin the run-time half on its own: the JSON between strings is
+    /// never read by the resolver, so nothing is fetched and the text goes out as written.
+    /// </remarks>
     [Theory]
     [InlineData("body:\n  'a${secret:env/': 'X}'\n", "{\"a${secret:env/\":\"X}\"}")]
     [InlineData("body:\n  - '${secret:env/'\n  - 'X}'\n", "[\"${secret:env/\",\"X}\"]")]
     [InlineData("body:\n  a: '${secret:env/'\n  b: 'X}'\n", "{\"a\":\"${secret:env/\",\"b\":\"X}\"}")]
     [InlineData("body:\n  a: 'p${secret:env/'\n  b: { c: 'X}' }\n", "{\"a\":\"p${secret:env/\",\"b\":{\"c\":\"X}\"}}")]
-    public async Task ReferenceJoinedAcrossStrings_IsNotResolved_AndIsSentLiterally(string bodyYaml, string expected)
+    public async Task ReferenceJoinedAcrossStrings_IsNeverResolvedAtRunTime(string bodyYaml, string expected)
     {
         var run = await RunAsync(bodyYaml);
 
@@ -148,12 +154,13 @@ public sealed class HttpRestStructuredBodyReferenceTests
     }
 
     /// <summary>
-    /// The joined text stays literal when another string in the same body holds a reference,
-    /// so the body is sent as parts: the joined halves are JSON text that is never resolved,
-    /// and only the placeholder's string is resolved and escaped.
+    /// The same holds when another string in the body holds a reference, so the body is sent
+    /// as parts: the joined halves are JSON text the resolver never reads, and only the
+    /// placeholder's string is resolved and escaped. Run below the pre-run check, which would
+    /// refuse this suite (see the remarks on the row above).
     /// </summary>
     [Fact]
-    public async Task JoinedTextBesideAResolvedPlaceholder_IsSentLiterally_ExactBytes()
+    public async Task JoinedTextBesideAResolvedPlaceholder_IsNeverResolvedAtRunTime_ExactBytes()
     {
         var run = await RunAsync(
             "body:\n  a: '${secret:env/'\n  b: 'X}'\n  c: '{p}'\n",

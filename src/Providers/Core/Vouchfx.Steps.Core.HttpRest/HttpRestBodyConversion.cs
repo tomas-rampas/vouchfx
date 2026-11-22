@@ -21,8 +21,9 @@
 // and the JSON between two strings could complete a reference that neither string holds.
 // ToTemplate therefore also returns the body's strings, unescaped, for the census, and the
 // split the provider emits so that only those strings are resolved at run time, each written
-// back as an escaped JSON string. Text that reads as a reference only across two strings is
-// never a reference: it is sent literally, and neither checked, listed nor hashed.
+// back as an escaped JSON string. A reference never spans two strings: the census checks each
+// string on its own, as it checks a header, so a string holding a `${secret:` with no closing
+// `}` is refused before the run, whatever a later string holds.
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -199,9 +200,8 @@ internal static class HttpRestBodyConversion
     /// <param name="Strings">
     /// For a structured body, every JSON string it sends (member names and string values),
     /// unescaped and in the order they are written; the only text in which a reference can
-    /// be. Each carries whether its open tail joins a later string (see
-    /// <see cref="BodyString"/>). <see langword="null"/> for a scalar body, whose
-    /// <paramref name="Text"/> is read as one text, and for a refusal.
+    /// be. <see langword="null"/> for a scalar body, whose <paramref name="Text"/> is read as
+    /// one text, and for a refusal.
     /// </param>
     /// <param name="Parts">
     /// For a structured body holding at least one reference, the body split for run-time
@@ -211,50 +211,17 @@ internal static class HttpRestBodyConversion
     /// <c>JsonSerializer.Serialize</c> before any resolution gives back
     /// <paramref name="Text"/> exactly. A body none of whose strings holds a reference, but
     /// whose JSON text reads as one across two strings, is the single part
-    /// <paramref name="Text"/>, so that it is sent without being resolved.
-    /// <see langword="null"/> otherwise, when resolving <paramref name="Text"/> as a template
-    /// leaves it as it is.
+    /// <paramref name="Text"/>, so that it is sent without being resolved. The pre-run check
+    /// refuses such a body, because one of its strings holds a <c>${secret:</c> with no
+    /// closing <c>}</c>; this part keeps the run-time resolver from reading across strings
+    /// all the same. <see langword="null"/> otherwise, when resolving <paramref name="Text"/>
+    /// as a template leaves it as it is.
     /// </param>
     internal sealed record Result(
         string? Text,
         string? Refusal,
-        IReadOnlyList<BodyString>? Strings = null,
+        IReadOnlyList<string>? Strings = null,
         IReadOnlyList<string>? Parts = null);
-
-    /// <summary>One JSON string of a structured body, as the run-time resolver reads it.</summary>
-    /// <param name="Value">The string, unescaped: a member name or a string value.</param>
-    /// <param name="OpenTailJoinsLaterString">
-    /// <see langword="true"/> only when <paramref name="Value"/> has an open tail (see
-    /// <see cref="OpenTailStart"/>) AND the serialised body joins that tail into text that
-    /// ends inside a LATER string: in <see cref="Result.Text"/>, the first <c>}</c> after the
-    /// tail's <c>${secret:</c> lies inside the content of a later JSON string, not in JSON
-    /// structure. That is the one case the pinned rule exempts: text that reads as a reference
-    /// only across two strings is sent literally, and so its first half is not refused. An
-    /// open tail that joins nothing (the last or only string, or one followed by a structural
-    /// <c>}</c>) is <see langword="false"/>, and the whole string is checked, so it is refused
-    /// as a malformed reference exactly as the same text in a header is.
-    /// </param>
-    /// <remarks>
-    /// Computed here, where the serialised text and the position of every string in it are
-    /// known while the body is written, rather than re-derived by the census: the census
-    /// would otherwise have to locate each string inside escaped JSON again, a second copy of
-    /// the serialiser's layout that could drift from the first.
-    /// </remarks>
-    internal sealed record BodyString(string Value, bool OpenTailJoinsLaterString);
-
-    /// <summary>The opening of a secret reference.</summary>
-    private const string SecretSigil = "${secret:";
-
-    /// <summary>
-    /// The index of the open tail of <paramref name="value"/>: its first <c>${secret:</c>
-    /// with no <c>}</c> after it in <paramref name="value"/>, or <c>-1</c> when it has none.
-    /// </summary>
-    /// <remarks>
-    /// No reference can start at or after this index, because a reference ends in a
-    /// <c>}</c>; every reference in <paramref name="value"/> lies wholly before it.
-    /// </remarks>
-    internal static int OpenTailStart(string value) =>
-        value.IndexOf(SecretSigil, value.LastIndexOf('}') + 1, StringComparison.Ordinal);
 
     /// <summary>
     /// The pattern the run-time resolver (<c>Secret_Helpers.ResolveTemplate</c>) matches: a
@@ -297,8 +264,7 @@ internal static class HttpRestBodyConversion
             var text = JsonSerializer.Serialize(node);
             var split = new Split();
             split.Write(node);
-            var parts = split.Finish(text);
-            return new Result(text, null, split.BodyStrings, parts);
+            return new Result(text, null, split.Strings, split.Finish(text));
         }
         catch (RefusalException refusal)
         {
@@ -316,56 +282,51 @@ internal static class HttpRestBodyConversion
     /// value with the serialiser's default settings, exactly as the serialiser writes them in
     /// the tree, and <see cref="Finish"/> proves the result equal to the serialiser's text
     /// before any split is used, so a difference is a defect that surfaces at bind time and
-    /// never a body that differs on the wire. The same walk records where each string's
-    /// content lies in that text, which is what <see cref="BodyString.OpenTailJoinsLaterString"/>
-    /// is computed from.
+    /// never a body that differs on the wire.
     /// </remarks>
     private sealed class Split
     {
         private readonly StringBuilder _literal = new();
-        private readonly StringBuilder _written = new();
-        private readonly List<string> _strings = new();
-        private readonly List<(int Start, int End)> _contents = new();
         private List<string>? _parts;
 
-        /// <summary>The body's strings, set by <see cref="Finish"/>.</summary>
-        internal IReadOnlyList<BodyString>? BodyStrings { get; private set; }
+        /// <summary>The body's strings, unescaped, in the order they are written.</summary>
+        internal List<string> Strings { get; } = new();
 
         internal void Write(JsonNode? node)
         {
             switch (node)
             {
                 case null:
-                    Append("null");
+                    _literal.Append("null");
                     break;
                 case JsonObject obj:
                     {
-                        Append("{");
+                        _literal.Append('{');
                         var first = true;
                         foreach (var (key, value) in obj)
                         {
                             if (!first)
-                                Append(",");
+                                _literal.Append(',');
                             first = false;
                             WriteString(key);
-                            Append(":");
+                            _literal.Append(':');
                             Write(value);
                         }
 
-                        Append("}");
+                        _literal.Append('}');
                         break;
                     }
                 case JsonArray arr:
                     {
-                        Append("[");
+                        _literal.Append('[');
                         for (var index = 0; index < arr.Count; index++)
                         {
                             if (index > 0)
-                                Append(",");
+                                _literal.Append(',');
                             Write(arr[index]);
                         }
 
-                        Append("]");
+                        _literal.Append(']');
                         break;
                     }
                 default:
@@ -374,30 +335,18 @@ internal static class HttpRestBodyConversion
                         if (value.GetValueKind() == JsonValueKind.String)
                             WriteString(value.GetValue<string>());
                         else
-                            Append(value.ToJsonString());
+                            _literal.Append(value.ToJsonString());
                         break;
                     }
             }
         }
 
-        /// <summary>JSON text that is sent as it is: structure, or a value that is not a string.</summary>
-        private void Append(string json)
-        {
-            _literal.Append(json);
-            _written.Append(json);
-        }
-
         private void WriteString(string value)
         {
-            var json = JsonSerializer.Serialize(value);
-
-            // The content lies between the quotes: [Start, End), End being the closing quote.
-            _contents.Add((_written.Length + 1, _written.Length + json.Length - 1));
-            _written.Append(json);
-            _strings.Add(value);
+            Strings.Add(value);
             if (!s_reference.IsMatch(value))
             {
-                _literal.Append(json);
+                _literal.Append(JsonSerializer.Serialize(value));
                 return;
             }
 
@@ -410,7 +359,7 @@ internal static class HttpRestBodyConversion
         /// <summary>
         /// The parts, or <see langword="null"/> when neither a string nor the JSON text holds
         /// anything the resolver would read; throws when the walk does not reproduce
-        /// <paramref name="text"/>. Also sets <see cref="BodyStrings"/>.
+        /// <paramref name="text"/>.
         /// </summary>
         internal List<string>? Finish(string text)
         {
@@ -428,70 +377,22 @@ internal static class HttpRestBodyConversion
                 }
             }
 
-            if (!string.Equals(rebuilt.ToString(), text, StringComparison.Ordinal)
-                || !string.Equals(_written.ToString(), text, StringComparison.Ordinal))
+            if (!string.Equals(rebuilt.ToString(), text, StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
                     "http.rest: splitting a structured body around its references did not reproduce "
                     + "the body's JSON. This is a defect in the body conversion, not in the suite.");
             }
 
-            BodyStrings = WithJoinedTails(text);
-
             // No string holds a reference, but the JSON text reads as one across two strings
             // (a key and its value, two items): sent as one part, which is never resolved,
-            // because resolving the text as a template would read that joined reference.
+            // because resolving the text as a template would read that joined reference. The
+            // pre-run check refuses such a body (one of its strings holds an unclosed
+            // `${secret:`), so this only keeps the run-time reading per string.
             if (_parts is null && s_reference.IsMatch(text))
                 return new List<string> { text };
 
             return _parts;
-        }
-
-        /// <summary>
-        /// Every string, each marked with whether its open tail joins a later string in
-        /// <paramref name="text"/> (see <see cref="BodyString.OpenTailJoinsLaterString"/>).
-        /// </summary>
-        /// <remarks>
-        /// <para>
-        /// The rule, for a string with an open tail: take the first <c>}</c> in the serialised
-        /// text after the tail's <c>${secret:</c>. The tail has no <c>}</c>, and the serialiser
-        /// does not escape <c>}</c>, so that brace is past this string's closing quote. The
-        /// tail joins a later string exactly when the brace lies inside the content of a
-        /// string (which is then a later one); when it is JSON structure, or there is none,
-        /// the tail joins nothing. This is how the old whole-text reading paired the
-        /// <c>${secret:</c> with a closing brace.
-        /// </para>
-        /// <para>
-        /// One pass: the strings are visited in the order they are written, so both the brace
-        /// cursor and the string cursor only move forward, and the work is linear in the text.
-        /// </para>
-        /// </remarks>
-        private List<BodyString> WithJoinedTails(string text)
-        {
-            var result = new List<BodyString>(_strings.Count);
-            var brace = 0;
-            var holder = 0;
-            for (var index = 0; index < _strings.Count; index++)
-            {
-                var value = _strings[index];
-                var joins = false;
-                if (brace >= 0 && OpenTailStart(value) >= 0)
-                {
-                    var closingQuote = _contents[index].End;
-                    if (brace <= closingQuote)
-                        brace = text.IndexOf('}', closingQuote + 1);
-                    if (brace >= 0)
-                    {
-                        while (holder < _contents.Count && _contents[holder].End <= brace)
-                            holder++;
-                        joins = holder < _contents.Count && _contents[holder].Start <= brace;
-                    }
-                }
-
-                result.Add(new BodyString(value, joins));
-            }
-
-            return result;
         }
     }
 

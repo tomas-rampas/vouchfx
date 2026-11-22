@@ -6112,10 +6112,7 @@ public static class ScenarioRunner
             var collection = StepTemplateCensus.Collect(node);
             foreach (var field in collection.Fields)
             {
-                // ValidateField over the field's text, except for the one open tail a structured
-                // REST body sends literally because it joins a later string
-                // (StepTemplateCensus.TryValidate). Diagnostics quote the text as written.
-                if (!StepTemplateCensus.TryValidate(field, s_knownSecretSources, out var fieldError))
+                if (!SecretReference.ValidateField(field.Text, s_knownSecretSources, out var fieldError))
                 {
                     var message = $"step '{node.Id}': {fieldError} (field '{field.Location}')";
                     faults.Add(new SecretReferenceFault(message, $"steps.{node.Id}.{field.Location}", false));

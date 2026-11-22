@@ -7,13 +7,16 @@
 #
 #   - a Vault reference whose path holds characters the JSON serialiser escapes, beside the
 #     same reference in a header;
-#   - text that reads as a reference only across a key and its value, and across two
-#     sequence items: never a reference, so it is one part that is sent without resolution;
 #   - a reference inside a folded scalar, which is one YAML string;
 #   - a secret and a placeholder in member names and in values;
 #   - numbers, booleans and null beside references, and a string that is only a reference;
 #   - a structured body with no reference, whose emitted call is unchanged;
 #   - a raw-text body, which is still resolved as one text.
+#
+# Every step here passes the pre-run secret-reference check, which this gate does not run.
+# Text that would read as a reference only across two strings is refused by that check (its
+# first string holds a `${secret:` with no closing `}`), so it has no row here; the refusal
+# tests in HttpRestStructuredBodyCensusTests cover it.
 #
 # The golden records whatever the engine does today; nothing here is a statement of what it
 # should do. Used only by EmittedCodeBaselineTests; no topology is started and no secret is
@@ -36,23 +39,6 @@ steps:
       token: '${secret:vault/kv/a+b#f}'
       markup: '${secret:vault/kv/a<b>&c#f}'
       accented: '${secret:vault/kv/café#f}'
-
-  - id: joined-key-and-value
-    type: http.rest
-    target: app
-    method: POST
-    path: /joined-pair
-    body:
-      'a${secret:env/': 'X}'
-
-  - id: joined-sequence-items
-    type: http.rest
-    target: app
-    method: POST
-    path: /joined-items
-    body:
-      - '${secret:env/'
-      - 'X}'
 
   - id: folded-scalar-reference
     type: http.rest

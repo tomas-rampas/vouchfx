@@ -2,9 +2,9 @@ vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Runtime.Tests/EmittedCodeCorpus/http-rest-body-references.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
-steps: 8
+steps: 6
 
-@@@@ step 1 of 8
+@@@@ step 1 of 6
 id: escaped-path-characters
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
@@ -75,8 +75,8 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         bodyParts: new string[] { "{\u0022token\u0022:", "${secret:vault/kv/a\u002Bb#f}", ",\u0022markup\u0022:", "${secret:vault/kv/a\u003Cb\u003E\u0026c#f}", ",\u0022accented\u0022:", "${secret:vault/kv/caf\u00E9#f}", "}" });
 }
 
-@@@@ step 2 of 8
-id: joined-key-and-value
+@@@@ step 2 of 6
+id: folded-scalar-reference
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
 model: Vouchfx.Steps.HttpRest.HttpRestModel
@@ -86,13 +86,15 @@ timeout-ms: none
 {
   "Target": "app",
   "Method": "POST",
-  "Path": "/joined-pair",
+  "Path": "/folded",
   "Headers": null,
-  "Body": "{\"a${secret:env/\":\"X}\"}",
+  "Body": "{\"note\":\"token ${secret:env/FOLDED_TOKEN}\"}",
   "Expect": null,
   "BodyRefusal": null,
   "BodyParts": [
-    "{\"a${secret:env/\":\"X}\"}"
+    "{\"note\":",
+    "token ${secret:env/FOLDED_TOKEN}",
+    "}"
   ]
 }
 @@@@ step 2 host-resources
@@ -111,134 +113,6 @@ Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
 HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
 @@@@ step 2 statement-block
-{
-    await HttpRest_Helpers.ExecuteAsync(
-        Vars,
-        Secrets,
-        Security,
-        "__outcome::joined_key_and_value",
-        "__capture_status::joined_key_and_value",
-        "svc::app",
-        "app",
-        "POST",
-        "/joined-pair",
-        null,
-        new string[] { },
-        new string[] { },
-        null,
-        new string[] { },
-        new string[] { },
-        new string[] { },
-        null,
-        new string[] { },
-        new string[] { },
-        new string[] { },
-        __stepCt_joined_key_and_value,
-        __stepBudgetGoverned_joined_key_and_value,
-        bodyParts: new string[] { "{\u0022a${secret:env/\u0022:\u0022X}\u0022}" });
-}
-
-@@@@ step 3 of 8
-id: joined-sequence-items
-type: http.rest
-provider: Vouchfx.Steps.HttpRest.HttpRestProvider
-model: Vouchfx.Steps.HttpRest.HttpRestModel
-retry: false
-timeout-ms: none
-@@@@ step 3 model
-{
-  "Target": "app",
-  "Method": "POST",
-  "Path": "/joined-items",
-  "Headers": null,
-  "Body": "[\"${secret:env/\",\"X}\"]",
-  "Expect": null,
-  "BodyRefusal": null,
-  "BodyParts": [
-    "[\"${secret:env/\",\"X}\"]"
-  ]
-}
-@@@@ step 3 host-resources
-[]
-@@@@ step 3 usings
-System
-System.Collections.Generic
-System.Net.Http
-System.Diagnostics
-System.Threading.Tasks
-Vouchfx.Engine.Abstractions
-@@@@ step 3 helpers
-HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
-HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
-Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
-Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
-HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
-@@@@ step 3 statement-block
-{
-    await HttpRest_Helpers.ExecuteAsync(
-        Vars,
-        Secrets,
-        Security,
-        "__outcome::joined_sequence_items",
-        "__capture_status::joined_sequence_items",
-        "svc::app",
-        "app",
-        "POST",
-        "/joined-items",
-        null,
-        new string[] { },
-        new string[] { },
-        null,
-        new string[] { },
-        new string[] { },
-        new string[] { },
-        null,
-        new string[] { },
-        new string[] { },
-        new string[] { },
-        __stepCt_joined_sequence_items,
-        __stepBudgetGoverned_joined_sequence_items,
-        bodyParts: new string[] { "[\u0022${secret:env/\u0022,\u0022X}\u0022]" });
-}
-
-@@@@ step 4 of 8
-id: folded-scalar-reference
-type: http.rest
-provider: Vouchfx.Steps.HttpRest.HttpRestProvider
-model: Vouchfx.Steps.HttpRest.HttpRestModel
-retry: false
-timeout-ms: none
-@@@@ step 4 model
-{
-  "Target": "app",
-  "Method": "POST",
-  "Path": "/folded",
-  "Headers": null,
-  "Body": "{\"note\":\"token ${secret:env/FOLDED_TOKEN}\"}",
-  "Expect": null,
-  "BodyRefusal": null,
-  "BodyParts": [
-    "{\"note\":",
-    "token ${secret:env/FOLDED_TOKEN}",
-    "}"
-  ]
-}
-@@@@ step 4 host-resources
-[]
-@@@@ step 4 usings
-System
-System.Collections.Generic
-System.Net.Http
-System.Diagnostics
-System.Threading.Tasks
-Vouchfx.Engine.Abstractions
-@@@@ step 4 helpers
-HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
-HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
-Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
-Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
-HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
-@@@@ step 4 statement-block
 {
     await HttpRest_Helpers.ExecuteAsync(
         Vars,
@@ -266,14 +140,14 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         bodyParts: new string[] { "{\u0022note\u0022:", "token ${secret:env/FOLDED_TOKEN}", "}" });
 }
 
-@@@@ step 5 of 8
+@@@@ step 3 of 6
 id: keys-and-values
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
 model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
-@@@@ step 5 model
+@@@@ step 3 model
 {
   "Target": "app",
   "Method": "POST",
@@ -296,22 +170,22 @@ timeout-ms: none
     "}"
   ]
 }
-@@@@ step 5 host-resources
+@@@@ step 3 host-resources
 []
-@@@@ step 5 usings
+@@@@ step 3 usings
 System
 System.Collections.Generic
 System.Net.Http
 System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
-@@@@ step 5 helpers
+@@@@ step 3 helpers
 HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
 HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
-@@@@ step 5 statement-block
+@@@@ step 3 statement-block
 {
     await HttpRest_Helpers.ExecuteAsync(
         Vars,
@@ -339,14 +213,14 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         bodyParts: new string[] { "{", "{tenant}", ":", "${secret:env/TENANT_TOKEN}", ",", "${secret:env/KEY_NAME}", ":", "{orderId}", ",\u0022mixed\u0022:", "id={orderId}; token=${secret:env/TENANT_TOKEN}", "}" });
 }
 
-@@@@ step 6 of 8
+@@@@ step 4 of 6
 id: typed-beside-references
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
 model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
-@@@@ step 6 model
+@@@@ step 4 model
 {
   "Target": "app",
   "Method": "POST",
@@ -363,22 +237,22 @@ timeout-ms: none
     ",false]}"
   ]
 }
-@@@@ step 6 host-resources
+@@@@ step 4 host-resources
 []
-@@@@ step 6 usings
+@@@@ step 4 usings
 System
 System.Collections.Generic
 System.Net.Http
 System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
-@@@@ step 6 helpers
+@@@@ step 4 helpers
 HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
 HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
-@@@@ step 6 statement-block
+@@@@ step 4 statement-block
 {
     await HttpRest_Helpers.ExecuteAsync(
         Vars,
@@ -406,14 +280,14 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         bodyParts: new string[] { "{\u0022count\u0022:3,\u0022ratio\u0022:1.5,\u0022active\u0022:true,\u0022none\u0022:null,\u0022empty\u0022:null,\u0022only\u0022:", "${secret:env/ONLY_REFERENCE}", ",\u0022list\u0022:[1,", "{orderId}", ",false]}" });
 }
 
-@@@@ step 7 of 8
+@@@@ step 5 of 6
 id: no-reference
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
 model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
-@@@@ step 7 model
+@@@@ step 5 model
 {
   "Target": "app",
   "Method": "POST",
@@ -424,22 +298,22 @@ timeout-ms: none
   "BodyRefusal": null,
   "BodyParts": null
 }
-@@@@ step 7 host-resources
+@@@@ step 5 host-resources
 []
-@@@@ step 7 usings
+@@@@ step 5 usings
 System
 System.Collections.Generic
 System.Net.Http
 System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
-@@@@ step 7 helpers
+@@@@ step 5 helpers
 HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
 HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
-@@@@ step 7 statement-block
+@@@@ step 5 statement-block
 {
     await HttpRest_Helpers.ExecuteAsync(
         Vars,
@@ -466,14 +340,14 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         __stepBudgetGoverned_no_reference);
 }
 
-@@@@ step 8 of 8
+@@@@ step 6 of 6
 id: raw-text-body
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
 model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
-@@@@ step 8 model
+@@@@ step 6 model
 {
   "Target": "app",
   "Method": "POST",
@@ -484,22 +358,22 @@ timeout-ms: none
   "BodyRefusal": null,
   "BodyParts": null
 }
-@@@@ step 8 host-resources
+@@@@ step 6 host-resources
 []
-@@@@ step 8 usings
+@@@@ step 6 usings
 System
 System.Collections.Generic
 System.Net.Http
 System.Diagnostics
 System.Threading.Tasks
 Vouchfx.Engine.Abstractions
-@@@@ step 8 helpers
+@@@@ step 6 helpers
 HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
 HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
 HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
-@@@@ step 8 statement-block
+@@@@ step 6 statement-block
 {
     await HttpRest_Helpers.ExecuteAsync(
         Vars,
@@ -583,92 +457,6 @@ var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var 
         "escaped-path-characters",
         Vars.TryGetValue("__outcome::escaped_path_characters", out var __sco_escaped_path_characters) ? __sco_escaped_path_characters as Vouchfx.Engine.Abstractions.StepOutcome : null,
         Vars.TryGetValue("__capture_status::escaped_path_characters", out var __scs_escaped_path_characters) ? __scs_escaped_path_characters as string : null);
-}
-{
-    __vouchfxRunCt.ThrowIfCancellationRequested();
-    System.Threading.CancellationToken __stepCt_joined_key_and_value = __vouchfxRunCt;
-    _ = __stepCt_joined_key_and_value;
-    bool __stepBudgetGoverned_joined_key_and_value = false;
-    _ = __stepBudgetGoverned_joined_key_and_value;
-    StepEvents?.OnStepStarted("joined-key-and-value");
-{
-    await HttpRest_Helpers.ExecuteAsync(
-        Vars,
-        Secrets,
-        Security,
-        "__outcome::joined_key_and_value",
-        "__capture_status::joined_key_and_value",
-        "svc::app",
-        "app",
-        "POST",
-        "/joined-pair",
-        null,
-        new string[] { },
-        new string[] { },
-        null,
-        new string[] { },
-        new string[] { },
-        new string[] { },
-        null,
-        new string[] { },
-        new string[] { },
-        new string[] { },
-        __stepCt_joined_key_and_value,
-        __stepBudgetGoverned_joined_key_and_value,
-        bodyParts: new string[] { "{\u0022a${secret:env/\u0022:\u0022X}\u0022}" });
-}
-    if (__vouchfxRunCt.IsCancellationRequested)
-    {
-        Vars.Remove("__outcome::joined_key_and_value");
-        __vouchfxRunCt.ThrowIfCancellationRequested();
-    }
-    StepEvents?.OnStepCompleted(
-        "joined-key-and-value",
-        Vars.TryGetValue("__outcome::joined_key_and_value", out var __sco_joined_key_and_value) ? __sco_joined_key_and_value as Vouchfx.Engine.Abstractions.StepOutcome : null,
-        Vars.TryGetValue("__capture_status::joined_key_and_value", out var __scs_joined_key_and_value) ? __scs_joined_key_and_value as string : null);
-}
-{
-    __vouchfxRunCt.ThrowIfCancellationRequested();
-    System.Threading.CancellationToken __stepCt_joined_sequence_items = __vouchfxRunCt;
-    _ = __stepCt_joined_sequence_items;
-    bool __stepBudgetGoverned_joined_sequence_items = false;
-    _ = __stepBudgetGoverned_joined_sequence_items;
-    StepEvents?.OnStepStarted("joined-sequence-items");
-{
-    await HttpRest_Helpers.ExecuteAsync(
-        Vars,
-        Secrets,
-        Security,
-        "__outcome::joined_sequence_items",
-        "__capture_status::joined_sequence_items",
-        "svc::app",
-        "app",
-        "POST",
-        "/joined-items",
-        null,
-        new string[] { },
-        new string[] { },
-        null,
-        new string[] { },
-        new string[] { },
-        new string[] { },
-        null,
-        new string[] { },
-        new string[] { },
-        new string[] { },
-        __stepCt_joined_sequence_items,
-        __stepBudgetGoverned_joined_sequence_items,
-        bodyParts: new string[] { "[\u0022${secret:env/\u0022,\u0022X}\u0022]" });
-}
-    if (__vouchfxRunCt.IsCancellationRequested)
-    {
-        Vars.Remove("__outcome::joined_sequence_items");
-        __vouchfxRunCt.ThrowIfCancellationRequested();
-    }
-    StepEvents?.OnStepCompleted(
-        "joined-sequence-items",
-        Vars.TryGetValue("__outcome::joined_sequence_items", out var __sco_joined_sequence_items) ? __sco_joined_sequence_items as Vouchfx.Engine.Abstractions.StepOutcome : null,
-        Vars.TryGetValue("__capture_status::joined_sequence_items", out var __scs_joined_sequence_items) ? __scs_joined_sequence_items as string : null);
 }
 {
     __vouchfxRunCt.ThrowIfCancellationRequested();

@@ -6,8 +6,9 @@
 // (`+` became a six-character escape), and the JSON between two strings could complete a
 // reference that no single string holds. Those rows pin the per-string reading: a reference is
 // checked, listed and hashed with the text the author wrote, equal to the same reference in a
-// header, and text that is a reference only across two strings is neither refused, listed nor
-// hashed. The run-time half of the contract is pinned in Vouchfx.Engine.Compilation.Tests,
+// header, and each string is checked exactly as a header value is, so a `${secret:` with no
+// closing `}` in any string is refused before the run, even when a later string would have
+// completed it. The run-time half of the contract is pinned in Vouchfx.Engine.Compilation.Tests,
 // HttpRestStructuredBodyReferenceTests.
 using System.Security.Cryptography;
 using System.Text;
@@ -66,32 +67,12 @@ public sealed class HttpRestStructuredBodyCensusTests
     }
 
     /// <summary>
-    /// Text that is a reference only once a key and its value, two sequence items or two
-    /// values are read together is not refused by the check (even naming an unknown source)
-    /// and is neither listed in provenance nor hashed into the envelope: it is never resolved.
-    /// </summary>
-    [Theory]
-    [InlineData("body:\n  'a${secret:nosuchsource/': 'X}'\n")]
-    [InlineData("body:\n  - '${secret:nosuchsource/'\n  - 'X}'\n")]
-    [InlineData("body:\n  a: '${secret:env/'\n  b: 'X}'\n")]
-    [InlineData("body:\n  a: 'p${secret:env/'\n  b: { c: 'X}' }\n")]
-    [InlineData("body:\n  'a${secret:env/': 'X}'\n")]
-    [InlineData("body:\n  - '${secret:env/'\n  - 'X}'\n")]
-    [InlineData("body:\n  'a${secret:env/': { 'X}': 1 }\n")]
-    public void ReferenceJoinedAcrossStrings_IsNotRefusedListedOrHashed(string yaml)
-    {
-        var node = RestNode(yaml);
-
-        Assert.False(ScenarioRunner.TryValidateSecretReferences(Ast(node), out var diagnostic, out _), diagnostic);
-        Assert.Null(ScenarioRunner.DeriveSubstitutionProvenance(node, new Dictionary<string, string>()));
-        Assert.Empty(ScenarioRunner.BuildReproducibilityEnvelope(Ast(node), null).SecretReferences);
-    }
-
-    /// <summary>
-    /// An unclosed <c>${secret:</c> inside one body string is a malformed reference and is
-    /// refused before the run, exactly as in a header, unless the serialised body joins it
-    /// into text that ends inside a later string. The diagnostic quotes the whole string as
-    /// the author wrote it.
+    /// A <c>${secret:</c> with no closing <c>}</c> in any string of a structured body (a member
+    /// name or a string value, at any depth, wherever it stands) is a malformed reference and
+    /// is refused before the run, exactly as in a header. Nothing a later string holds changes
+    /// that: text that would read as a reference only once two strings are joined is refused
+    /// too, because its first string holds the unclosed reference. The diagnostic quotes that
+    /// whole string as the author wrote it.
     /// </summary>
     [Theory]
     [InlineData("body:\n  token: '${secret:env/T'\n  b: y\n", "${secret:env/T")]
@@ -101,9 +82,28 @@ public sealed class HttpRestStructuredBodyCensusTests
     [InlineData("body:\n  outer:\n    token: '${secret:env/T'\n", "${secret:env/T")]
     [InlineData("body:\n  v: '${secret:env/A} ${secret:env/B'\n", "${secret:env/A} ${secret:env/B")]
     [InlineData("body:\n  v: '${secret:nosuchsource/A} ${secret:'\n", "${secret:nosuchsource/A} ${secret:")]
+    // Joined forms: a later string would complete the reference if the two were read together.
+    [InlineData("body:\n  'a${secret:env/': 'X}'\n", "a${secret:env/")]
+    [InlineData("body:\n  - '${secret:env/'\n  - 'X}'\n", "${secret:env/")]
+    [InlineData("body:\n  a: '${secret:env/'\n  b: 'X}'\n", "${secret:env/")]
     [InlineData("body:\n  'a${secret:env/': {}\n  b: 'X}'\n", "a${secret:env/")]
+    [InlineData("body:\n  a: 'p${secret:env/'\n  b: { c: 'X}' }\n", "p${secret:env/")]
+    [InlineData("body:\n  'a${secret:env/': { 'X}': 1 }\n", "a${secret:env/")]
+    [InlineData("body:\n  'a${secret:nosuchsource/': 'X}'\n", "a${secret:nosuchsource/")]
+    [InlineData("body:\n  token: '${secret:'\n  b: 'x}'\n", "${secret:")]
+    [InlineData("body:\n  token: '${secret:env'\n  b: 'x}'\n", "${secret:env")]
+    [InlineData("body:\n  token: '${secret:API_TOKEN'\n  b: '{\"a\":1}'\n", "${secret:API_TOKEN")]
+    [InlineData("body:\n  v: '${secret: ${secret:env/A'\n  b: 'x}'\n", "${secret: ${secret:env/A")]
+    [InlineData("body:\n  v: '${secret:env/A} ${secret:env/B'\n  w: 'X}'\n", "${secret:env/A} ${secret:env/B")]
     [InlineData("body:\n  '${secret:bad} a${secret:env/': 'X}'\n", "${secret:bad} a${secret:env/")]
-    public void UnclosedReferenceWithinOneString_IsRefusedAsMalformed_QuotingTheString(string yaml, string written)
+    [InlineData("body:\n  '${secret:nosuchsource/K} a${secret:env/': 'X}'\n", "${secret:nosuchsource/K} a${secret:env/")]
+    // An unclosed reference beside a well-formed one in a later string.
+    [InlineData("body:\n  a: '${secret:env/T'\n  b: '${secret:env/U}'\n", "${secret:env/T")]
+    [InlineData("body:\n  user: '${secret:vault/db#user'\n  password: '${secret:vault/db#pass}'\n", "${secret:vault/db#user")]
+    [InlineData("body:\n  token: 'Bearer ${secret:env/TOKEN'\n  callback: 'https://x/{id}'\n", "Bearer ${secret:env/TOKEN")]
+    [InlineData("body:\n  - '${secret:'\n  - '}'\n", "${secret:")]
+    [InlineData("body:\n  - '${secret:nosuch/A'\n  - '}'\n", "${secret:nosuch/A")]
+    public void UnclosedReferenceInAnyBodyString_IsRefusedAsMalformed_QuotingTheString(string yaml, string written)
     {
         var node = RestNode(yaml);
 
@@ -113,79 +113,90 @@ public sealed class HttpRestStructuredBodyCensusTests
     }
 
     /// <summary>
-    /// The same unclosed text is refused in a header and in a structured body with the same
-    /// diagnostic, apart from the field it names.
+    /// Text that would read as a reference only across two strings is never one: besides being
+    /// refused, it is neither listed in substitution provenance nor hashed into the envelope.
     /// </summary>
-    [Fact]
-    public void UnclosedReference_IsRefusedAlikeInAHeaderAndInABody()
+    [Theory]
+    [InlineData("body:\n  'a${secret:env/': 'X}'\n")]
+    [InlineData("body:\n  - '${secret:env/'\n  - 'X}'\n")]
+    [InlineData("body:\n  a: '${secret:env/'\n  b: 'X}'\n")]
+    [InlineData("body:\n  'a${secret:nosuchsource/': { 'X}': 1 }\n")]
+    public void ReferenceJoinedAcrossStrings_IsNeitherListedNorHashed(string yaml)
     {
-        var inBody = RestNode("body:\n  token: '${secret:env/T'\n");
-        var inHeader = RestNode("headers:\n  Authorization: '${secret:env/T'\n");
+        var node = RestNode(yaml);
+
+        Assert.True(ScenarioRunner.TryValidateSecretReferences(Ast(node), out _, out _));
+        Assert.Null(ScenarioRunner.DeriveSubstitutionProvenance(node, new Dictionary<string, string>()));
+        Assert.Empty(ScenarioRunner.BuildReproducibilityEnvelope(Ast(node), null).SecretReferences);
+    }
+
+    /// <summary>
+    /// The same unclosed text is refused in a header and in a structured body with the same
+    /// diagnostic, apart from the field it names, including when a later body string would
+    /// have completed it. The header rule refuses every one of these forms.
+    /// </summary>
+    [Theory]
+    [InlineData("${secret:env/T")]
+    [InlineData("a${secret:env/")]
+    [InlineData("${secret:")]
+    [InlineData("${secret:env")]
+    [InlineData("${secret: ${secret:env/A")]
+    [InlineData("Bearer ${secret:env/TOKEN")]
+    [InlineData("${secret:env/A} ${secret:env/B")]
+    [InlineData("${secret:nosuchsource/A} ${secret:")]
+    public void UnclosedReference_IsRefusedAlikeInAHeaderAndInABody(string written)
+    {
+        var inBody = RestNode("body:\n  token: '" + written + "'\n  b: 'X}'\n");
+        var inHeader = RestNode("headers:\n  Authorization: '" + written + "'\n");
 
         Assert.True(ScenarioRunner.TryValidateSecretReferences(Ast(inBody), out var bodyDiagnostic, out _));
         Assert.True(ScenarioRunner.TryValidateSecretReferences(Ast(inHeader), out var headerDiagnostic, out _));
-        Assert.Contains("malformed secret reference", headerDiagnostic, StringComparison.Ordinal);
+        Assert.Contains("the field '" + written + "' contains a malformed secret reference", headerDiagnostic, StringComparison.Ordinal);
         Assert.Equal(
             headerDiagnostic!.Replace("(field 'headers[*]')", "(field 'body')", StringComparison.Ordinal),
             bodyDiagnostic);
     }
 
     /// <summary>
-    /// The exempt tail is only the joined half: the rest of its string is still checked and
-    /// still resolved, so a well-formed reference before it is listed and hashed, and an
-    /// unknown source before it is refused, quoting the reference.
+    /// A closed reference beside a <c>{placeholder}</c>, in a member name, or nested, is
+    /// accepted and listed, as in a header.
     /// </summary>
     [Fact]
-    public void ExemptTail_LeavesTheRestOfItsStringChecked()
+    public void ClosedReferences_AnywhereInTheBody_AreAcceptedAndListed()
     {
-        var valid = RestNode("body:\n  v: '${secret:env/A} ${secret:env/B'\n  w: 'X}'\n");
-        Assert.False(ScenarioRunner.TryValidateSecretReferences(Ast(valid), out var diagnostic, out _), diagnostic);
-        Assert.Equal("env/A", Assert.Single(ScenarioRunner.DeriveSubstitutionProvenance(valid, new Dictionary<string, string>())!).Placeholder);
-        Assert.Contains(
-            ReferenceHash("${secret:env/A}"),
-            JsonSerializer.Serialize(ScenarioRunner.BuildReproducibilityEnvelope(Ast(valid), null).SecretReferences),
-            StringComparison.Ordinal);
+        var node = RestNode("body:\n  '${secret:env/K}': 'x {p} ${secret:env/A}'\n  outer: [{ t: '${secret:vault/db#pass}' }]\n");
 
-        var unknown = RestNode("body:\n  '${secret:nosuchsource/K} a${secret:env/': 'X}'\n");
-        Assert.True(ScenarioRunner.TryValidateSecretReferences(Ast(unknown), out var unknownDiagnostic, out _));
-        Assert.Contains("the secret reference '${secret:nosuchsource/K}' names an unknown source", unknownDiagnostic, StringComparison.Ordinal);
+        Assert.False(ScenarioRunner.TryValidateSecretReferences(Ast(node), out var diagnostic, out _), diagnostic);
+        var listed = ScenarioRunner.DeriveSubstitutionProvenance(node, new Dictionary<string, string>())!
+            .Select(p => p.Placeholder)
+            .ToArray();
+        Assert.Equal(s_closedReferenceLabels, listed);
     }
 
-    /// <summary>
-    /// The conversion marks a string's open tail as joining a later string only when the
-    /// first <c>}</c> after it in the serialised body is inside a later string's content.
-    /// </summary>
-    [Theory]
-    [InlineData("body:\n  'a${secret:env/': 'X}'\n", "a${secret:env/", true)]
-    [InlineData("body:\n  a: '${secret:env/'\n  b: 'X}'\n", "${secret:env/", true)]
-    [InlineData("body:\n  'a${secret:env/': {}\n  b: 'X}'\n", "a${secret:env/", false)]
-    [InlineData("body:\n  token: '${secret:env/T'\n  b: 'y'\n", "${secret:env/T", false)]
-    [InlineData("body:\n  - x\n  - '${secret:env/T'\n", "${secret:env/T", false)]
-    [InlineData("body:\n  t: '${secret:env/T}'\n  b: 'X}'\n", "${secret:env/T}", false)]
-    public void Conversion_MarksOnlyATailThatJoinsALaterString(string yaml, string value, bool joins)
-    {
-        var stream = new YamlStream();
-        stream.Load(new StringReader(yaml));
-        var raw = (YamlMappingNode)stream.Documents[0].RootNode;
-        var result = Vouchfx.Steps.HttpRest.HttpRestBodyConversion.ToTemplate(raw.Children[new YamlScalarNode("body")], raw);
-
-        var marked = Assert.Single(result.Strings!, s => s.Value == value);
-        Assert.Equal(joins, marked.OpenTailJoinsLaterString);
-        Assert.All(result.Strings!.Where(s => s.Value != value), s => Assert.False(s.OpenTailJoinsLaterString));
-    }
+    private static readonly string[] s_closedReferenceLabels = { "env/K", "p", "env/A", "vault/db#pass" };
 
     /// <summary>
     /// End to end through <see cref="ScenarioRunner.RunAsync"/>: a body string holding an
-    /// unclosed reference refuses the run before any topology starts, so nothing is sent.
+    /// unclosed reference refuses the run before any topology starts, so nothing is sent. The
+    /// second row is joined text that a later string would have completed.
     /// </summary>
-    [Fact]
-    public async Task RunAsync_UnclosedReferenceInBody_IsRefusedBeforeTheRun()
+    /// <remarks>
+    /// The image is pinned so that the secret-reference refusal is the only one. The runner
+    /// prints no event of its own when it starts a topology, so "nothing started" is pinned by
+    /// the whole rendered output: the refusal, the scenario's opening line and its summary, and
+    /// nothing else. An acquisition would add a line, either the environment fault of a failed
+    /// start or what a started topology reports, and a step that ran would be counted.
+    /// </remarks>
+    [Theory]
+    [InlineData("      token: '${secret:env/T'\n      b: y\n", "${secret:env/T")]
+    [InlineData("      'a${secret:env/': 'X}'\n", "a${secret:env/")]
+    public async Task RunAsync_UnclosedReferenceInBody_IsRefusedBeforeTheRun(string bodyMembers, string written)
     {
-        const string yaml = """
+        const string head = """
             environment:
               services:
                 whoami:
-                  image: traefik/whoami
+                  image: traefik/whoami:v1.11.0
             steps:
               - id: post-unclosed-secret
                 type: http.rest
@@ -193,9 +204,8 @@ public sealed class HttpRestStructuredBodyCensusTests
                 method: POST
                 path: /
                 body:
-                  token: '${secret:env/T'
-                  b: y
             """;
+        var yaml = head + "\n" + bodyMembers;
         var output = new StringWriter();
 
         var verdict = await ScenarioRunner.RunAsync(
@@ -206,10 +216,20 @@ public sealed class HttpRestStructuredBodyCensusTests
             output: output);
 
         Assert.Equal(Verdict.Inconclusive, verdict);
-        var rendered = output.ToString();
-        Assert.Contains("post-unclosed-secret", rendered, StringComparison.Ordinal);
-        Assert.Contains("malformed secret reference", rendered, StringComparison.Ordinal);
-        Assert.DoesNotContain("step-completed", rendered, StringComparison.Ordinal);
+        var lines = output.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.TrimEnd('\r')).ToArray();
+        Assert.Collection(
+            lines,
+            refusal =>
+            {
+                Assert.StartsWith("step 'post-unclosed-secret': the field '" + written + "' contains a malformed secret reference", refusal, StringComparison.Ordinal);
+                Assert.EndsWith("(field 'body')", refusal, StringComparison.Ordinal);
+            },
+            started => Assert.Equal("Scenario 'unclosed-secret-in-body' started", started),
+            summary => Assert.StartsWith(
+                "Scenario 'unclosed-secret-in-body': INCONCLUSIVE  (pass=0 fail=0 envError=0 inconclusive=1 ",
+                summary,
+                StringComparison.Ordinal));
+        Assert.DoesNotContain("step-completed", output.ToString(), StringComparison.Ordinal);
     }
 
     /// <summary>

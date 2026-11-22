@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Steps.HttpRest;
 using YamlDotNet.RepresentationModel;
@@ -20,15 +19,7 @@ internal static class StepTemplateCensus
     /// <summary>One field text the resolver reads, and where it is.</summary>
     /// <param name="Location">The field's path within the step.</param>
     /// <param name="Text">The text, as the run-time resolver reads it, exactly as written.</param>
-    /// <param name="OpenTailJoinsLaterString">
-    /// Set only for a structured http.rest body string whose open tail the serialised body
-    /// joins into text ending inside a later string
-    /// (<see cref="HttpRestBodyConversion.BodyString.OpenTailJoinsLaterString"/>). That tail
-    /// is sent literally and is the one text <see cref="TryValidate"/> does not refuse. The
-    /// tail itself is always found again in <see cref="Text"/>, so no derived copy of the text
-    /// is stored that a later <c>with</c> could leave stale.
-    /// </param>
-    internal sealed record Field(string Location, string Text, bool OpenTailJoinsLaterString = false);
+    internal sealed record Field(string Location, string Text);
 
     internal sealed record Collection(IReadOnlyList<Field> Fields);
 
@@ -71,12 +62,14 @@ internal static class StepTemplateCensus
                     // A structured body is read one JSON string at a time, unescaped, because
                     // that is how the run-time resolver reads it: never as the serialised text,
                     // whose escapes would change a reference and whose structure could join two
-                    // strings into one. A scalar body is still one text.
+                    // strings into one. Each string is then checked exactly as a header value
+                    // is, so an unclosed `${secret:` in any of them is refused, whatever a
+                    // later string holds. A scalar body is still one text.
                     var converted = ConvertBody(body, raw);
                     if (converted?.Strings is { } strings)
                     {
                         foreach (var text in strings)
-                            if (text.Value.Length > 0) fields.Add(new Field("body", text.Value, text.OpenTailJoinsLaterString));
+                            if (text.Length > 0) fields.Add(new Field("body", text));
                     }
                     else if (converted?.Text is { Length: > 0 } text)
                     {
@@ -159,57 +152,6 @@ internal static class StepTemplateCensus
             current = next;
         }
         return current;
-    }
-
-    /// <summary>
-    /// The secret-reference check of one field: <see cref="SecretReference.ValidateField"/>
-    /// over <see cref="Field.Text"/>, with one exemption.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The exemption: when <see cref="Field.OpenTailJoinsLaterString"/> is set, the string's
-    /// open tail (its first <c>${secret:</c> with no <c>}</c> after it in the string) is the
-    /// first half of text that reads as a reference only across two strings. Such text is
-    /// sent literally and never resolved, so the tail is not checked; the rest of the string,
-    /// which holds every reference the resolver reads in it, is. Any other open tail, in a
-    /// body string or in any other field, is checked with the whole text and refused as a
-    /// malformed reference.
-    /// </para>
-    /// <para>
-    /// Every diagnostic quotes what the author wrote. The unknown-source diagnostic quotes the
-    /// reference, which is the same in the checked part as in the whole string. The malformed
-    /// diagnostic quotes the field, so when the checked part is malformed the whole string is
-    /// validated instead for its message: it is malformed too, because it holds the same
-    /// references (none reaches into the tail, which has no <c>}</c>) and more sigils.
-    /// </para>
-    /// </remarks>
-    internal static bool TryValidate(Field field, IReadOnlyCollection<string> knownSources, out string? error)
-    {
-        var tail = field.OpenTailJoinsLaterString ? HttpRestBodyConversion.OpenTailStart(field.Text) : -1;
-        if (tail < 0)
-            return SecretReference.ValidateField(field.Text, knownSources, out error);
-
-        var checkedPart = field.Text[..tail];
-        if (SecretReference.ValidateField(checkedPart, knownSources, out error))
-            return true;
-
-        // ValidateField's own malformed test: more sigils than well-formed references.
-        if (CountSigils(checkedPart) > SecretReference.FindAll(checkedPart).Count)
-            SecretReference.ValidateField(field.Text, knownSources, out error);
-        return false;
-    }
-
-    private static int CountSigils(string text)
-    {
-        var count = 0;
-        for (var index = text.IndexOf(SecretReference.Sigil, StringComparison.Ordinal);
-             index >= 0;
-             index = text.IndexOf(SecretReference.Sigil, index + SecretReference.Sigil.Length, StringComparison.Ordinal))
-        {
-            count++;
-        }
-
-        return count;
     }
 
     /// <summary>
