@@ -118,6 +118,13 @@
     <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
+  <!-- Compose configuration and manifests are loaded here. The limit type is
+       internal to Authoring; this assembly keeps its own copy rather than widening
+       that assembly's internals. -->
+  <ItemGroup>
+    <Compile Include="..\Vouchfx.Engine.Authoring\YamlNestingLimit.cs" Link="Shared\YamlNestingLimit.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
     <!-- EnvironmentMapper consumes EnvironmentSpec / ServiceSpec / DependencySpec from Authoring.
