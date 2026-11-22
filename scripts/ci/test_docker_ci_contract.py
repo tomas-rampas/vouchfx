@@ -17,8 +17,9 @@ import sys
 import tempfile
 import unittest
 
-from docker_ci_support import (BASH, PREWARM_WORKFLOW, PULL_NAME, ROOT, TEST_NAME, WORKFLOW,
-                               extract_prewarm, extract_pull, fixture_images, image_boundary, sha, step, workflow)
+from docker_ci_support import (BASH, DOCKER_JOB, DOCKER_WORKFLOW, PREWARM_WORKFLOW, PULL_NAME, ROOT, TEST_NAME,
+                               WORKFLOW, extract_prewarm, extract_pull, fixture_images, image_boundary, sha, step,
+                               workflow)
 
 
 SCRATCH = Path(tempfile.mkdtemp(prefix="vouchfx-docker-ci-contract-"))
@@ -63,7 +64,7 @@ class DockerCiContractTests(unittest.TestCase):
         if not BASH or not Path(BASH).is_file():
             raise AssertionError("Bash is mandatory; Windows uses Git Bash, never WSL")
         cls.script = extract_pull()
-        cls.workflow_bytes = WORKFLOW.read_bytes()
+        cls.workflow_bytes = DOCKER_WORKFLOW.read_bytes()
         (SCRATCH / "actual-pull.sh").write_bytes(cls.script)
         (SCRATCH / "extraction.json").write_text(json.dumps({
             "workflow_sha256": sha(cls.workflow_bytes), "script_sha256": sha(cls.script),
@@ -164,9 +165,14 @@ source "$1"
 
     def test_blocking_lane_preserves_execution_and_default_capture_root(self):
         data = workflow()
-        integration = data["jobs"]["integration"]
+        docker = workflow(DOCKER_WORKFLOW)
+        # The lane's steps live in the reusable workflow; when it runs (`needs`,
+        # `if`) is decided by its caller in build.yml.
+        integration = docker["jobs"][DOCKER_JOB]
+        caller = data["jobs"]["integration"]
         self.assertFalse(integration.get("continue-on-error", False))
-        command = shlex.split(step(TEST_NAME, data)["run"])
+        self.assertFalse(caller.get("continue-on-error", False))
+        command = shlex.split(step(TEST_NAME, docker)["run"])
         for value in ["-m:1", "--no-build", "requires=docker", "--blame-crash", "mini"]:
             self.assertIn(value, command)
         # Docker tests execute the canonical CLI; collectors alter its PE bytes.
@@ -189,9 +195,10 @@ source "$1"
         self.assertIn("--blame-hang", unit_command)
         self.assertEqual(40, build["timeout-minutes"])
         self.assertEqual("TestResults", command[command.index("--results-directory") + 1])
-        self.assertNotIn("VOUCHFX_DCP_CAPTURE_DIR", json.dumps(integration))
-        self.assertNotIn("secrets.", json.dumps(integration))
-        self.assertEqual(25, step(PULL_NAME, data)["timeout-minutes"])
+        self.assertNotIn("VOUCHFX_DCP_CAPTURE_DIR", json.dumps({"env": docker.get("env", {}), "job": integration}))
+        self.assertNotIn("secrets.", json.dumps({"env": docker.get("env", {}), "job": integration}))
+        self.assertNotIn("secrets.", json.dumps(caller))
+        self.assertEqual(25, step(PULL_NAME, docker)["timeout-minutes"])
         gate = data["jobs"]["workflow-contract"]
         self.assertNotIn("if", gate)
         self.assertNotIn("continue-on-error", gate)
@@ -203,11 +210,11 @@ source "$1"
                       [s.get("run") for s in gate["steps"]])
         self.assertEqual([{"cron": "17 6 * * *"}], data["on"]["schedule"])
         self.assertIn("workflow_dispatch", data["on"])
-        self.assertEqual("build", integration["needs"])
+        self.assertEqual("build", caller["needs"])
         for concurrent in [data, workflow(COMPATIBILITY_WORKFLOW)]:
             self.assertEqual(CONCURRENCY_GROUP, concurrent["concurrency"]["group"])
             self.assertIs(True, concurrent["concurrency"]["cancel-in-progress"])
-        self.assertEqual(DOCKER_JOB_IF, integration["if"])
+        self.assertEqual(DOCKER_JOB_IF, caller["if"])
         compatibility = workflow(COMPATIBILITY_WORKFLOW)
         self.assertEqual([{"cron": "47 6 * * *"}], compatibility["on"]["schedule"])
         self.assertIn("workflow_dispatch", compatibility["on"])
@@ -226,8 +233,8 @@ source "$1"
         for per_pr_job in ["compatibility", "roll-forward"]:
             with self.subTest(job=per_pr_job):
                 self.assertNotIn("if", compatibility["jobs"][per_pr_job])
-        self.assertNotIn("if", step(PULL_NAME, data))
-        self.assertNotIn("continue-on-error", step(PULL_NAME, data))
+        self.assertNotIn("if", step(PULL_NAME, docker))
+        self.assertNotIn("continue-on-error", step(PULL_NAME, docker))
         self.assertNotIn("paths", data["on"]["push"])
         self.assertNotIn("paths", data["on"]["pull_request"])
 
@@ -236,7 +243,7 @@ source "$1"
         lanes = [
             (WORKFLOW, "build", "Unit tests (requires!=docker)"),
             (WORKFLOW, "windows-unit", "Unit tests (requires!=docker)"),
-            (WORKFLOW, "integration", TEST_NAME),
+            (DOCKER_WORKFLOW, DOCKER_JOB, TEST_NAME),
             (compatibility, "compatibility", "Docker-free tests"),
         ]
         for path, job, name in lanes:
@@ -364,7 +371,7 @@ source "$1"
 
     def test_source_representation_drift_is_detected(self):
         mutated = SCRATCH / "folded-workflow.yml"
-        source = WORKFLOW.read_bytes()
+        source = DOCKER_WORKFLOW.read_bytes()
         anchor = source.index(f"      - name: {PULL_NAME}\n".encode())
         position = source.index(b"        run: |\n", anchor)
         mutated.write_bytes(source[:position] + source[position:].replace(b"        run: |\n", b"        run: >\n", 1))
@@ -381,8 +388,207 @@ source "$1"
 
     @classmethod
     def tearDownClass(cls):
-        if WORKFLOW.read_bytes() != cls.workflow_bytes:
+        if DOCKER_WORKFLOW.read_bytes() != cls.workflow_bytes:
             raise AssertionError("Harness mutated its workflow source")
+
+
+REQUIRED_DOCKER_CHECK = "Integration tests — Docker / Aspire"
+DOCKER_GATE_JOB = "integration-gate"
+DOCKER_GATE_IF = "always() && needs.integration.result != 'skipped'"
+REVIEWED_SHA = "${{ inputs.reviewed_sha }}"
+DOCKER_ARTEFACTS = {"docker-integration-test-results", "owned-environment-acceptance",
+                    "integration-dcp-captures", "integration-crash-dumps"}
+
+
+def walk(value, path=()):
+    """Yield (path, key, value) for every mapping entry and (path, None, value) for every scalar."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield path, key, item
+            yield from walk(item, path + (key,))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from walk(item, path + (index,))
+    else:
+        yield path, None, value
+
+
+class DockerIntegrationReusableWorkflowTests(unittest.TestCase):
+    """The Docker / Aspire lane is a reusable workflow with one unconditional job.
+
+    build.yml calls it at the commit under test, and a separate gate job carries the
+    required check name, because a caller reports as "<caller> / <called job>" and a
+    skipped caller only under its own name.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.build = workflow()
+        cls.docker = workflow(DOCKER_WORKFLOW)
+        cls.caller = cls.build["jobs"]["integration"]
+        cls.gate = cls.build["jobs"][DOCKER_GATE_JOB]
+        cls.lane = cls.docker["jobs"][DOCKER_JOB]
+
+    def test_callee_is_called_only_with_one_required_reviewed_sha_input(self):
+        self.assertEqual(["workflow_call"], list(self.docker["on"]))
+        call = self.docker["on"]["workflow_call"]
+        self.assertEqual(["inputs"], list(call))
+        self.assertEqual(["reviewed_sha"], list(call["inputs"]))
+        reviewed = call["inputs"]["reviewed_sha"]
+        self.assertIs(True, reviewed["required"])
+        self.assertEqual("string", reviewed["type"])
+        self.assertNotIn("default", reviewed)
+
+    def test_callee_maps_no_secrets_and_no_workflow_inherits_them(self):
+        for path, key, value in walk(self.docker):
+            self.assertNotEqual("secrets", key, path)
+            if isinstance(value, str):
+                # Any use of the secrets context inside an expression: secrets.X, secrets[...], toJSON(secrets).
+                self.assertIsNone(re.search(r"\$\{\{[^}]*\bsecrets\b", value), path)
+        workflows = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
+        self.assertIn(DOCKER_WORKFLOW, workflows)
+        for path in workflows:
+            with self.subTest(workflow=path.name):
+                source = path.read_text(encoding="utf-8")
+                self.assertIsNone(re.search(r"(?m)^[^#\n]*\bsecrets:\s*inherit\b", source))
+                for job_id, job in workflow(path).get("jobs", {}).items():
+                    self.assertNotEqual("inherit", job.get("secrets"), job_id)
+
+    def test_every_caller_passes_only_the_run_commit_and_no_secrets(self):
+        callers = 0
+        for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+            for job_id, job in workflow(path).get("jobs", {}).items():
+                if not str(job.get("uses", "")).endswith("docker-integration.yml"):
+                    continue
+                callers += 1
+                with self.subTest(workflow=path.name, job=job_id):
+                    self.assertNotIn("secrets", job)
+                    self.assertEqual(["reviewed_sha"], list(job.get("with", {})))
+                    tls = self.build["jobs"]["tls-transport"]["with"]["reviewed_sha"]
+                    self.assertIn(job["with"]["reviewed_sha"], {"${{ github.sha }}", tls})
+        self.assertGreaterEqual(callers, 1)
+
+    def test_callee_run_scripts_never_interpolate_expressions(self):
+        # Values reach scripts through `env`; an inline ${{ }} in a run script is script injection.
+        scripts = [step["run"] for step in self.lane["steps"] if "run" in step]
+        self.assertTrue(scripts)
+        for script in scripts:
+            self.assertNotIn("${{", script)
+
+    def test_callee_permissions_env_and_concurrency(self):
+        self.assertEqual({"contents": "read"}, self.docker["permissions"])
+        self.assertNotIn("permissions", self.lane)
+        self.assertNotIn("concurrency", self.docker)
+        self.assertNotIn("concurrency", self.lane)
+        self.assertNotIn("defaults", self.docker)
+        self.assertNotIn("defaults", self.build)
+        # A caller's top-level env does not reach a called workflow: carry it verbatim.
+        self.assertEqual(self.build["env"], self.docker["env"])
+
+    def test_callee_has_one_unconditional_job_on_the_same_runner(self):
+        self.assertEqual([DOCKER_JOB], list(self.docker["jobs"]))
+        for key in ["if", "needs", "uses", "strategy", "continue-on-error"]:
+            self.assertNotIn(key, self.lane)
+        self.assertEqual("ubuntu-22.04", self.lane["runs-on"])
+        self.assertEqual({"VOUCHFX_TOPOLOGY_PR_HEAD_SHA": REVIEWED_SHA}, self.lane["env"])
+        self.assertNotEqual(REQUIRED_DOCKER_CHECK, self.lane["name"])
+        self.assertNotIn("${{", self.lane["name"])
+
+    def test_callee_checks_out_and_asserts_the_reviewed_sha(self):
+        checkout, confirm = self.lane["steps"][:2]
+        self.assertRegex(checkout["uses"], r"\Aactions/checkout@[0-9a-f]{40}\Z")
+        self.assertEqual({"persist-credentials": False, "ref": REVIEWED_SHA}, checkout["with"])
+        self.assertEqual({"REVIEWED_SHA": REVIEWED_SHA}, confirm["env"])
+        self.assertNotIn("if", confirm)
+        self.assertNotIn("continue-on-error", confirm)
+        lines = confirm["run"].splitlines()
+        self.assertEqual("set -euo pipefail", lines[0])
+        # `|| exit 1` stops the script on bash older than 4.1, where a failed [[ =~ ]] does not trip `set -e`.
+        self.assertIn('[[ "$REVIEWED_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1', lines)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"', lines)
+        # Fail fast: the lane's evidence records GITHUB_SHA, so the input must be the run's own commit.
+        self.assertIn('if [ "$GITHUB_SHA" != "$REVIEWED_SHA" ]; then', lines)
+        self.assertLess(lines.index('if [ "$GITHUB_SHA" != "$REVIEWED_SHA" ]; then'),
+                        lines.index('test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"'))
+        mismatch = [line for line in lines if line.lstrip().startswith("echo ")]
+        self.assertEqual(1, len(mismatch))
+        self.assertIn("::error::", mismatch[0])
+        self.assertIn("run's own commit", mismatch[0])
+        self.assertIn("must be that commit", mismatch[0])
+        self.assertLess(lines.index('if [ "$GITHUB_SHA" != "$REVIEWED_SHA" ]; then'),
+                        lines.index(mismatch[0]))
+        self.assertIn("github.sha", self.docker["on"]["workflow_call"]["inputs"]["reviewed_sha"]["description"])
+        checkouts = [s for s in self.lane["steps"] if str(s.get("uses", "")).startswith("actions/checkout@")]
+        self.assertEqual([checkout], checkouts)
+
+    def test_confirm_step_script_behaviour(self):
+        confirm = self.lane["steps"][1]
+        commit = "0123456789abcdef0123456789abcdef01234567"
+        repo = SCRATCH / "confirm-repo"
+        repo.mkdir()
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
+        subprocess.run(git + ["init", "-q"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "x"], cwd=repo, check=True, capture_output=True)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True,
+                              text=True).stdout.strip()
+        cases = [("matching", head, head, 0), ("run commit differs", head, commit, 1),
+                 ("not a commit id", "main", "main", 1)]
+        for label, github_sha, reviewed, expected in cases:
+            with self.subTest(case=label):
+                env = dict(os.environ, GITHUB_SHA=github_sha, REVIEWED_SHA=reviewed)
+                completed = subprocess.run([BASH, "--noprofile", "--norc", "-e", "-c", confirm["run"]],
+                                           cwd=repo, env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(expected, completed.returncode, completed.stderr)
+                if label == "run commit differs":
+                    self.assertIn("::error::", completed.stdout)
+                    self.assertIn(github_sha, completed.stdout)
+                    self.assertIn(reviewed, completed.stdout)
+
+    def test_artefact_names_stay_unique_in_the_calling_run(self):
+        uploads = [s["with"]["name"] for s in self.lane["steps"]
+                   if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
+        self.assertEqual(len(uploads), len(set(uploads)))
+        self.assertEqual(DOCKER_ARTEFACTS, set(uploads))
+        others = [s["with"]["name"] for job in self.build["jobs"].values() for s in job.get("steps", [])
+                  if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
+        self.assertFalse(DOCKER_ARTEFACTS & set(others))
+
+    def test_caller_passes_only_reviewed_sha_and_keeps_its_schedule(self):
+        self.assertEqual({"name", "needs", "if", "uses", "with"}, set(self.caller))
+        self.assertEqual("./.github/workflows/docker-integration.yml", self.caller["uses"])
+        self.assertEqual("build", self.caller["needs"])
+        self.assertEqual(DOCKER_JOB_IF, self.caller["if"])
+        tls = self.build["jobs"]["tls-transport"]["with"]["reviewed_sha"]
+        self.assertEqual({"reviewed_sha": tls}, self.caller["with"])
+        self.assertNotIn("secrets", self.caller)
+
+    def test_gate_carries_the_required_name_and_fails_on_failure_or_cancellation(self):
+        names = [job.get("name") for job in self.build["jobs"].values()]
+        self.assertEqual(1, names.count(REQUIRED_DOCKER_CHECK))
+        self.assertEqual(REQUIRED_DOCKER_CHECK, self.gate["name"])
+        # Neither the skipped caller nor "<caller> / <called job>" may report the required name.
+        self.assertNotEqual(REQUIRED_DOCKER_CHECK, self.caller["name"])
+        self.assertNotEqual(REQUIRED_DOCKER_CHECK, f"{self.caller['name']} / {self.lane['name']}")
+        self.assertEqual("integration", self.gate["needs"])
+        # Skipped exactly when the lane was skipped; otherwise it must run, even after a cancellation.
+        self.assertEqual(DOCKER_GATE_IF, self.gate["if"])
+        self.assertNotIn("continue-on-error", self.gate)
+        (only,) = self.gate["steps"]
+        self.assertEqual({"LANE_RESULT": "${{ needs.integration.result }}"}, only["env"])
+        self.assertNotIn("if", only)
+        self.assertNotIn("continue-on-error", only)
+        for result, expected in [("success", 0), ("failure", 1), ("cancelled", 1), ("skipped", 1), ("", 1)]:
+            with self.subTest(result=result):
+                env = dict(os.environ, LANE_RESULT=result)
+                completed = subprocess.run([BASH, "--noprofile", "--norc", "-e", "-c", only["run"]],
+                                           env=env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(expected, completed.returncode, completed.stderr)
+                if expected:
+                    # The red check explains itself: the message names the result it saw.
+                    self.assertIn("::error::", completed.stdout)
+                    self.assertIn(f"lane result: {result} (", completed.stdout)
+                else:
+                    self.assertEqual("", completed.stdout)
 
 
 class ReusableWorkflowPrewarmTests(unittest.TestCase):

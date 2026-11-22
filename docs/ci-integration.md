@@ -673,20 +673,27 @@ because `build.yml` already runs those on the same .NET 10 runtime. It also runs
 scheduled for 06:47 UTC, so that a new .NET 10 or .NET 11 runtime build that breaks either lane is
 noticed on a day with no pull request.
 
-The Docker integration suite (the `integration` job in `build.yml`) does not run on pull requests or
-pushes. It runs daily on `main`, scheduled for 06:17 UTC, and on manual dispatch from any branch. A
-Docker-test failure therefore surfaces on the next daily run, not before merge. On a pull request the
-Docker integration check is reported as skipped, which is expected.
+The Docker integration suite does not run on pull requests or pushes. Its steps live in the reusable
+workflow `.github/workflows/docker-integration.yml`, which the `integration` job in `build.yml` calls
+at the commit under test; the job's `if:` keeps it to the daily run on `main`, scheduled for
+06:17 UTC, and to manual dispatch from any branch. A Docker-test failure therefore surfaces on the
+next daily run, not before merge. The `integration-gate` job in `build.yml` reports the lane's result
+under the required check name **Integration tests — Docker / Aspire**: on a pull request that check
+is reported as skipped, which is expected, and on a run where the lane ran it fails unless the lane
+succeeded. On a cancelled run, including a pull-request or push run that a newer one superseded, the
+check reports failure (it used to report cancelled), like the TLS gate; its error message names the
+lane's result, and `cancelled` there means the run was cancelled, not that a test failed.
+The lane's logs are in the job `Docker integration lane / Aspire topology and provider tests`.
 
 Failures no longer depend on someone watching the Actions tab for those daily runs.
 `scheduled-run-alerts.yml` opens one issue per workflow, titled "Scheduled run alert", when a
 scheduled run of `CI` or `.NET compatibility` fails, is cancelled or times out. The issue lists the
 jobs that did not succeed and the jobs that were skipped (the Docker suite is skipped when the build
-job fails, so it gave no result that day). Each further occurrence adds a comment, and a later
-scheduled run that succeeds and is the newest one closes the issue. A break within 30 days of a close
-reopens the same issue, so an open issue means the workflow is currently broken. The repository
-owner is added to the issue's assignees (whoever else is assigned stays) so that they are notified
-whatever their watch settings.
+job fails, so it gave no result that day; the lane and its gate are then both listed as skipped).
+Each further occurrence adds a comment, and a later scheduled run that succeeds and is the newest one
+closes the issue. A break within 30 days of a close reopens the same issue, so an open issue means
+the workflow is currently broken. The repository owner is added to the issue's assignees (whoever
+else is assigned stays) so that they are notified whatever their watch settings.
 
 Closing the issue by hand has consequences. If the workflow is still failing and you close the issue
 as completed, the next failed scheduled run reopens it. If you close it as "not planned", it is

@@ -91,7 +91,8 @@ public sealed class ManagedDefaultImagePullCoverageTests
     private static HashSet<string> WorkflowPullImages()
     {
         var yaml = new YamlStream();
-        using var reader = File.OpenText(Path.Combine(RepoRoot.Resolve(), ".github", "workflows", "build.yml"));
+        // The Docker / Aspire lane's steps live in the reusable workflow that build.yml calls.
+        using var reader = File.OpenText(Path.Combine(RepoRoot.Resolve(), ".github", "workflows", "docker-integration.yml"));
         yaml.Load(reader);
         var root = (YamlMappingNode)Assert.Single(yaml.Documents).RootNode;
         var integration = ((YamlMappingNode)root["jobs"])["integration"];

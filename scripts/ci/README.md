@@ -1,7 +1,8 @@
 # Workflow and Docker CI checks
 
 The blocking `workflow-contract` job lints every workflow and executes the literal
-pre-pull script from `.github/workflows/build.yml` and the prewarm script from
+pre-pull script from `.github/workflows/docker-integration.yml` (the reusable
+workflow holding the Docker / Aspire lane's steps) and the prewarm script from
 `.github/workflows/vouchfx-run.yml`. Source extraction must agree byte-for-byte with
 the parsed YAML blocks. The pre-pull tests substitute its image-list boundary; the
 prewarm tests bind `PREWARM_IMAGES` as the workflow does. Both use fixture Docker
@@ -11,6 +12,14 @@ trimming, unmatched quotes, annotation escaping and log fencing. Negative mutati
 controls confirm the pre-pull checks detect a lost fatal exit and changed YAML
 representation, and that the prewarm fence check detects a missing newline before
 the resume command.
+
+The same file pins how the Docker lane is called. `docker-integration.yml` has only
+the `workflow_call` trigger with one required `reviewed_sha` input, maps no secrets,
+grants `contents: read`, and runs one job with no `if` or `needs` that checks out
+`reviewed_sha` and stops unless HEAD is that commit. In `build.yml`, the
+`integration` job calls it with `reviewed_sha` only and keeps the lane's `needs` and
+`if`, and `integration-gate` carries the required check name and fails when the lane
+failed or was cancelled. No workflow uses `secrets: inherit`.
 
 The release contract also requires exactly one public publishing trigger
 (`release: published`) and preserves the non-publishing manual dispatch. It runs

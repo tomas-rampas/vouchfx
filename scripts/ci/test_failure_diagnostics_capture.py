@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 import unittest
 
-from docker_ci_support import step, workflow
+from docker_ci_support import DOCKER_JOB, DOCKER_WORKFLOW, step, workflow
 
 CAPTURE = "Capture Docker state for failure diagnosis"
 VERIFY = "Verify owned topology acceptance counts and closure"
@@ -129,8 +129,8 @@ def is_quiet(arguments):
 class FailureDiagnosticsCaptureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.data = workflow()
-        cls.steps = cls.data["jobs"]["integration"]["steps"]
+        cls.data = workflow(DOCKER_WORKFLOW)
+        cls.steps = cls.data["jobs"][DOCKER_JOB]["steps"]
         cls.capture = step(CAPTURE, cls.data)
         cls.script = cls.capture["run"]
         cls.invocations = docker_invocations(cls.script)
