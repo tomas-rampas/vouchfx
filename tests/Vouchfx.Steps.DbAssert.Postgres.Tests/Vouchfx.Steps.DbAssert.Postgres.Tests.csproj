@@ -18,6 +18,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Shared fixtures: TestCertificateAuthority (the TLS bed) and ChildProcess (docker CLI calls). -->
+    <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
     <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Compilation\Vouchfx.Engine.Compilation.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.DbAssert.Postgres\Vouchfx.Steps.DbAssert.Postgres.csproj" />
