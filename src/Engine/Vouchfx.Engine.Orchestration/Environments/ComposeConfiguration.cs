@@ -40,7 +40,10 @@ internal sealed record ComposeConfiguration(
         var configDirectory = Path.GetDirectoryName(configPath)!;
         var bytes = ReadInput(configPath);
         var yaml = new YamlStream();
-        try { yaml.Load(new StringReader(Encoding.UTF8.GetString(bytes))); }
+        var configText = Encoding.UTF8.GetString(bytes);
+        if (Vouchfx.Engine.Authoring.YamlKeyAliasGuard.TryFindRefusedKeyAlias(configText, out var refusal))
+            throw new ArgumentException("Compose configuration: invalid YAML at " + refusal.Detail());
+        try { yaml.Load(new StringReader(configText)); }
         catch (YamlDotNet.Core.YamlException) { throw new ArgumentException("Compose configuration: invalid YAML. Check its syntax and duplicate keys."); }
         if (yaml.Documents.Count != 1 || yaml.Documents[0].RootNode is not YamlMappingNode root)
             throw new ArgumentException("Compose configuration must contain one mapping document.");
@@ -163,7 +166,10 @@ internal sealed record ComposeConfiguration(
     private static List<string> ManifestEnvironmentFiles(byte[] bytes, string projectDirectory, Action<string> trackInput)
     {
         var manifest = new YamlStream();
-        try { manifest.Load(new StringReader(Encoding.UTF8.GetString(bytes))); }
+        var manifestText = Encoding.UTF8.GetString(bytes);
+        if (Vouchfx.Engine.Authoring.YamlKeyAliasGuard.TryFindRefusedKeyAlias(manifestText, out var refusal))
+            throw new ArgumentException("Compose manifest: invalid YAML at " + refusal.Detail());
+        try { manifest.Load(new StringReader(manifestText)); }
         catch (YamlDotNet.Core.YamlException) { throw new ArgumentException("Compose manifest: invalid YAML; check syntax and duplicate keys."); }
         var referenced = new List<string>();
         var mappings = new ManifestInputMappings();

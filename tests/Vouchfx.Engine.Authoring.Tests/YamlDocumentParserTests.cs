@@ -14,6 +14,253 @@ namespace Vouchfx.Engine.Authoring.Tests;
 /// </summary>
 public sealed class YamlDocumentParserTests
 {
+    // YamlStream.Load hashes a mapping key on insert, and a sequence hashes by walking all of its
+    // elements with no limit, so a key that reaches a collection through an alias can overflow the
+    // stack (uncatchable) or take exponential time; an alias in a key whose anchor is not defined
+    // before it overflows the stack whatever its target. The pre-scan must refuse every such key
+    // with a located parse error BEFORE Load. If the scan were ever unwired, most rows below would
+    // crash the test host rather than fail, so each crash-capable test first parses this acyclic
+    // document, which Load survives: a wiring regression then fails that assertion cleanly. The
+    // canary proves only that the scan is wired in: a regression in the scan itself that stopped
+    // refusing one shape would still crash the host on that shape's row.
+    private const string KeyAliasWiringCanary = "steps: []\na: &k [ 1 ]\nb: { ? *k : v }\n";
+
+    private static void AssertKeyAliasGuardIsWired()
+    {
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(KeyAliasWiringCanary));
+        Assert.Equal(
+            "YAML parse error at line 3, column 8: alias 'k' inside a mapping key refers to a mapping or sequence; " +
+            "a key may refer by alias only to a scalar.",
+            ex.Message);
+    }
+
+    [Fact]
+    public void Parse_AcyclicCollectionAliasInMappingKey_ThrowsYamlParseExceptionWithLocation()
+    {
+        AssertKeyAliasGuardIsWired();
+        var ex = Assert.Throws<YamlParseException>(
+            () => YamlDocumentParser.Parse("steps: []\na: &m { x: 1 }\nb: { ? [ *m ] : v }\n"));
+        Assert.Equal(3, ex.Line);
+        Assert.Equal(10, ex.Column);
+    }
+
+    [Theory]
+    [InlineData("body: { ? &k [ *k ] : v }\n", "k", 1, 16)]
+    [InlineData("body: { ? &k { x: *k } : v }\n", "k", 1, 19)]
+    [InlineData("? &k [ *k ] : v\n", "k", 1, 8)]
+    [InlineData("steps: []\na: &k [ *k ]\nb: { ? *k : v }\n", "k", 3, 8)]
+    [InlineData("steps: []\na: &k [ *k ]\n? [ *k ] : v\n", "k", 3, 5)]
+    [InlineData("steps: []\na: &k [ *k ]\nb: { *k : v }\n", "k", 3, 6)]
+    [InlineData("steps: []\na: &k [ *k ]\n*k : v\n", "k", 3, 1)]
+    [InlineData("steps: []\na: &x [ &y [ *x ] ]\nb: { ? *y : v }\n", "y", 3, 8)]
+    [InlineData("steps: []\na: &w [ &k [ *k ], 1 ]\nb: { ? *w : v }\n", "w", 3, 8)]
+    [InlineData("steps: []\na: &k [ x ]\nb: &k [ *k ]\nc: { ? *k : v }\n", "k", 4, 8)]
+    [InlineData("steps: []\na: &k !!seq [ *k ]\nb: { ? !!seq [ *k ] : v }\n", "k", 3, 16)]
+    [InlineData("steps: []\na: &k !!seq [ *k ]\n? !!seq [ *k ] : v\n", "k", 3, 11)]
+    [InlineData("steps: []\na: &k [ *k ]\nb: &j [ *j ]\nc: { ? *k : v, ? *j : w }\n", "k", 4, 8)]
+    [InlineData("steps: []\na: &k [ 1 ]\nb: { ? *k : v }\n", "k", 3, 8)]
+    public void Parse_CollectionAliasInMappingKey_ThrowsYamlParseExceptionWithLocation_NotStackOverflow(
+        string yaml, string anchor, int line, int column)
+    {
+        AssertKeyAliasGuardIsWired();
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Equal(line, ex.Line);
+        Assert.Equal(column, ex.Column);
+        Assert.Equal(
+            $"YAML parse error at line {line}, column {column}: alias '{anchor}' inside a mapping key refers to a mapping or sequence; " +
+            "a key may refer by alias only to a scalar.",
+            ex.Message);
+    }
+
+    // An alias in a key whose anchor is not defined before it: Load would keep it as a placeholder
+    // and overflow the stack, whatever the anchor turns out to be (a scalar included).
+    [Theory]
+    [InlineData("steps: []\n? *k : v\nb: &k x\n", "k", 2, 3)]
+    [InlineData("steps: []\n? *k : v\nb: &k [ x ]\n", "k", 2, 3)]
+    [InlineData("steps: []\n? *k : v\nb: &k { x: y }\n", "k", 2, 3)]
+    [InlineData("steps: []\n? *k : v\nb: &k [ *k ]\n", "k", 2, 3)]
+    [InlineData("steps: []\na: { ? *k : v }\nb: &k [ *k ]\n", "k", 2, 8)]
+    [InlineData("steps: []\na: { *k : v }\nb: &k [ *k ]\n", "k", 2, 6)]
+    [InlineData("steps: []\n? { ? *k : 1 } : 2\nb: &k [ *k ]\n", "k", 2, 7)]
+    [InlineData("steps: []\na: [ ? *k : v ]\nb: &k [ *k ]\n", "k", 2, 8)]
+    [InlineData("steps: []\na: [ *k : v ]\nb: &k [ *k ]\n", "k", 2, 6)]
+    [InlineData("steps: []\n? [ *k ] : *k\nb: &k [ *k ]\n", "k", 2, 5)]
+    [InlineData("steps: []\nb: { ? *nowhere : v }\n", "nowhere", 2, 8)]
+    [InlineData("a: &k x\n---\nsteps: []\nb: { ? *k : v }\n", "k", 4, 8)]
+    public void Parse_AliasInMappingKeyBeforeItsAnchor_ThrowsYamlParseExceptionWithLocation_NotStackOverflow(
+        string yaml, string anchor, int line, int column)
+    {
+        AssertKeyAliasGuardIsWired();
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Equal(line, ex.Line);
+        Assert.Equal(column, ex.Column);
+        Assert.Equal(
+            $"YAML parse error at line {line}, column {column}: alias '{anchor}' inside a mapping key refers to an anchor " +
+            "that is not defined before it; a key may refer by alias only to a scalar anchor defined earlier in the same document.",
+            ex.Message);
+    }
+
+    [Fact]
+    public void Parse_ForwardBillionLaughsKey_IsRefusedPromptly()
+    {
+        AssertKeyAliasGuardIsWired();
+
+        // Nine levels of ten aliases each, defined after the key that names the top level.
+        var sb = new System.Text.StringBuilder("variables:\n  ? [ *a9 ] : *a9\n  a0: &a0 [x, y]\n");
+        for (var level = 1; level <= 9; level++)
+        {
+            sb.Append("  a").Append(level).Append(": &a").Append(level).Append(" [")
+              .Append(string.Join(", ", Enumerable.Repeat("*a" + (level - 1), 10))).Append("]\n");
+        }
+
+        sb.Append("steps: []\n");
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(sb.ToString()));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"refusal took {watch.Elapsed}");
+        Assert.Equal(2, ex.Line);
+        Assert.Equal(7, ex.Column);
+        Assert.Contains("alias 'a9' inside a mapping key refers to an anchor that is not defined before it", ex.Message, StringComparison.Ordinal);
+    }
+
+    // A scalar alias is hashed over the whole scalar at every use; Load took about 14 s on this
+    // 1.2 MB document (a 500,000-character scalar repeated through 50,000 keys).
+    [Fact]
+    public void Parse_LongScalarRepeatedThroughKeys_IsRefusedPromptly()
+    {
+        AssertKeyAliasGuardIsWired();
+        var sb = new System.Text.StringBuilder("a: &a ").Append('x', 500_000).Append('\n');
+        for (var i = 0; i < 50_000; i++)
+        {
+            sb.Append("[*a, ").Append(i).Append("]: v\n");
+        }
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(sb.ToString()));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"refusal took {watch.Elapsed}");
+        Assert.Equal(4, ex.Line);
+        Assert.Equal(2, ex.Column);
+        Assert.Contains("alias 'a' inside a mapping key brings the scalar text repeated through aliases in keys, tags included, past 1048576 characters", ex.Message, StringComparison.Ordinal);
+    }
+
+    // YamlDotNet hashes a scalar's tag with its value, so the cap counts the tag: each use below
+    // is charged 1 (the value `x`) + 100,000 (the tag) + 1. Ten uses fit under the cap and load
+    // promptly; an eleventh is refused.
+    [Theory]
+    [InlineData(10, false)]
+    [InlineData(11, true)]
+    public void Parse_LongTagRepeatedThroughKeys_IsCapped(int keys, bool refused)
+    {
+        var sb = new System.Text.StringBuilder("extra:\n  a: &a !").Append('t', 99_999).Append(" x\n");
+        for (var i = 0; i < keys; i++)
+        {
+            sb.Append("  [*a, ").Append(i).Append("]: v\n");
+        }
+
+        sb.Append("steps: []\n");
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        if (!refused)
+        {
+            Assert.Empty(YamlDocumentParser.Parse(sb.ToString()).Steps);
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"parse took {watch.Elapsed}");
+            return;
+        }
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(sb.ToString()));
+        Assert.Equal(13, ex.Line);
+        Assert.Equal(4, ex.Column);
+        Assert.Contains("alias 'a' inside a mapping key brings the scalar text repeated through aliases in keys, tags included, past 1048576 characters", ex.Message, StringComparison.Ordinal);
+    }
+
+    // YamlDotNet 16.3.0's scanner throws exceptions that are not YamlException for some
+    // malformed input (a \U escape above U+10FFFF, a %TAG directive with an empty prefix, an
+    // empty verbatim tag). The key-alias scan must stay out of the way: Parse fails exactly as
+    // YamlStream.Load does on the same text, from the load and not from the scan.
+    [Theory]
+    [InlineData("steps: []\na: \"\\UFFFFFFFF\"\n")]
+    [InlineData("%TAG ! \n---\nsteps: []\n")]
+    [InlineData("steps: []\na: !<> b\n")]
+    public void Parse_ScannerThrowsANonYamlException_FailsAsTheLoadDoes_NotInTheKeyAliasScan(string yaml)
+    {
+        var expected = Record.Exception(() => new YamlDotNet.RepresentationModel.YamlStream().Load(new StringReader(yaml)));
+        Assert.NotNull(expected);
+        Assert.IsNotAssignableFrom<YamlDotNet.Core.YamlException>(expected);
+
+        var ex = Record.Exception(() => YamlDocumentParser.Parse(yaml));
+
+        Assert.NotNull(ex);
+        Assert.IsType(expected.GetType(), ex);
+        Assert.Equal(expected.Message, ex.Message);
+        Assert.DoesNotContain("YamlKeyAliasGuard", ex.StackTrace, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_ScalarAliasInlineCollectionKeysValueAliasesAndMergeKeys_StillParse()
+    {
+        // A scalar anchor defined earlier, used in a key, alone and inside an inline collection.
+        Assert.Empty(YamlDocumentParser.Parse("extra:\n  base: &s text\n  ? *s : v\n  ? [ *s, 1 ] : w\nsteps: []\n").Steps);
+        // Inline collection keys.
+        Assert.Empty(YamlDocumentParser.Parse("extra:\n  ? [a, b] : v\n  ? { a: b } : w\nsteps: []\n").Steps);
+        // Value-position aliases, a self-referencing value, and merge keys.
+        Assert.Empty(YamlDocumentParser.Parse("extra:\n  a: &k [ *k ]\n  b: *k\n  c: [ *k ]\nsteps: []\n").Steps);
+        Assert.Empty(YamlDocumentParser.Parse("extra:\n  base: &base { x: 1 }\n  m:\n    <<: *base\n    y: 2\n  n:\n    <<: [ *base ]\nsteps: []\n").Steps);
+        // A forward alias outside a key loads here; the schema step refuses it with its own message.
+        Assert.Empty(YamlDocumentParser.Parse("extra:\n  a: *k\n  c: { ? x : *k }\n  b: &k [ *k ]\nsteps: []\n").Steps);
+    }
+
+    [Fact]
+    public void Parse_DeepAliasChainUsedAsKey_IsRefusedBeforeLoad()
+    {
+        AssertKeyAliasGuardIsWired();
+
+        // 60,000 links: acyclic, but hashing the key would recurse that deep and overflow the stack.
+        var sb = new System.Text.StringBuilder("variables:\n  c: [");
+        for (var i = 0; i < 60_000; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append("&c").Append(i).Append(" [").Append(i == 0 ? "x" : "*c" + (i - 1)).Append(']');
+        }
+
+        sb.Append("]\n  ? *c59999 : v\nsteps: []\n");
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(sb.ToString()));
+        Assert.Equal(3, ex.Line);
+        Assert.Equal(5, ex.Column);
+        Assert.Contains("alias 'c59999' inside a mapping key", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_BillionLaughsKey_IsRefusedPromptly()
+    {
+        AssertKeyAliasGuardIsWired();
+        var sb = new System.Text.StringBuilder("variables:\n  l0: &l0 [a, b]\n");
+        for (var level = 1; level <= 8; level++)
+        {
+            sb.Append("  l").Append(level).Append(": &l").Append(level).Append(" [")
+              .Append(string.Join(", ", Enumerable.Repeat("*l" + (level - 1), 10))).Append("]\n");
+        }
+
+        sb.Append("  ? *l8 : v\nsteps: []\n");
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(sb.ToString()));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"refusal took {watch.Elapsed}");
+        Assert.Equal(11, ex.Line);
+        Assert.Contains("alias 'l8' inside a mapping key", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_NonKeySelfAliasAndOrdinaryAnchors_StillParse()
+    {
+        var selfAlias = YamlDocumentParser.Parse("a: &k [ *k ]\nsteps: []\n");
+        Assert.Empty(selfAlias.Steps);
+
+        var ordinary = YamlDocumentParser.Parse(
+            "variables:\n  base: &b one\n  again: *b\n  list: &l [ &b two, *b ]\n  copy: *l\nsteps: []\n");
+        Assert.Empty(ordinary.Steps);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("~")]
