@@ -2,13 +2,16 @@
 #
 # Reusable workflow (workflow_call only) that runs the Docker-dependent Aspire
 # integration tests, the ones carrying [Trait("requires","docker")].  It is
-# called by build.yml's `integration` job on the daily schedule and on manual
-# dispatch; build.yml's `integration-gate` job reports the lane's result under
-# the required check name `Integration tests — Docker / Aspire`.
+# called by build.yml's `integration` job (its only caller) on the daily schedule
+# and on manual dispatch; build.yml's `integration-gate` job reports the lane's
+# result under the required check name `Integration tests — Docker / Aspire`.
 #
-# The caller passes the exact commit to test as `reviewed_sha`.  The job checks
-# that commit out and stops if HEAD is any other commit.  The workflow maps no
-# secrets and declares no concurrency group: the calling run owns both.
+# The caller passes the exact commit to test as `reviewed_sha`, and it must be the
+# calling run's own `github.sha`: the lane's evidence records the run's commit
+# (GITHUB_SHA), and the final acceptance check refuses evidence from any other.
+# The job checks that commit out, stops at once if it is not GITHUB_SHA, and stops
+# if HEAD is any other commit.  The workflow maps no secrets and declares no
+# concurrency group: the calling run owns both.
 #
 # A calling workflow's top-level `env` does not reach a called workflow, so the
 # three .NET CLI variables build.yml sets for all of its jobs are repeated here.
@@ -19,7 +22,9 @@ on:
   workflow_call:
     inputs:
       reviewed_sha:
-        description: Exact source commit selected by the calling workflow
+        description: >-
+          Exact source commit to test. It must be the calling run's github.sha,
+          because the lane's evidence records the run's own commit.
         required: true
         type: string
 
@@ -62,7 +67,11 @@ jobs:
           REVIEWED_SHA: ${{ inputs.reviewed_sha }}
         run: |
           set -euo pipefail
-          [[ "$REVIEWED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REVIEWED_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          if [ "$GITHUB_SHA" != "$REVIEWED_SHA" ]; then
+            echo "::error::reviewed_sha ($REVIEWED_SHA) is not this run's commit ($GITHUB_SHA). The lane's evidence records the run's own commit, so the input must be that commit."
+            exit 1
+          fi
           test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
 
       - name: Set up .NET 10 SDK

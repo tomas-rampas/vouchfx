@@ -33,7 +33,8 @@
 #               -> CI -> Run workflow -> pick the branch).  A failure is
 #               therefore found on the next daily run, not before merge; it
 #               still fails the run it is in.
-#               ubuntu-22.04 keeps MongoDB 7 on a compatible hosted kernel.
+#               The lane (in docker-integration.yml) runs on ubuntu-22.04, which
+#               keeps MongoDB 7 on a compatible hosted kernel.
 #
 #  docs-build   Blocking documentation build and publication gate on every PR.
 #               Uses the Pages build inputs without publishing or dispatching.
@@ -495,7 +496,12 @@ jobs:
   # a scheduled or dispatched run whose `build` job failed), which is the conclusion
   # the check had before the lane moved into its own workflow.  Whenever the lane
   # did start, it passes only if the lane succeeded: a failed or cancelled lane
-  # fails the check.
+  # fails the check.  A cancelled run is different: a lane that was still waiting
+  # for `build` when the run was cancelled is reported as cancelled, not skipped,
+  # even where its `if:` would have been false.  So on a cancelled run, including a
+  # superseded pull-request or push run, the check reports failure where it used to
+  # report cancelled, like the TLS gate; the step's error message says which result
+  # it saw.
   integration-gate:
     name: Integration tests — Docker / Aspire
     runs-on: ubuntu-latest
@@ -505,7 +511,11 @@ jobs:
       - name: Require the Docker / Aspire lane to succeed
         env:
           LANE_RESULT: ${{ needs.integration.result }}
-        run: test "$LANE_RESULT" = success
+        run: |
+          if [ "$LANE_RESULT" != success ]; then
+            echo "::error::Docker / Aspire lane result: $LANE_RESULT (cancelled = the run was cancelled, not a test failure)"
+            exit 1
+          fi
 
   # ── Dependency vulnerability scan — ADVISORY, non-blocking ───────────────────
   # Reports known-vulnerable transitive packages across the solution so a

@@ -1,8 +1,8 @@
 // Tests for issue #566 — BLOCKING-LANE companion to ScenarioStartedTimestampAccuracyTests.
 //
 // WHY THIS FILE EXISTS. ScenarioStartedTimestampAccuracyTests carries
-// [Trait("requires", "docker")], and build.yml's Docker lane runs with
-// `continue-on-error: true` (the Docker / Aspire integration job in build.yml) — so reverting ScenarioRunner.cs's
+// [Trait("requires", "docker")], and the Docker / Aspire lane (docker-integration.yml) runs
+// only on the daily schedule and on manual dispatch, so it cannot block a merge — so reverting ScenarioRunner.cs's
 // `scenarioStartedAt` fix back to `now9` would pass every BLOCKING check and still merge. This
 // file drives the SAME production method the Docker test does, at unit speed, with no trait,
 // so a regression here fails the build.
@@ -59,8 +59,9 @@ namespace Vouchfx.Engine.Runtime.Tests;
 /// minimal, zero-dependency <see cref="IKeptTopology"/> double — no <c>SuiteTopology</c>, no
 /// <c>HeadlessTopology</c>, no Aspire/DCP call anywhere on this path (see the file header) — so
 /// the issue #566 archive-timestamp fix is pinned in the <c>requires!=docker</c> blocking lane,
-/// not only in the Docker-gated <see cref="ScenarioStartedTimestampAccuracyTests"/> that
-/// build.yml's <c>continue-on-error: true</c> integration job cannot block a merge on.
+/// not only in the Docker-gated <see cref="ScenarioStartedTimestampAccuracyTests"/>, which runs
+/// in the Docker / Aspire lane (docker-integration.yml) only on the daily schedule and on manual
+/// dispatch, so it cannot block a merge.
 /// </summary>
 public sealed class ScenarioAgainstTopologyStartedTimestampTests
 {

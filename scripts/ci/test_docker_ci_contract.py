@@ -443,8 +443,8 @@ class DockerIntegrationReusableWorkflowTests(unittest.TestCase):
         for path, key, value in walk(self.docker):
             self.assertNotEqual("secrets", key, path)
             if isinstance(value, str):
-                self.assertNotIn("secrets.", value, path)
-                self.assertNotIn("secrets[", value, path)
+                # Any use of the secrets context inside an expression: secrets.X, secrets[...], toJSON(secrets).
+                self.assertIsNone(re.search(r"\$\{\{[^}]*\bsecrets\b", value), path)
         workflows = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
         self.assertIn(DOCKER_WORKFLOW, workflows)
         for path in workflows:
@@ -453,6 +453,27 @@ class DockerIntegrationReusableWorkflowTests(unittest.TestCase):
                 self.assertIsNone(re.search(r"(?m)^[^#\n]*\bsecrets:\s*inherit\b", source))
                 for job_id, job in workflow(path).get("jobs", {}).items():
                     self.assertNotEqual("inherit", job.get("secrets"), job_id)
+
+    def test_every_caller_passes_only_the_run_commit_and_no_secrets(self):
+        callers = 0
+        for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+            for job_id, job in workflow(path).get("jobs", {}).items():
+                if not str(job.get("uses", "")).endswith("docker-integration.yml"):
+                    continue
+                callers += 1
+                with self.subTest(workflow=path.name, job=job_id):
+                    self.assertNotIn("secrets", job)
+                    self.assertEqual(["reviewed_sha"], list(job.get("with", {})))
+                    tls = self.build["jobs"]["tls-transport"]["with"]["reviewed_sha"]
+                    self.assertIn(job["with"]["reviewed_sha"], {"${{ github.sha }}", tls})
+        self.assertGreaterEqual(callers, 1)
+
+    def test_callee_run_scripts_never_interpolate_expressions(self):
+        # Values reach scripts through `env`; an inline ${{ }} in a run script is script injection.
+        scripts = [step["run"] for step in self.lane["steps"] if "run" in step]
+        self.assertTrue(scripts)
+        for script in scripts:
+            self.assertNotIn("${{", script)
 
     def test_callee_permissions_env_and_concurrency(self):
         self.assertEqual({"contents": "read"}, self.docker["permissions"])
@@ -482,10 +503,46 @@ class DockerIntegrationReusableWorkflowTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", confirm)
         lines = confirm["run"].splitlines()
         self.assertEqual("set -euo pipefail", lines[0])
-        self.assertIn('[[ "$REVIEWED_SHA" =~ ^[0-9a-f]{40}$ ]]', lines)
+        # `|| exit 1` stops the script on bash older than 4.1, where a failed [[ =~ ]] does not trip `set -e`.
+        self.assertIn('[[ "$REVIEWED_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1', lines)
         self.assertIn('test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"', lines)
+        # Fail fast: the lane's evidence records GITHUB_SHA, so the input must be the run's own commit.
+        self.assertIn('if [ "$GITHUB_SHA" != "$REVIEWED_SHA" ]; then', lines)
+        self.assertLess(lines.index('if [ "$GITHUB_SHA" != "$REVIEWED_SHA" ]; then'),
+                        lines.index('test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"'))
+        mismatch = [line for line in lines if line.lstrip().startswith("echo ")]
+        self.assertEqual(1, len(mismatch))
+        self.assertIn("::error::", mismatch[0])
+        self.assertIn("run's own commit", mismatch[0])
+        self.assertIn("must be that commit", mismatch[0])
+        self.assertLess(lines.index('if [ "$GITHUB_SHA" != "$REVIEWED_SHA" ]; then'),
+                        lines.index(mismatch[0]))
+        self.assertIn("github.sha", self.docker["on"]["workflow_call"]["inputs"]["reviewed_sha"]["description"])
         checkouts = [s for s in self.lane["steps"] if str(s.get("uses", "")).startswith("actions/checkout@")]
         self.assertEqual([checkout], checkouts)
+
+    def test_confirm_step_script_behaviour(self):
+        confirm = self.lane["steps"][1]
+        commit = "0123456789abcdef0123456789abcdef01234567"
+        repo = SCRATCH / "confirm-repo"
+        repo.mkdir()
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
+        subprocess.run(git + ["init", "-q"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "x"], cwd=repo, check=True, capture_output=True)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True,
+                              text=True).stdout.strip()
+        cases = [("matching", head, head, 0), ("run commit differs", head, commit, 1),
+                 ("not a commit id", "main", "main", 1)]
+        for label, github_sha, reviewed, expected in cases:
+            with self.subTest(case=label):
+                env = dict(os.environ, GITHUB_SHA=github_sha, REVIEWED_SHA=reviewed)
+                completed = subprocess.run([BASH, "--noprofile", "--norc", "-e", "-c", confirm["run"]],
+                                           cwd=repo, env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(expected, completed.returncode, completed.stderr)
+                if label == "run commit differs":
+                    self.assertIn("::error::", completed.stdout)
+                    self.assertIn(github_sha, completed.stdout)
+                    self.assertIn(reviewed, completed.stdout)
 
     def test_artefact_names_stay_unique_in_the_calling_run(self):
         uploads = [s["with"]["name"] for s in self.lane["steps"]
@@ -524,8 +581,14 @@ class DockerIntegrationReusableWorkflowTests(unittest.TestCase):
             with self.subTest(result=result):
                 env = dict(os.environ, LANE_RESULT=result)
                 completed = subprocess.run([BASH, "--noprofile", "--norc", "-e", "-c", only["run"]],
-                                           env=env, capture_output=True, timeout=10)
+                                           env=env, capture_output=True, text=True, timeout=10)
                 self.assertEqual(expected, completed.returncode, completed.stderr)
+                if expected:
+                    # The red check explains itself: the message names the result it saw.
+                    self.assertIn("::error::", completed.stdout)
+                    self.assertIn(f"lane result: {result} (", completed.stdout)
+                else:
+                    self.assertEqual("", completed.stdout)
 
 
 class ReusableWorkflowPrewarmTests(unittest.TestCase):

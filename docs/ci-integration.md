@@ -680,9 +680,12 @@ at the commit under test; the job's `if:` keeps it to the daily run on `main`, s
 next daily run, not before merge. The `integration-gate` job in `build.yml` reports the lane's result
 under the required check name **Integration tests — Docker / Aspire**: on a pull request that check
 is reported as skipped, which is expected, and on a run where the lane ran it fails unless the lane
-succeeded. GitHub disables scheduled
-workflows after 60 days without repository activity; re-enable them from the Actions tab if the daily
-runs stop.
+succeeded. On a cancelled run, including a pull-request or push run that a newer one superseded, the
+check reports failure (it used to report cancelled), like the TLS gate; its error message names the
+lane's result, and `cancelled` there means the run was cancelled, not that a test failed.
+The lane's logs are in the job `Docker integration lane / Aspire topology and provider tests`.
+GitHub disables scheduled workflows after 60 days without repository activity; re-enable them from
+the Actions tab if the daily runs stop.
 
 To run the Docker suite on a branch before merging, open the Actions tab, choose the `CI` workflow,
 select **Run workflow** and pick the branch. Manual dispatch needs write access to this repository: a
