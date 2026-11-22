@@ -6,10 +6,10 @@ using Xunit.Abstractions;
 namespace Vouchfx.Engine.Compilation.Tests;
 
 /// <summary>
-/// Fails when the Aspire version is not pinned to one value everywhere it is declared: the
+/// Fails when the Aspire version differs between the places this guard reads: the
 /// <c>Aspire.Hosting*</c> package versions and the <c>VouchfxDcpVersion</c> property in the root
-/// <c>Directory.Packages.props</c>, and the <c>Aspire.AppHost.Sdk</c> version of every project that
-/// declares that SDK.
+/// <c>Directory.Packages.props</c>, and the <c>Aspire.AppHost.Sdk</c> version of every declaration
+/// of that SDK in an MSBuild file.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -19,10 +19,16 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// current Aspire minor.
 /// </para>
 /// <para>
-/// This is a bounded text check over MSBuild XML. It reads <c>Directory.Packages.props</c> and every
-/// <c>*.csproj</c> under the repository root, skipping hidden directories and <c>bin</c>, <c>obj</c>
-/// and <c>node_modules</c>. It does not resolve packages or evaluate MSBuild properties. The
-/// minimum counts guard against a broken search passing without checking anything.
+/// This is a bounded text check over MSBuild XML. It reads the root <c>Directory.Packages.props</c>
+/// for the package versions, with their ids decoded and split at <c>;</c>, and every MSBuild file
+/// that <c>AspireAuditSuppressionGuardTests</c> reads for the SDK declarations, so hidden
+/// directories and <c>bin</c>, <c>obj</c> and <c>node_modules</c> are skipped. It does not resolve
+/// packages or evaluate MSBuild properties. The minimum counts, of package versions and of files
+/// that declare the SDK, guard against a broken search passing without checking anything. Accepted
+/// limit: a version an <c>Aspire.Hosting*</c> package gets anywhere else (a <c>VersionOverride</c>, a
+/// project outside central package management) is not compared here;
+/// <c>AspireAuditSuppressionGuardTests</c> refuses one for <c>Aspire.Hosting</c> and
+/// <c>Aspire.Hosting.AppHost</c> while the audit suppression is present.
 /// </para>
 /// </remarks>
 public sealed class AspireVersionLockstepGuardTests
@@ -39,7 +45,7 @@ public sealed class AspireVersionLockstepGuardTests
 
     private const int MinimumHostingPackages = 10;
 
-    private const int MinimumSdkProjects = 3;
+    private const int MinimumSdkFiles = 3;
 
     private const string MoveTogetherHint =
         "The Aspire.Hosting* package versions, VouchfxDcpVersion and every Aspire.AppHost.Sdk version "
@@ -116,10 +122,11 @@ public sealed class AspireVersionLockstepGuardTests
         var sdks = ReadAppHostSdkDeclarations();
         _output.WriteLine($"{AppHostSdkName} declarations: " + string.Join(", ", sdks.Select(s => $"{s.File}={s.Version}")));
 
+        var declaringFiles = sdks.Select(s => s.File).Distinct(StringComparer.Ordinal).Count();
         Assert.True(
-            sdks.Count >= MinimumSdkProjects,
-            $"Only {sdks.Count} project files declaring {AppHostSdkName} were found, expected at least "
-            + $"{MinimumSdkProjects}. The search is probably broken, so this guard would check nothing.");
+            declaringFiles >= MinimumSdkFiles,
+            $"Only {declaringFiles} MSBuild files declaring {AppHostSdkName} were found, expected at least "
+            + $"{MinimumSdkFiles}. The search is probably broken, so this guard would check nothing.");
 
         var mismatches = sdks
             .Where(s => !string.Equals(s.Version, dcp, StringComparison.Ordinal))
@@ -160,37 +167,15 @@ public sealed class AspireVersionLockstepGuardTests
         LoadPackagesProps()
             .Descendants()
             .Where(e => NameIs(e, "PackageVersion"))
-            .Select(e => (Id: (AttributeValue(e, "Include") ?? string.Empty).Trim(), Version: (AttributeValue(e, "Version") ?? string.Empty).Trim()))
+            .SelectMany(e => AspireAuditSuppressionGuardTests.ItemPackageIds(e)
+                .Select(id => (Id: id, Version: (AttributeValue(e, "Version") ?? string.Empty).Trim())))
             .Where(p => p.Id.StartsWith(HostingPrefix, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
-    private static List<(string File, string Version)> ReadAppHostSdkDeclarations()
-    {
-        var root = RepoRoot.Resolve();
-        var result = new List<(string File, string Version)>();
-        foreach (var path in AspireAuditSuppressionGuardTests.EnumerateFiles(root, p => p.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)))
-        {
-            var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
-            XDocument document;
-            try
-            {
-                document = XDocument.Load(path);
-            }
-            catch (System.Xml.XmlException exception)
-            {
-                Assert.Fail($"{relative} is not well-formed XML, so the Aspire version guard cannot read it: {exception.Message}");
-                return result;
-            }
-            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
-            {
-                continue;
-            }
-
-            result.AddRange(AppHostSdkVersions(document).Select(version => (relative, version)));
-        }
-
-        return result;
-    }
+    private static List<(string File, string Version)> ReadAppHostSdkDeclarations() =>
+        AspireAuditSuppressionGuardTests.LoadedMsBuildDocuments()
+            .SelectMany(d => AppHostSdkVersions(d.Document).Select(version => (d.File, version)))
+            .ToList();
 
     /// <summary>
     /// The versions of every <c>Aspire.AppHost.Sdk</c> declaration in a project: the <c>&lt;Sdk Name&gt;</c>

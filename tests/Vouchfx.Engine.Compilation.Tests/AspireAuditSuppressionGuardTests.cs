@@ -18,8 +18,9 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// <para>
 /// This is a bounded source and text check, not proof that the advisory is unreachable, and it does
 /// not evaluate MSBuild. It reads every <c>*.props</c>, <c>*.targets</c>, <c>*.csproj</c>,
-/// <c>*.proj</c> and <c>nuget.config</c> file under the repository root as XML, and reads these as
-/// plain text: every <c>*.rsp</c> file, every YAML file under <c>.github/workflows</c>, every YAML,
+/// <c>*.fsproj</c>, <c>*.vbproj</c>, <c>*.proj</c> and <c>nuget.config</c> file under the repository
+/// root as XML, and reads these as plain text: every <c>*.rsp</c> file, every YAML file under
+/// <c>.github/workflows</c>, every YAML,
 /// <c>.sh</c> and <c>.ps1</c> file under <c>.github/actions</c>, <c>ci</c> and <c>installer</c>, and
 /// every <c>.sh</c> and <c>.ps1</c> file under <c>scripts</c> and <c>examples</c>. It parses every
 /// <c>src/**/*.cs</c> file with Roslyn four times, with the Release and the Debug preprocessor
@@ -32,34 +33,64 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// A directory or file that disappears during the walk is treated as absent.
 /// </para>
 /// <para>
-/// Imports are checked rather than followed. Every <c>&lt;Import Project&gt;</c> must end in
-/// <c>.props</c> or <c>.targets</c>, must contain no wildcard (<c>*</c> or <c>?</c>), and must have
-/// no path segment that starts with a dot or is named <c>bin</c>, <c>obj</c> or
-/// <c>node_modules</c> (compared without regard to case, after property expansions are removed from
-/// the segment), which are the directories the walk skips. A relative import of a file inside the
-/// repository is therefore a file this guard reads. The one property function accepted is
-/// <c>GetPathOfFileAbove</c>: its file argument gets the same checks, and its start-directory
-/// argument gets the segment checks. Any other target that ends in a property expansion fails.
+/// Imports are checked rather than followed. After <c>%XX</c> decoding (up to four times), an
+/// <c>&lt;Import Project&gt;</c> value passes only in one of two forms, and in neither may it contain
+/// <c>;</c> or a wildcard (<c>*</c> or <c>?</c>). (a) A path: an optional plain property at its start
+/// (<c>$(Name)</c>, not a property function), then text with no other <c>$(</c> and no hidden,
+/// skipped or Windows-special segment, ending in <c>.props</c> or <c>.targets</c>. A hidden segment
+/// starts with a dot and is not <c>.</c> or <c>..</c>; a skipped segment is named <c>bin</c>,
+/// <c>obj</c> or <c>node_modules</c>, compared without regard to case or to trailing dots and spaces;
+/// these are the directories the walk skips. A Windows-special segment holds <c>~</c> (a possible
+/// short name) or a <c>:</c> other than a leading drive letter (an alternate data stream).
+/// (b) <c>$([MSBuild]::GetPathOfFileAbove('&lt;file&gt;', '&lt;start&gt;'))</c>, with each argument
+/// in single quotes and the start optional, where the file argument is a path as in (a), the start
+/// argument is one except that it need not end in <c>.props</c> or <c>.targets</c>, and only
+/// <c>$(MSBuildThisFileDirectory)</c> or <c>$(MSBuildProjectDirectory)</c> may start either argument.
+/// Every other property function fails, and so does <c>GetPathOfFileAbove</c> with an unquoted
+/// argument. So an import that is a relative path, alone or after <c>$(MSBuildThisFileDirectory)</c>
+/// or <c>$(MSBuildProjectDirectory)</c>, and that stays inside the repository, reaches only files this
+/// guard reads, and so does a <c>GetPathOfFileAbove</c> search that finds its file inside the
+/// repository; for <c>$(MSBuildProjectDirectory)</c> this holds when the project being built is one
+/// this guard reads.
 /// </para>
 /// <para>
 /// Text and XML values are decoded (<c>%XX</c>, up to four times) before the audit patterns run,
-/// which is stricter than MSBuild's single unescape for these patterns. A
-/// <c>TreatWarningsAsErrors</c> value is the exception and is decoded once, as MSBuild does, so
-/// <c>%2574rue</c> is not accepted as true. In XML its value must be <c>true</c>, and the root
-/// <c>Directory.Build.props</c> must set it without a condition. In text, <c>TreatWarningsAsErrors</c>
-/// followed by <c>=</c> or <c>:</c> and any value other than <c>true</c> fails (an empty value,
-/// <c>off</c>, <c>no</c> or a variable included), as does <c>-warnaserror-</c>, because a value this
-/// guard cannot read as true may turn NU190x back into a warning.
+/// which is stricter than MSBuild's single unescape for these patterns. In the MSBuild files, an
+/// element whose name contains <c>NuGetAudit</c>, other than <c>NuGetAuditSuppress</c>, fails, and so
+/// does any XML value that mentions <c>NuGetAudit</c> or an NU190x code, which covers a property
+/// assignment inside a task attribute such as <c>Properties</c>. An XML value here is an attribute
+/// value or an element's text: all of its own text joined, and each text node on its own when there
+/// are several. XML comments are not values and are not scanned. In the text files every line is
+/// scanned, comments included. A <c>TreatWarningsAsErrors</c> value is the exception to the decoding
+/// and is decoded once, as MSBuild does, so <c>%2574rue</c> is not accepted as true. Every
+/// <c>&lt;TreatWarningsAsErrors&gt;</c> element's value, trimmed, must be <c>true</c>, the root
+/// <c>Directory.Build.props</c> must set it without a condition, and no attribute may name the
+/// property on its own or in a <c>;</c> list (<c>&lt;Output PropertyName="TreatWarningsAsErrors" /&gt;</c>).
+/// In a text line or an XML value, every <c>TreatWarningsAsErrors</c> followed by <c>=</c> or
+/// <c>:</c> (optional spaces and a quote allowed on each side) must have a value that, read up to
+/// the next space, quote, <c>;</c> or <c>,</c> that is not escaped, then decoded once and trimmed, is
+/// <c>true</c>. On a text line whose first non-space character is <c>#</c>, one full stop at the end
+/// of the value is ignored, so a comment may end a sentence with it. An empty value, <c>off</c>,
+/// <c>no</c>, a variable, <c>true$X</c>, <c>true-x</c> and <c>true%20x</c> therefore fail, as does
+/// <c>-warnaserror-</c>, because a value this guard cannot read as true may turn NU190x back into a
+/// warning.
 /// </para>
 /// <para>
-/// It does not run NuGet audit, resolve transitive Aspire packages, or start a topology. Code
-/// under an <c>#if</c> symbol that neither build defines is not scanned. The suppression is
+/// It does not run NuGet audit, resolve transitive Aspire packages, or start a topology. Code that
+/// <c>#if</c> leaves out under every one of the symbol sets this guard parses with (the
+/// configuration, <c>TRACE</c> and the target framework symbols) is not scanned, so a symbol a
+/// project adds through <c>DefineConstants</c> can hide code from it. Code the build generates (a
+/// source generator's output, a file written under <c>obj</c>) is not parsed either. The suppression is
 /// justified by the engine building its only Aspire topology with <c>DisableDashboard = true</c>
 /// and by nothing referencing YARP. Both are inferences from the code, and these tests only
 /// confirm the inferred facts still hold. A file that is not tracked but sits in the working
 /// tree is scanned too, which can only make the guard stricter. MSBuild element and attribute
-/// names are matched without regard to case, as MSBuild itself does. Package ids are decoded
-/// before they are compared. Using aliases and <c>using static</c> directives are collected across
+/// names are matched without regard to case, which is at least as strict as MSBuild. Package ids
+/// are decoded, and an <c>Include</c> or <c>Update</c> that lists several with <c>;</c> is split,
+/// before they are compared. While the suppression is present, <c>Aspire.Hosting</c> and
+/// <c>Aspire.Hosting.AppHost</c> may get a version only from a <c>PackageVersion</c> in the root
+/// <c>Directory.Packages.props</c>: a <c>VersionOverride</c>, or a <c>Version</c> on any other package
+/// element, fails. Using aliases and <c>using static</c> directives are collected across
 /// all parsed files, because a global using applies to every file, and an alias name maps to every
 /// type any file aliases it to, so an alias in one file can only make the construction-site check
 /// stricter in another. A <c>&lt;Using&gt;</c> item that names a <c>DistributedApplication</c> type
@@ -75,16 +106,41 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// name is not either. Text of other kinds is not scanned (<c>*.py</c>, <c>*.bat</c>, <c>*.cmd</c>,
 /// <c>*.wxs</c>, Dockerfiles, and YAML under <c>scripts</c> and <c>examples</c>). YAML <c>\x</c> and
 /// <c>\u</c> escapes and shell quote concatenation are not decoded, so a setting spelled with them is
-/// not seen. An import is not proved to stay in the repository: a target that starts with a property
-/// other than <c>$(MSBuildThisFileDirectory)</c> or <c>$(MSBuildProjectDirectory)</c> (a property set
-/// elsewhere, <c>$(NuGetPackageRoot)</c>), an absolute path, a <c>..</c> path that leaves the
-/// repository root, and an <c>Sdk=</c> import are all allowed, because SDK imports need them, and a
-/// file such an import reaches is not read. The agreement of <c>VouchfxDcpVersion</c>, the central
-/// <c>Aspire.Hosting.AppHost</c> version and each <c>Aspire.AppHost.Sdk</c> version is checked by
+/// not seen. A <c>TreatWarningsAsErrors</c> setting in text that has no <c>=</c> or <c>:</c> after
+/// the name (a PowerShell <c>SetEnvironmentVariable('TreatWarningsAsErrors', 'false')</c> or
+/// <c>Set-Item env:TreatWarningsAsErrors false</c>) is not seen. A PowerShell <c>$true</c> and an
+/// escaped quote around <c>true</c> are refused even where they would read as true, because the same
+/// text is not true everywhere: <c>$true</c> is an empty variable in a POSIX shell and literal text
+/// in a single-quoted PowerShell string, and PowerShell does not treat <c>\"</c> as an escape. An
+/// import is not proved to stay in the repository: a target that starts with a plain property
+/// other than <c>$(MSBuildThisFileDirectory)</c> or <c>$(MSBuildProjectDirectory)</c> (a
+/// property set elsewhere, <c>$(NuGetPackageRoot)</c>, <c>$(MSBuildToolsPath)</c>), an absolute path,
+/// a <c>..</c> path that leaves the repository root, an <c>Sdk=</c> import, and a
+/// <c>GetPathOfFileAbove</c> search that finds its file above the repository root (from a start
+/// directory outside it, or by walking up past it) are all allowed, because SDK imports need the
+/// first kinds and this guard does not resolve where a path or a search ends, and a file such an
+/// import reaches is not read. Of the files MSBuild imports without an <c>&lt;Import&gt;</c> in a file
+/// this guard reads, only those the walk finds anyway are read (the repository's
+/// <c>Directory.Build.props</c>, <c>Directory.Build.targets</c> and <c>Directory.Packages.props</c>
+/// are): an SDK's own files and a <c>&lt;project&gt;.csproj.user</c> file are not, and neither is a
+/// file outside the walk that an SDK import names through a property such as
+/// <c>CustomAfterMicrosoftCommonTargets</c>. A project in a hidden or skipped directory is not read
+/// either, even when a project this guard reads references it. Items are not evaluated: a package
+/// id or a <c>&lt;Using&gt;</c> written through a property, an item list or a wildcard, and metadata
+/// that an <c>&lt;ItemDefinitionGroup&gt;</c> gives every package item, are not resolved, so a package
+/// reference, <c>VersionOverride</c> or <c>&lt;Using&gt;</c> written that way is not seen. An Aspire
+/// host is recognised from its own project file only: an <c>Aspire.AppHost.Sdk</c>
+/// declaration or an <c>IsAspireHost</c> in a file the project imports is not traced to the
+/// project. The agreement of <c>VouchfxDcpVersion</c>, the central <c>Aspire.Hosting.AppHost</c>
+/// version and each <c>Aspire.AppHost.Sdk</c> version is checked by
 /// <c>AspireVersionLockstepGuardTests</c>, not here. Code ownership of the files of this contract is
-/// closed by the entries in <c>.github/CODEOWNERS</c> and has no test, because ownership rules are a
-/// repository setting that a file in the tree cannot prove. Host platforms outside the four that
+/// recorded in <c>.github/CODEOWNERS</c> and has no test: whether an owner's review is required is
+/// a repository setting, which a file in the tree cannot prove. Host platforms outside the four that
 /// <c>Vouchfx.Dcp.targets</c> covers are documented there and are not this guard's concern.
+/// </para>
+/// <para>
+/// <c>YamlDotNetPinGuardTests</c> and <c>AspireVersionLockstepGuardTests</c> use this class's loaded
+/// MSBuild documents and package-item helpers, so removing this guard needs those helpers moved first.
 /// </para>
 /// </remarks>
 public sealed class AspireAuditSuppressionGuardTests
@@ -138,11 +194,12 @@ public sealed class AspireAuditSuppressionGuardTests
 
     private static readonly string[] SkippedDirectoryNames = { "bin", "obj", "node_modules" };
 
-    private static readonly string[] AuditSettingElements = { "NuGetAudit", "NuGetAuditLevel", "NuGetAuditMode" };
-
     private static readonly string[] HostingPackageIds = { "Aspire.Hosting", "Aspire.Hosting.AppHost" };
 
     private static readonly string[] PackageElements = { "PackageVersion", "PackageReference", "GlobalPackageReference" };
+
+    /// <summary>The item metadata that give a package its version.</summary>
+    private static readonly string[] VersionMetadataNames = { "VersionOverride", "Version" };
 
     /// <summary>The construction sites <see cref="TopologyRelativePath"/> is expected to contain, sorted ordinally.</summary>
     private static readonly string[] ExpectedTopologySites = { "DistributedApplication.CreateBuilder", "new DistributedApplicationOptions" };
@@ -174,23 +231,42 @@ public sealed class AspireAuditSuppressionGuardTests
 
     private static readonly Regex PercentEscape = new("%([0-9A-Fa-f]{2})", RegexOptions.CultureInvariant);
 
-    /// <summary>MSBuild's <c>GetPathOfFileAbove</c>: the first argument names the imported file, the second a start directory.</summary>
+    /// <summary>
+    /// MSBuild's <c>GetPathOfFileAbove</c> with each argument in single quotes: the first names the
+    /// imported file, the optional second a start directory.
+    /// </summary>
     private static readonly Regex GetPathOfFileAbove = new(
         @"^\$\(\[MSBuild\]::GetPathOfFileAbove\(\s*'(?<file>[^']*)'\s*(?:,\s*'(?<start>[^']*)'\s*)?\)\)$",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
-    /// <summary>A property expansion such as <c>$(MSBuildThisFileDirectory)</c>, one level of nested parentheses allowed.</summary>
-    private static readonly Regex PropertyExpansion = new(@"\$\((?:[^()]|\([^()]*\))*\)", RegexOptions.CultureInvariant);
+    /// <summary>The start of any <c>GetPathOfFileAbove</c> call, so a call whose arguments are not quoted gets its own message.</summary>
+    private static readonly Regex GetPathOfFileAboveCall = new(@"^\$\(\[MSBuild\]::GetPathOfFileAbove\(", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    /// <summary>A plain property expansion such as <c>$(MSBuildThisFileDirectory)</c> at the start of a path: a property name, not a property function.</summary>
+    private static readonly Regex LeadingProperty = new(@"^\$\(\s*(?<name>[A-Za-z_][A-Za-z0-9_\-]*)\s*\)", RegexOptions.CultureInvariant);
+
+    /// <summary>The only properties that may start a <c>GetPathOfFileAbove</c> argument: both name a directory inside the repository.</summary>
+    private static readonly string[] DirectoryProperties = { "MSBuildThisFileDirectory", "MSBuildProjectDirectory" };
 
     /// <summary>
-    /// Text that turns warnings-as-errors off from a command line, a script or an action:
-    /// <c>TreatWarningsAsErrors</c> followed by <c>=</c> or <c>:</c> and anything but <c>true</c>
-    /// (an empty value included), or <c>-warnaserror-</c>. The atomic group stops the optional
-    /// spaces from backing off to make <c>: true</c> look like a value that is not <c>true</c>.
+    /// A <c>TreatWarningsAsErrors</c> assignment in text: the name, <c>=</c> or <c>:</c> with an
+    /// optional quote around it, and the value up to the next space, quote, <c>;</c> or <c>,</c>.
+    /// The atomic group stops the optional spaces from backing off to make <c>: true</c> look like
+    /// a value that is not <c>true</c>.
     /// </summary>
-    private static readonly Regex WarningsAsErrorsOffText = new(
-        @"TreatWarningsAsErrors(?>[""']?\s*[=:]\s*[""']?)(?!true\b)|(?<![\w])[-/]warnaserror-(?![:\w])",
+    private static readonly Regex WarningsAsErrorsAssignment = new(
+        @"TreatWarningsAsErrors(?>[""']?\s*[=:]\s*[""']?)(?<value>[^\s""';,]*)",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    /// <summary>The <c>-warnaserror-</c> or <c>/warnaserror-</c> switch, which turns warnings-as-errors off.</summary>
+    private static readonly Regex WarnAsErrorOffSwitch = new(@"(?<![\w])[-/]warnaserror-(?![:\w])", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// The first of a private-use range that stands in for an escaped space, quote, <c>;</c> or
+    /// <c>,</c> while a value is read, because MSBuild keeps an escaped character in the value
+    /// rather than ending the value there.
+    /// </summary>
+    private const char EscapedSeparatorBase = '';
 
     private static readonly Regex AuditWarningCode = new(@"(?<![0-9])NU190\d(?![0-9])", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
@@ -285,17 +361,35 @@ public sealed class AspireAuditSuppressionGuardTests
     [InlineData("-p:TreatWarningsAsErrors=trueish", true)]
     [InlineData("-p:TreatWarningsAsErrors=%2574rue", true)]
     [InlineData("TreatWarningsAsErrors:", true)]
+    [InlineData("dotnet build -p:TreatWarningsAsErrors=true$SUFFIX", true)]
+    [InlineData("dotnet build -p:TreatWarningsAsErrors=true-not", true)]
+    [InlineData("dotnet build -p:TreatWarningsAsErrors=true%20x", true)]
+    [InlineData("dotnet build -p:TreatWarningsAsErrors=true%3Bx", true)]
+    [InlineData("dotnet build -p:TreatWarningsAsErrors=%22true%22", true)]
+    [InlineData("dotnet build \"-p:TreatWarningsAsErrors=${STRICT:-true}\"", true)]
+    [InlineData("-p:TreatWarningsAsErrors=true -p:TreatWarningsAsErrors=false", true)]
+    [InlineData("# keep TreatWarningsAsErrors=false out of here", true)]
+    [InlineData("# Directory.Build.props sets TreatWarningsAsErrors=false.", true)]
+    [InlineData("dotnet build -p:TreatWarningsAsErrors=true.", true)]
+    [InlineData("dotnet build -p:TreatWarningsAsErrors=true. # done", true)]
+    [InlineData("# Directory.Build.props sets TreatWarningsAsErrors=true.", false)]
+    [InlineData("      # TreatWarningsAsErrors=true, so a single Roslyn warning fails the build.", false)]
     [InlineData("-p:TreatWarningsAsErrors=true", false)]
     [InlineData("-p:TreatWarningsAsErrors=\"True\"", false)]
     [InlineData("-p:TreatWarningsAsErrors=%74rue", false)]
+    [InlineData("-p:TreatWarningsAsErrors=true%20", false)]
+    [InlineData("-p:TreatWarningsAsErrors=true;NoWarn=CS1591", false)]
+    [InlineData("-p:TreatWarningsAsErrors=true,Configuration=Release", false)]
+    [InlineData("dotnet build -p:TreatWarningsAsErrors=true -c Release", false)]
     [InlineData("TreatWarningsAsErrors: true", false)]
+    [InlineData("TreatWarningsAsErrors: 'true'", false)]
     [InlineData("dotnet build -warnaserror", false)]
     [InlineData("dotnet build -warnaserror+", false)]
     [InlineData("TreatWarningsAsErrors is true, not false", false)]
     [InlineData("# TreatWarningsAsErrors stays true", false)]
     public void GivenWarningsAsErrorsText_WhenPatternIsMatched_ThenOnlyTurningItOffMatches(string text, bool expected)
     {
-        Assert.Equal(expected, FindWarningsAsErrorsOff(text).Success);
+        Assert.Equal(expected, FindWarningsAsErrorsOff(text, textFileLine: true) is not null);
     }
 
     [Theory]
@@ -332,6 +426,32 @@ public sealed class AspireAuditSuppressionGuardTests
     [InlineData("$([MSBuild]::GetPathOfFileAbove('.cfg/x.props'))", "hidden path segment")]
     [InlineData("", "no Project")]
     [InlineData(null, "no Project")]
+    [InlineData("Sdk.props", null)]
+    [InlineData("Sdk.targets", null)]
+    [InlineData("/opt/dotnet/sdk/x.targets", null)]
+    [InlineData("$(msbuildthisfiledirectory)x.props", null)]
+    [InlineData("$([MSBuild]::GetPathOfFileAbove('Directory.Build.props'))", null)]
+    [InlineData("$(MSBuildThisFileDirectory)$(CfgDir)/audit.props", "property expansion after its start")]
+    [InlineData("build/$(Cfg)/a.props", "property expansion after its start")]
+    [InlineData(".$(C)/a.props", "property expansion after its start")]
+    [InlineData("ob$(J)/zz.props", "property expansion after its start")]
+    [InlineData("build/$([System.String]::Concat('.','cfg'))/a.props", "property expansion after its start")]
+    [InlineData("$(NuGetPackageRoot)$(Package)/build/x.props", "property expansion after its start")]
+    [InlineData("build/audit.txt;build/empty.props", "more than one file")]
+    [InlineData("build/a.props;build/b.props", "more than one file")]
+    [InlineData("build/audit.txt%3Bbuild/empty.props", "more than one file")]
+    [InlineData("$([System.String]::Concat('.cfg/','a.props'))", "property function")]
+    [InlineData("$(MSBuildThisFileDirectory.Replace('x','.x'))a.props", "property function")]
+    [InlineData("$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), Directory.Build.targets))/Directory.Build.targets", "property function")]
+    [InlineData("$([MSBuild]::GetPathOfFileAbove(Directory.Build.props, $(MSBuildThisFileDirectory)../))", "with each argument in single quotes")]
+    [InlineData("$([MSBuild]::GetPathOfFileAbove('Directory.Build.props'))/../x.props", "with each argument in single quotes")]
+    [InlineData("$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)$(Sub)/'))", "property expansion after its start")]
+    [InlineData("$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(Elsewhere)/'))", "starts with $(Elsewhere)")]
+    [InlineData("$([MSBuild]::GetPathOfFileAbove('$(Name).props'))", "starts with $(Name)")]
+    [InlineData("$(MSBuildThisFileDirectory)obj./audit.props", "skipped directory")]
+    [InlineData("CFG~1/audit.props", "short name")]
+    [InlineData("build/x.props:hidden.props", "alternate data stream")]
+    [InlineData("C:\\build\\x.props", null)]
     public void GivenImportTarget_WhenItIsChecked_ThenOnlyVisibleProjectFilesPass(string? project, string? expectedProblem)
     {
         var problem = ImportProblem(project);
@@ -353,38 +473,37 @@ public sealed class AspireAuditSuppressionGuardTests
         var violations = new List<string>();
         foreach (var (file, document) in MsBuildDocuments.Value)
         {
-            foreach (var element in document.Descendants())
-            {
-                var name = element.Name.LocalName;
-                if (AuditSettingElements.Contains(name, StringComparer.OrdinalIgnoreCase))
-                {
-                    violations.Add($"{file}: <{name}> element");
-                }
-
-                var texts = element.Attributes().Select(a => a.Value).ToList();
-                if (!element.HasElements)
-                {
-                    texts.Add(element.Value);
-                }
-
-                foreach (var text in texts)
-                {
-                    var match = FindAuditWarningCode(text);
-                    if (match.Success)
-                    {
-                        violations.Add($"{file}: <{name}> mentions {match.Value}");
-                    }
-                }
-            }
+            violations.AddRange(AuditSettingProblems(document).Select(p => $"{file}: {p}"));
         }
 
         _output.WriteLine("Audit setting findings: " + violations.Count);
         Assert.True(
             violations.Count == 0,
-            "NuGet audit settings must not be changed anywhere in the MSBuild files. A weaker setting would hide "
-            + $"advisories other than {AdvisoryId}, and any change, including a stricter one, needs a deliberate "
+            "NuGet audit settings must not be changed anywhere in the MSBuild files: no element named NuGetAudit* other "
+            + "than NuGetAuditSuppress, and no attribute value or element text that mentions NuGetAudit or an NU190x "
+            + "code, which includes a property assignment inside a task attribute such as Properties. A weaker setting "
+            + $"would hide advisories other than {AdvisoryId}, and any change, including a stricter one, needs a deliberate "
             + "edit of this test. Remove these (use a NuGetAuditSuppress item for one advisory only, and only with "
             + $"maintainer approval): [{string.Join("; ", violations)}]. {DismissalHint}");
+    }
+
+    [Theory]
+    [InlineData("<PropertyGroup><NuGetAudit>false</NuGetAudit></PropertyGroup>", true)]
+    [InlineData("<PropertyGroup><nugetauditlevel>critical</nugetauditlevel></PropertyGroup>", true)]
+    [InlineData("<PropertyGroup><NuGetAuditFutureSetting>x</NuGetAuditFutureSetting></PropertyGroup>", true)]
+    [InlineData("<PropertyGroup><NoWarn>$(NoWarn);NU1903</NoWarn></PropertyGroup>", true)]
+    [InlineData("<Target Name=\"Z\"><MSBuild Projects=\"$(MSBuildProjectFullPath)\" Targets=\"Restore\" Properties=\"NuGetAudit=false\" /></Target>", true)]
+    [InlineData("<Target Name=\"Z\"><Exec Command=\"dotnet restore -p:NuGet%41udit=false\" /></Target>", true)]
+    [InlineData("<PropertyGroup><RestoreArgs>-p:NuGetAuditMode=direct</RestoreArgs></PropertyGroup>", true)]
+    [InlineData("<PropertyGroup><NoWarn>CS1591;NU1903;<Zz /></NoWarn></PropertyGroup>", true)]
+    [InlineData("<PropertyGroup><NoWarn>NU19<!-- split -->03</NoWarn></PropertyGroup>", true)]
+    [InlineData("<ItemGroup><NuGetAuditSuppress Include=\"https://github.com/advisories/GHSA-f7vh-h5g3-7jrh\" /></ItemGroup>", false)]
+    [InlineData("<!-- NuGetAudit stays on; NU1903 is an error --><PropertyGroup><NoWarn>CS1591</NoWarn></PropertyGroup>", false)]
+    public void GivenMsBuildXml_WhenAuditSettingsAreChecked_ThenNamesAttributeValuesAndTextAreAllSeen(string body, bool expectedProblem)
+    {
+        var document = XDocument.Parse($"<Project>{body}</Project>");
+
+        Assert.Equal(expectedProblem, AuditSettingProblems(document).Count > 0);
     }
 
     [Fact]
@@ -406,10 +525,9 @@ public sealed class AspireAuditSuppressionGuardTests
                     violations.Add($"{Relative(root, path)}:{index + 1}: {match.Value}");
                 }
 
-                var off = FindWarningsAsErrorsOff(lines[index]);
-                if (off.Success)
+                if (FindWarningsAsErrorsOff(lines[index], textFileLine: true) is { } off)
                 {
-                    warningViolations.Add($"{Relative(root, path)}:{index + 1}: {off.Value}");
+                    warningViolations.Add($"{Relative(root, path)}:{index + 1}: {off}");
                 }
             }
         }
@@ -425,9 +543,11 @@ public sealed class AspireAuditSuppressionGuardTests
             + $"[{string.Join("; ", violations)}]. {DismissalHint}");
         Assert.True(
             warningViolations.Count == 0,
-            "Warnings must stay errors. Giving TreatWarningsAsErrors (after = or :) any value other than true, or passing "
-            + "-warnaserror-, from a response file, workflow, action, CI definition or script would turn NU190x audit "
-            + "warnings back into warnings. Remove these: "
+            "Warnings must stay errors. Giving TreatWarningsAsErrors (after = or :) a value that is not exactly true once "
+            + "read up to the next unescaped space, quote, ';' or ',' and decoded once (true$X, true-x and true%20x are "
+            + "not; on a line that starts with # one full stop after the value is ignored), or passing -warnaserror-, on "
+            + "any line of a response file, workflow, action, CI definition or script, comments included, would turn "
+            + "NU190x audit warnings back into warnings. Remove these: "
             + $"[{string.Join("; ", warningViolations)}]. {DismissalHint}");
     }
 
@@ -478,9 +598,7 @@ public sealed class AspireAuditSuppressionGuardTests
         foreach (var scan in TextScans)
         {
             var directory = Path.Combine(root, scan.Directory);
-            var holdsFiles = Directory.Exists(directory)
-                && Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories)
-                    .Any(p => scan.Extensions.Any(e => p.EndsWith(e, StringComparison.OrdinalIgnoreCase)));
+            var holdsFiles = EnumerateFiles(directory, p => scan.Extensions.Any(e => p.EndsWith(e, StringComparison.OrdinalIgnoreCase))).Count > 0;
             if (holdsFiles)
             {
                 Assert.True(
@@ -549,13 +667,20 @@ public sealed class AspireAuditSuppressionGuardTests
         Assert.True(imports > 0, "No <Import> element was found in any MSBuild file, so the search is probably broken.");
         Assert.True(
             violations.Count == 0,
-            "Every <Import Project> must end in .props or .targets, contain no wildcard, and have no path segment that "
-            + "starts with a dot or is named bin, obj or node_modules, so that a relative import of a file inside the "
-            + "repository is one the audit guard reads: an audit override in a file of another extension, or in a "
-            + "directory the guard skips, would not be seen. Accepted limit: a target that starts with a property other "
-            + "than $(MSBuildThisFileDirectory) or $(MSBuildProjectDirectory), an absolute path, a .. path that leaves the "
-            + "repository root, and an Sdk= import are not rejected, and a file they reach is not read. "
-            + $"Found: [{string.Join("; ", violations)}]. {DismissalHint}");
+            "Every <Import Project> must contain no ';' and no wildcard, and must be either (a) a path: an optional plain "
+            + "property such as $(MSBuildThisFileDirectory) at its start, no other $(, no path segment other than . and .. "
+            + "that starts with a dot, none named bin, obj or node_modules, none with '~' or with a ':' other than a drive "
+            + "letter, and "
+            + "ending in .props or .targets; or (b) $([MSBuild]::GetPathOfFileAbove('<file>', '<start>')) with both "
+            + "arguments quoted, the file argument a path as in (a), the start argument one that need not end in .props "
+            + "or .targets, and only $(MSBuildThisFileDirectory) or $(MSBuildProjectDirectory) at the start of either. Any "
+            + "other property function fails. That way a relative import that stays inside the repository, alone or after "
+            + "$(MSBuildThisFileDirectory) or $(MSBuildProjectDirectory), reaches only files the audit guard reads: an "
+            + "audit override in a file of another extension, in a directory the guard skips, or behind a property whose "
+            + "value the guard cannot know would not be seen. Accepted limit: a target that starts with another plain "
+            + "property, an absolute path, a .. path that leaves the repository root, an Sdk= import, and a "
+            + "GetPathOfFileAbove search that finds its file above the repository root are not rejected, and a file they "
+            + $"reach is not read. Found: [{string.Join("; ", violations)}]. {DismissalHint}");
     }
 
     [Fact]
@@ -569,8 +694,11 @@ public sealed class AspireAuditSuppressionGuardTests
 
         Assert.True(
             off.Count == 0,
-            "TreatWarningsAsErrors must only ever be the literal true (decoded once, as MSBuild does). A project setting "
-            + "it to false, or to a value this guard cannot read, would turn NU190x audit warnings back into warnings. "
+            "TreatWarningsAsErrors must only ever be the literal true (decoded once, as MSBuild does), as an element and "
+            + "inside any attribute value or element text, such as a task's Properties=\"TreatWarningsAsErrors=...\", and "
+            + "no attribute may name it on its own, as <Output PropertyName=\"TreatWarningsAsErrors\" /> does. A project "
+            + "setting it to false, or to a value this guard cannot read, would turn NU190x audit warnings back into "
+            + "warnings. "
             + $"Found: [{string.Join("; ", off)}]. "
             + DismissalHint);
 
@@ -597,13 +725,28 @@ public sealed class AspireAuditSuppressionGuardTests
     [InlineData("<PackageReference Include=\"Aspire.Hosting.AppHost\" VersionOverride=\"13.6.5\" />", true)]
     [InlineData("<PackageReference Include=\"Aspire.Hosting%2EAppHost\" VersionOverride=\"13.6.5\" />", true)]
     [InlineData("<PackageReference Include=\"Aspire.Hosting\"><VersionOverride>13.6.5</VersionOverride></PackageReference>", true)]
+    [InlineData("<PackageReference Include=\"Newtonsoft.Json;Aspire.Hosting\" VersionOverride=\"13.6.5\" />", true)]
+    [InlineData("<PackageReference Include=\"Aspire.Hosting\" Version=\"13.6.5\" />", true)]
+    [InlineData("<PackageVersion Include=\"Aspire.Hosting.AppHost\" Version=\"13.6.5\" />", true)]
+    [InlineData("<GlobalPackageReference Include=\"Aspire.Hosting\" Version=\"13.6.5\" />", true)]
     [InlineData("<PackageReference Include=\"Aspire.Hosting\" />", false)]
     [InlineData("<PackageReference Include=\"Newtonsoft.Json\" VersionOverride=\"13.0.1\" />", false)]
+    [InlineData("<PackageReference Include=\"Aspire.Hosting.Redis\" Version=\"13.6.5\" />", false)]
     public void GivenPackageReference_WhenHostingOverridesAreListed_ThenEscapedIdsAreFound(string element, bool expected)
     {
         var document = XDocument.Parse($"<Project><ItemGroup>{element}</ItemGroup></Project>");
 
-        Assert.Equal(expected, HostingOverrides(document).Count == 1);
+        Assert.Equal(expected, HostingOverrides(document, centralFile: false).Count == 1);
+    }
+
+    [Fact]
+    public void GivenTheCentralFile_WhenHostingOverridesAreListed_ThenOnlyItsPackageVersionPinIsExempt()
+    {
+        var document = XDocument.Parse(
+            "<Project><ItemGroup><PackageVersion Include=\"Aspire.Hosting\" Version=\"13.4.6\" />"
+            + "<GlobalPackageReference Include=\"Aspire.Hosting.AppHost\" Version=\"13.6.5\" /></ItemGroup></Project>");
+
+        Assert.Equal("<GlobalPackageReference> Aspire.Hosting.AppHost Version=13.6.5", Assert.Single(HostingOverrides(document, centralFile: true)));
     }
 
     [Theory]
@@ -614,6 +757,14 @@ public sealed class AspireAuditSuppressionGuardTests
     [InlineData("<TreatWarningsAsErrors>false</TreatWarningsAsErrors>", true)]
     [InlineData("<TreatWarningsAsErrors></TreatWarningsAsErrors>", true)]
     [InlineData("<TreatWarningsAsErrors>$(Strict)</TreatWarningsAsErrors>", true)]
+    [InlineData("<RestoreArgs>-p:TreatWarningsAsErrors=false</RestoreArgs>", true)]
+    [InlineData("<Zz Properties=\"TreatWarningsAsErrors=false;NuGetAudit=false\" />", true)]
+    [InlineData("<Zz Properties=\"# TreatWarningsAsErrors=true.\" />", true)]
+    [InlineData("<Zz><Output TaskParameter=\"Value\" PropertyName=\"TreatWarningsAsErrors\" /></Zz>", true)]
+    [InlineData("<Zz RemoveProperties=\"Configuration; TreatWarningsAsErrors\" />", true)]
+    [InlineData("<RestoreArgs>-p:TreatWarningsAsErrors=<Zz />true</RestoreArgs>", true)]
+    [InlineData("<Zz Condition=\"'$(TreatWarningsAsErrors)' != 'true'\">x</Zz>", false)]
+    [InlineData("<Zz Properties=\"Configuration=Release;TreatWarningsAsErrors=true\" />", false)]
     public void GivenTreatWarningsAsErrorsElement_WhenItIsChecked_ThenOnlyAOnceDecodedTrueIsAccepted(string element, bool expectedProblem)
     {
         var document = XDocument.Parse($"<Project><PropertyGroup>{element}</PropertyGroup></Project>");
@@ -655,13 +806,16 @@ public sealed class AspireAuditSuppressionGuardTests
         var overrides = new List<string>();
         foreach (var (file, document) in MsBuildDocuments.Value)
         {
-            overrides.AddRange(HostingOverrides(document).Select(o => $"{file}: {o}"));
+            overrides.AddRange(HostingOverrides(document, centralFile: string.Equals(file, PackagesPropsName, StringComparison.Ordinal))
+                .Select(o => $"{file}: {o}"));
         }
 
         Assert.True(
             overrides.Count == 0,
             $"The {AdvisoryId} suppression is only valid while the central Aspire.Hosting pin is the version in "
-            + "force. A VersionOverride on Aspire.Hosting or Aspire.Hosting.AppHost bypasses the removal check. "
+            + "force. A VersionOverride on Aspire.Hosting or Aspire.Hosting.AppHost, a Version on a PackageReference to "
+            + "one (a project outside central package management), or a version for one anywhere but the PackageVersion "
+            + $"items of the root {PackagesPropsName} bypasses the removal check. "
             + $"Remove the override, or move the central pin and then delete the suppression. Found: [{string.Join("; ", overrides)}].");
     }
 
@@ -866,7 +1020,7 @@ public sealed class AspireAuditSuppressionGuardTests
 
         var hosts = new List<string>();
         var missing = new List<string>();
-        foreach (var (file, document) in MsBuildDocuments.Value.Where(d => d.File.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)))
+        foreach (var (file, document) in MsBuildDocuments.Value.Where(d => IsProjectFile(d.File)))
         {
             if (!IsAspireHost(document))
             {
@@ -895,7 +1049,7 @@ public sealed class AspireAuditSuppressionGuardTests
             + "probably broken, or the CLI no longer hosts Aspire, so this guard would check nothing.");
         Assert.True(
             missing.Count == 0,
-            $"Every project that uses {AppHostSdkName} or sets IsAspireHost must import {DcpTargetsName} unconditionally. "
+            $"Every project file that itself uses {AppHostSdkName} or sets IsAspireHost must import {DcpTargetsName} unconditionally. "
             + "Without it the SDK's default references restore Aspire.Dashboard.Sdk, which the "
             + $"{AdvisoryId} suppression assumes is never restored. This check backs up NuGet audit. "
             + $"Missing in: [{string.Join("; ", missing)}].");
@@ -1181,9 +1335,62 @@ public sealed class AspireAuditSuppressionGuardTests
 
     private static Match FindAuditText(string text) => AuditTextPattern.Match(DecodeEscapes(text));
 
-    private static Match FindWarningsAsErrorsOff(string text) => WarningsAsErrorsOffText.Match(DecodeOnce(text));
+    /// <summary>
+    /// The first text in <paramref name="text"/> that turns warnings-as-errors off, or null. A
+    /// <c>TreatWarningsAsErrors</c> value is read up to the next space, quote, <c>;</c> or <c>,</c>
+    /// that is not escaped, then decoded once, as MSBuild does, and trimmed, and it must then be
+    /// <c>true</c>, which is the only value NuGet treats as true. When <paramref name="textFileLine"/>
+    /// is set and the line's first non-space character is <c>#</c>, which starts a comment in YAML,
+    /// shell, PowerShell and response files, one full stop at the end of the value is ignored, so a
+    /// sentence that ends in <c>TreatWarningsAsErrors=true.</c> passes. An XML value gets no such
+    /// allowance. <c>-warnaserror-</c> always counts.
+    /// </summary>
+    private static string? FindWarningsAsErrorsOff(string text, bool textFileLine)
+    {
+        var decoded = DecodeOnceKeepingSeparators(text);
+        var commentLine = textFileLine && text.TrimStart().StartsWith('#');
+        foreach (Match assignment in WarningsAsErrorsAssignment.Matches(decoded))
+        {
+            var raw = assignment.Groups["value"].Value;
+            if (commentLine && raw.EndsWith('.'))
+            {
+                raw = raw[..^1];
+            }
 
-    /// <summary>Why an <c>&lt;Import Project&gt;</c> value would hide a file from this guard, or null when it would not.</summary>
+            var value = RestoreEscapedSeparators(raw).Trim();
+            if (!string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
+            {
+                return RestoreEscapedSeparators(assignment.Value);
+            }
+        }
+
+        var off = WarnAsErrorOffSwitch.Match(decoded);
+        return off.Success ? off.Value : null;
+    }
+
+    /// <summary>
+    /// Decodes <c>%XX</c> escapes once, like <see cref="DecodeOnce"/>, except that an escaped space,
+    /// quote, <c>;</c> or <c>,</c> becomes a stand-in character that ends nothing, so it stays part of
+    /// the value it was written in.
+    /// </summary>
+    private static string DecodeOnceKeepingSeparators(string text) =>
+        PercentEscape.Replace(text, m =>
+        {
+            var character = (char)Convert.ToInt32(m.Groups[1].Value, 16);
+            return char.IsWhiteSpace(character) || character is '"' or '\'' or ';' or ','
+                ? ((char)(EscapedSeparatorBase + character)).ToString()
+                : character.ToString();
+        });
+
+    /// <summary>Turns the stand-ins of <see cref="DecodeOnceKeepingSeparators"/> back into the characters they stand for.</summary>
+    private static string RestoreEscapedSeparators(string text) =>
+        string.Concat(text.Select(c => c >= EscapedSeparatorBase && c < EscapedSeparatorBase + 0x80 ? (char)(c - EscapedSeparatorBase) : c));
+
+    /// <summary>
+    /// Why an <c>&lt;Import Project&gt;</c> value could reach a file this guard does not read, or
+    /// null when it is one of the accepted forms: a path (<see cref="PathProblem"/>), or the
+    /// <c>GetPathOfFileAbove</c> form with both arguments in single quotes.
+    /// </summary>
     private static string? ImportProblem(string? project)
     {
         var target = DecodeEscapes(project ?? string.Empty).Trim();
@@ -1192,14 +1399,9 @@ public sealed class AspireAuditSuppressionGuardTests
             return "has no Project attribute";
         }
 
-        var function = GetPathOfFileAbove.Match(target);
-        if (function.Success)
+        if (target.Contains(';'))
         {
-            target = function.Groups["file"].Value;
-            if (function.Groups["start"].Success && SegmentProblem(function.Groups["start"].Value) is { } startProblem)
-            {
-                return "has a start directory with " + startProblem;
-            }
+            return "lists more than one file with ';', and MSBuild imports every one of them";
         }
 
         if (target.Contains('*') || target.Contains('?'))
@@ -1207,33 +1409,103 @@ public sealed class AspireAuditSuppressionGuardTests
             return "has a wildcard, which could reach a file this guard does not read";
         }
 
-        if (!target.EndsWith(".props", StringComparison.OrdinalIgnoreCase) && !target.EndsWith(".targets", StringComparison.OrdinalIgnoreCase))
+        var function = GetPathOfFileAbove.Match(target);
+        if (function.Success)
+        {
+            if (function.Groups["start"].Success
+                && PathProblem(function.Groups["start"].Value, IsDirectoryProperty, mustBeProjectFile: false) is { } startProblem)
+            {
+                return "has a GetPathOfFileAbove start directory that " + startProblem;
+            }
+
+            return PathProblem(function.Groups["file"].Value, IsDirectoryProperty, mustBeProjectFile: true) is { } fileProblem
+                ? "has a GetPathOfFileAbove file argument that " + fileProblem
+                : null;
+        }
+
+        if (GetPathOfFileAboveCall.IsMatch(target))
+        {
+            return "calls GetPathOfFileAbove other than as the whole value with each argument in single quotes, so this "
+                + "guard cannot check it. Write it as $([MSBuild]::GetPathOfFileAbove('Directory.Build.props', "
+                + "'$(MSBuildThisFileDirectory)../'))";
+        }
+
+        return PathProblem(target, _ => true, mustBeProjectFile: true);
+    }
+
+    private static bool IsDirectoryProperty(string name) =>
+        DirectoryProperties.Contains(name, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Why a path is not one this guard accepts, or null: it may start with a plain property that
+    /// <paramref name="leadingPropertyAllowed"/> allows, must have no other <c>$(</c>, must end in
+    /// <c>.props</c> or <c>.targets</c> when <paramref name="mustBeProjectFile"/> is set, and must
+    /// have no segment this guard's walk skips (<see cref="SegmentProblem"/>).
+    /// </summary>
+    private static string? PathProblem(string path, Func<string, bool> leadingPropertyAllowed, bool mustBeProjectFile)
+    {
+        var rest = path.Trim();
+        var leading = LeadingProperty.Match(rest);
+        if (leading.Success)
+        {
+            var name = leading.Groups["name"].Value;
+            if (!leadingPropertyAllowed(name))
+            {
+                return $"starts with $({name}), and only $(MSBuildThisFileDirectory) or $(MSBuildProjectDirectory) may start it";
+            }
+
+            rest = rest[leading.Length..];
+        }
+        else if (rest.StartsWith("$(", StringComparison.Ordinal))
+        {
+            return "starts with a property function, and the only one accepted is GetPathOfFileAbove with quoted arguments";
+        }
+
+        if (rest.Contains("$(", StringComparison.Ordinal))
+        {
+            return "has a property expansion after its start, whose value this guard cannot know";
+        }
+
+        if (mustBeProjectFile && !rest.EndsWith(".props", StringComparison.OrdinalIgnoreCase) && !rest.EndsWith(".targets", StringComparison.OrdinalIgnoreCase))
         {
             return "does not end in .props or .targets";
         }
 
-        return SegmentProblem(target) is { } problem ? "has " + problem : null;
+        return SegmentProblem(rest);
     }
 
     /// <summary>
     /// Why a path has a segment this guard's walk would not enter: a hidden segment (starting with a
     /// dot, other than <c>.</c> and <c>..</c>) or one named <c>bin</c>, <c>obj</c> or
-    /// <c>node_modules</c>. Property expansions are removed from a segment first, so
-    /// <c>$(MSBuildThisFileDirectory).cfg</c> is the hidden segment <c>.cfg</c>.
+    /// <c>node_modules</c>, compared without regard to case or to the trailing dots and spaces that
+    /// Windows drops from a name. A segment with <c>~</c> (a possible Windows short name, which can
+    /// stand for a hidden directory) or with <c>:</c> other than a leading drive letter (a Windows
+    /// alternate data stream) is refused too.
     /// </summary>
     private static string? SegmentProblem(string path)
     {
-        foreach (var raw in path.Split('/', '\\'))
+        var segments = path.Split('/', '\\');
+        for (var index = 0; index < segments.Length; index++)
         {
-            var segment = PropertyExpansion.Replace(raw, string.Empty).Trim();
+            var segment = segments[index].Trim();
             if (segment.StartsWith('.') && segment is not "." and not "..")
             {
-                return $"the hidden path segment '{segment}'";
+                return $"has the hidden path segment '{segment}'";
             }
 
-            if (SkippedDirectoryNames.Contains(segment, StringComparer.OrdinalIgnoreCase))
+            if (SkippedDirectoryNames.Contains(segment.TrimEnd('.', ' '), StringComparer.OrdinalIgnoreCase))
             {
-                return $"the path segment '{segment}', a skipped directory name";
+                return $"has the path segment '{segment}', a skipped directory name";
+            }
+
+            if (segment.Contains('~'))
+            {
+                return $"has the path segment '{segment}', which may be a Windows short name for a directory this guard skips";
+            }
+
+            if (segment.Contains(':') && !(index == 0 && segment.Length == 2 && char.IsAsciiLetter(segment[0])))
+            {
+                return $"has the path segment '{segment}', whose ':' names a Windows alternate data stream";
             }
         }
 
@@ -1287,29 +1559,129 @@ public sealed class AspireAuditSuppressionGuardTests
     private static List<string> PackageIds(XDocument document, string needle, bool prefix = false) =>
         document.Descendants()
             .Where(IsPackageElement)
-            .Select(PackageId)
+            .SelectMany(ItemPackageIds)
             .Where(id => prefix
                 ? id.StartsWith(needle, StringComparison.OrdinalIgnoreCase)
                 : id.Contains(needle, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
-    /// <summary>The <c>VersionOverride</c> of every <c>PackageReference</c> to an Aspire hosting package, as <c>id VersionOverride=value</c>.</summary>
-    private static List<string> HostingOverrides(XDocument document) =>
+    /// <summary>
+    /// Every version an Aspire hosting package gets other than from the central pin: the
+    /// <c>VersionOverride</c> or <c>Version</c> of any package element naming one, except the
+    /// <c>Version</c> of a <c>PackageVersion</c> in the central file (<paramref name="centralFile"/>).
+    /// A <c>Version</c> on a <c>PackageReference</c> is how a project outside central package
+    /// management picks its own version.
+    /// </summary>
+    private static List<string> HostingOverrides(XDocument document, bool centralFile) =>
         document.Descendants()
-            .Where(e => NameIs(e, "PackageReference"))
-            .Select(e => (Id: PackageId(e), Override: Metadata(e, "VersionOverride")))
-            .Where(p => p.Override is not null && HostingPackageIds.Contains(p.Id, StringComparer.OrdinalIgnoreCase))
-            .Select(p => $"{p.Id} VersionOverride={p.Override}")
+            .Where(IsPackageElement)
+            .SelectMany(e => ItemPackageIds(e)
+                .Where(id => HostingPackageIds.Contains(id, StringComparer.OrdinalIgnoreCase))
+                .SelectMany(id => VersionMetadataNames.Select(name => (Element: e, Id: id, Name: name, Value: Metadata(e, name)))))
+            .Where(v => v.Value is not null && !(centralFile && NameIs(v.Element, "PackageVersion") && v.Name == "Version"))
+            .Select(v => $"<{v.Element.Name.LocalName}> {v.Id} {v.Name}={v.Value}")
             .ToList();
 
-    /// <summary>Every <c>TreatWarningsAsErrors</c> property whose value, decoded once, is not <c>true</c>.</summary>
-    private static List<string> TreatWarningsAsErrorsProblems(XDocument document) =>
-        document.Descendants()
+    /// <summary>
+    /// Every <c>TreatWarningsAsErrors</c> property whose value, decoded once and trimmed, is not
+    /// <c>true</c>; every attribute value or element text (<see cref="XmlValues"/>) that turns
+    /// warnings-as-errors off by the text rule of <see cref="FindWarningsAsErrorsOff"/>, such as
+    /// <c>Properties="TreatWarningsAsErrors=false"</c>; and every attribute whose value, decoded once
+    /// and split at <c>;</c>, is or lists <c>TreatWarningsAsErrors</c>.
+    /// </summary>
+    private static List<string> TreatWarningsAsErrorsProblems(XDocument document)
+    {
+        var problems = document.Descendants()
             .Where(e => NameIs(e, "TreatWarningsAsErrors"))
             .Select(e => DecodeOnce(e.Value).Trim())
             .Where(value => !string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
             .Select(value => $"<TreatWarningsAsErrors> is '{value}'")
             .ToList();
+        foreach (var (element, where, text) in XmlValues(document))
+        {
+            if (FindWarningsAsErrorsOff(text, textFileLine: false) is { } off)
+            {
+                problems.Add($"<{element.Name.LocalName}> {where} has '{off}'");
+            }
+        }
+
+        // A task can set the property without an assignment, as <Output PropertyName="TreatWarningsAsErrors" />,
+        // so an attribute whose value lists the property name itself is refused too.
+        foreach (var element in document.Descendants())
+        {
+            foreach (var attribute in element.Attributes())
+            {
+                var names = DecodeOnce(attribute.Value).Split(';', StringSplitOptions.TrimEntries);
+                if (names.Contains("TreatWarningsAsErrors", StringComparer.OrdinalIgnoreCase))
+                {
+                    problems.Add($"<{element.Name.LocalName}> attribute {attribute.Name.LocalName} names TreatWarningsAsErrors");
+                }
+            }
+        }
+
+        return problems;
+    }
+
+    /// <summary>
+    /// Every element of a document whose name contains <c>NuGetAudit</c>, other than
+    /// <c>NuGetAuditSuppress</c>, and every attribute value or element text (<see cref="XmlValues"/>)
+    /// that mentions <c>NuGetAudit</c> or an NU190x code once decoded.
+    /// </summary>
+    private static List<string> AuditSettingProblems(XDocument document)
+    {
+        var problems = new List<string>();
+        foreach (var element in document.Descendants())
+        {
+            var name = element.Name.LocalName;
+            if (name.Contains("NuGetAudit", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(name, "NuGetAuditSuppress", StringComparison.OrdinalIgnoreCase))
+            {
+                problems.Add($"<{name}> element");
+            }
+        }
+
+        foreach (var (element, where, text) in XmlValues(document))
+        {
+            var match = FindAuditText(text);
+            if (match.Success)
+            {
+                problems.Add($"<{element.Name.LocalName}> {where} mentions {match.Value}");
+            }
+        }
+
+        return problems;
+    }
+
+    /// <summary>
+    /// Every attribute value of every element, and the text of every element: all of its own text
+    /// joined, with comments and child elements left out, and, when it has more than one text node,
+    /// each node on its own too, because MSBuild keeps the text of a property that has child elements.
+    /// XML comments are not values and are not returned.
+    /// </summary>
+    private static IEnumerable<(XElement Element, string Where, string Text)> XmlValues(XDocument document)
+    {
+        foreach (var element in document.Descendants())
+        {
+            foreach (var attribute in element.Attributes())
+            {
+                yield return (element, $"attribute {attribute.Name.LocalName}", attribute.Value);
+            }
+
+            var texts = element.Nodes().OfType<XText>().Select(t => t.Value).ToList();
+            if (texts.Count > 0)
+            {
+                yield return (element, "text", string.Concat(texts));
+            }
+
+            if (texts.Count > 1)
+            {
+                foreach (var text in texts)
+                {
+                    yield return (element, "text node", text);
+                }
+            }
+        }
+    }
 
     /// <summary>The using aliases and static usings of a set of parsed files that name an Aspire application type.</summary>
     private sealed record ImportedNames(IReadOnlyDictionary<string, SortedSet<string>> Aliases, bool StaticApplication)
@@ -1398,9 +1770,13 @@ public sealed class AspireAuditSuppressionGuardTests
     internal static string? Metadata(XElement element, string name) =>
         AttributeValue(element, name) ?? element.Elements().FirstOrDefault(c => NameIs(c, name))?.Value;
 
-    /// <summary>The package id an item names in <c>Include</c> or <c>Update</c>, with <c>%XX</c> escapes decoded and trimmed.</summary>
-    internal static string PackageId(XElement element) =>
-        DecodeEscapes(AttributeValue(element, "Include") ?? AttributeValue(element, "Update") ?? string.Empty).Trim();
+    /// <summary>
+    /// The package ids an item names in <c>Include</c> or <c>Update</c>, with <c>%XX</c> escapes decoded,
+    /// split at <c>;</c> (MSBuild makes one item of each) and trimmed.
+    /// </summary>
+    internal static IReadOnlyList<string> ItemPackageIds(XElement element) =>
+        DecodeEscapes(AttributeValue(element, "Include") ?? AttributeValue(element, "Update") ?? string.Empty)
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
     /// <summary>Every MSBuild document the guard reads, as the repository-relative file and its XML.</summary>
     internal static IReadOnlyList<(string File, XDocument Document)> LoadedMsBuildDocuments() => MsBuildDocuments.Value;
@@ -1512,10 +1888,16 @@ public sealed class AspireAuditSuppressionGuardTests
         var name = Path.GetFileName(path);
         return name.EndsWith(".props", StringComparison.OrdinalIgnoreCase)
             || name.EndsWith(".targets", StringComparison.OrdinalIgnoreCase)
-            || name.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
-            || name.EndsWith(".proj", StringComparison.OrdinalIgnoreCase)
+            || IsProjectFile(name)
             || string.Equals(name, "nuget.config", StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>A project file: <c>*.csproj</c>, <c>*.fsproj</c>, <c>*.vbproj</c> or <c>*.proj</c>.</summary>
+    private static bool IsProjectFile(string path) =>
+        path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
+        || path.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase)
+        || path.EndsWith(".vbproj", StringComparison.OrdinalIgnoreCase)
+        || path.EndsWith(".proj", StringComparison.OrdinalIgnoreCase);
 
     private static string Relative(string root, string path) =>
         Path.GetRelativePath(root, path).Replace('\\', '/');
@@ -1558,7 +1940,7 @@ public sealed class AspireAuditSuppressionGuardTests
         var versions = document
             .Descendants()
             .Where(element => NameIs(element, "PackageVersion"))
-            .Where(element => string.Equals(AttributeValue(element, "Include")?.Trim(), HostingPackageId, StringComparison.OrdinalIgnoreCase))
+            .Where(element => ItemPackageIds(element).Contains(HostingPackageId, StringComparer.OrdinalIgnoreCase))
             .Select(element => AttributeValue(element, "Version"))
             .ToList();
 
