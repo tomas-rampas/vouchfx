@@ -31,7 +31,8 @@ published. Pushing a version tag alone does not start the pipeline. Manual
    Release through the GitHub API emits the same event.
 7. The pipeline builds all artifacts. Once the Docker integration lane has
    passed on the release commit (see below), it attests and cosign-signs them
-   and attaches them to the release automatically. Expect a run to take about
+   and attaches them to the release automatically. As its last job, the run
+   moves the floating tag for the release. Expect a run to take about
    80 minutes, not the 15 or so it took before the lane joined it.
 
 A tag push followed by Release publication starts one publishing run. A newer
@@ -50,8 +51,21 @@ the Marketplace job, which needs both, waits for it too.
 
 If the lane fails, is cancelled, times out (its limit is 120 minutes) or is
 skipped, these are **withheld**: build-provenance attestations, cosign
-signatures, the NuGet package signature, the release assets, the NuGet pushes
-and the Marketplace extension.
+signatures, the NuGet package signature, the release assets, the NuGet pushes,
+the Marketplace extension and the move of the floating tags (`v1-alpha`,
+`v1-rc`, `v1`). A floating tag is expected to stay where it was, because the job
+that moves it (`move-floating-tag`, the last job of the run) needs the
+publication jobs.
+
+This holds only for a release whose tagged commit contains these workflows. For
+a `release` event GitHub runs the workflow files of the tagged commit, and the
+release tags made before this change, from `v1.0.0-alpha.6` on, carry the old
+`move-floating-tag.yml`, which moves the floating tag as soon as the Release is
+published, with no gate. So do not create or re-publish a GitHub Release for a
+tag made before this change, do not tag a release on a commit that does not
+contain this change (a commit from before it, or one on a branch cut before it),
+and do not re-run an old **Move floating convenience tag** run. Each of these
+can move the floating tag at once, and can move it backwards.
 
 These are **not** withheld:
 
@@ -69,10 +83,6 @@ These are **not** withheld:
   (`publish-archives`), SBOM (`sbom`) and `.vsix` (`vsix`) are built and stay
   downloadable as run artefacts for 30 days, with no attestation or cosign
   signature. Do not treat them as released either.
-- The floating tags (`v1-alpha`, `v1-rc`, `v1`). `move-floating-tag.yml` runs on the
-  same `release: published` event and does not wait for this workflow, so a red
-  lane does not stop it moving a floating tag to the release commit. Gating it is
-  a separate change.
 
 What to do about a red or timed-out lane on a release that is already public:
 
@@ -81,8 +91,10 @@ What to do about a red or timed-out lane on a release that is already public:
    transient fault (a registry stall or rate limit, a runner fault), use
    **Re-run failed jobs** on the release run. That is expected to re-run the
    lane and, if it passes, `sign-and-attest`, `publish-release` and the
-   Marketplace job on the same commit as the first attempt. It has not yet been
-   exercised on a release run, so confirm that those jobs ran. Do not move the
+   Marketplace job on the same commit as the first attempt. A successful re-run
+   is also expected to move the floating tag, as the last job (`move-floating-tag`).
+   It has not yet been exercised on a release run, so confirm that those jobs
+   ran, and check where the floating tag points. Do not move the
    tag before a re-run: the Marketplace job's checkout is expected to refuse a
    moved tag, and the other jobs would publish the original commit under a tag
    that no longer points at it.
@@ -90,20 +102,71 @@ What to do about a red or timed-out lane on a release that is already public:
    exists, do not re-run: a re-run tests the same commit and the same image
    list. Fix it, and ship a new patch version from a new commit. The public
    release with no assets stays in place; you may edit its notes to say that it
-   was not published to NuGet.org. If this is a GA v1.y.z release,
-   `move-floating-tag.yml` has already moved `v1` to this commit, so consumers
-   who reference `v1` (the reusable `vouchfx-run.yml` workflow at `@v1`, or the
-   GitLab template with `ref: v1`) now get it. Until the patch ships, run
-   **Move floating convenience tag** (`move-floating-tag.yml`) by hand with the
-   last good GA release tag (`v1.y.z` with no pre-release suffix; a pre-release
-   tag never moves `v1`, and the run still succeeds), and confirm that its log
-   reports `Moved 'v1'`.
+   was not published to NuGet.org. The floating tags are not moved by a red
+   lane, so `v1` stays where it was and consumers who reference it
+   (the reusable `vouchfx-run.yml` workflow at `@v1`, or the GitLab template with
+   `ref: v1`) are expected not to get this commit. Nothing needs moving back.
 3. A timeout (the job ends at 120 minutes) is not known to be transient. Re-run
    once only if the log shows the time went to the pre-pull or to a runner
    stall; otherwise treat it as step 2.
 4. There is no bypass: no input, variable or label skips the lane. Do not
    disable the job or edit the workflow to publish a release the lane did not
    pass.
+
+Four cases concern the floating tags after the Docker lane has passed. In each,
+"the manual run" means running **Move floating convenience tag**
+(`move-floating-tag.yml`) by hand with a release tag. A manual run has neither
+the commit check nor the no-downgrade check described below, so first confirm
+that the tag and its release are the ones you mean and that the release run for
+that tag passed. Its log reports `Moved '<floating tag>'` on success.
+
+**The Marketplace job fails.** `move-floating-tag` needs `publish-marketplace` as
+well as `publish-release`. If the Marketplace job fails after the release assets
+and the NuGet packages are published, the floating tag does not move. Fix the
+cause and use **Re-run failed jobs**. That is expected to re-run the Marketplace
+job and then move the tag; it has not yet been exercised. If the Marketplace
+failure cannot be fixed soon, use the manual run with the release tag.
+
+**Only the `move-floating-tag` job fails or is cancelled.** This job runs after
+`publish-release` and `publish-marketplace` have succeeded. If it fails, the
+release run shows as failed although the release and the packages are published,
+and the floating tag has not moved. Tag moves run one at a time, and GitHub keeps
+one waiting job per concurrency group by default, so with three tag moves at once
+the middle one is expected to be cancelled, not failed. Read the job's log. What
+to do depends on its message:
+
+- *The release tag resolves to a different commit than the one the run tested.*
+  The release tag was moved after the run started. Do not use the manual run
+  with this tag: it would put the floating tag on a commit that no gate passed.
+  Point the release tag back at the tested commit named in the log and use
+  **Re-run failed jobs**, or ship a new release.
+- *The floating tag is on a commit that carries no release tag of its line.* The
+  job cannot tell which release the floating tag is on, so it moves nothing. Find
+  out why the floating tag is there. If the move is intended, use the manual run
+  with the release tag.
+- *The remote tags could not be read*, or the job was cancelled. Use **Re-run
+  failed jobs**, which is expected to retry only that job; this has not yet been
+  exercised. The other route is the manual run with the release tag.
+
+**A warning that the floating tag is already on a newer release.** The job can
+end successfully with a warning that names the floating tag and the newer release
+it is on. It moved nothing. That is expected when an older release run finishes,
+or is re-run, after a newer release in the same line has moved the tag. No action
+is needed. To put the tag on the older release anyway, use the manual run.
+
+**A release found defective after it was published.** If a release passed its
+gates, was published, moved `v1` and was later found defective, consumers who
+reference `v1` (the reusable `vouchfx-run.yml` workflow at `@v1`, or the GitLab
+template with `ref: v1`) get it. Until the patch ships, use the manual run with
+the last good GA release tag (`v1.y.z` with no pre-release suffix; a pre-release
+tag never moves `v1`, and the run still succeeds; a `v1.0.0-rc.N` tag moves
+`v1-rc`, and a `v1.0.0-alpha.N` or `-beta.N` tag moves `v1-alpha`, instead), and
+confirm that its log
+reports `Moved 'v1'`. A manual run has no no-downgrade check, so it moves `v1`
+back to the older release. After that, do not re-run the defective release's
+run, and cancel it if it is still running: the defective release is newer than
+the one `v1` is now on, so its `move-floating-tag` job would move `v1` forward
+again.
 
 The manual preflight (`workflow_dispatch`) runs the lane as well, so use it to
 find a failing lane before you publish the Release.
@@ -124,8 +187,10 @@ after publication:
 - Update texts that say "once published": `SECURITY.md` and `docs/getting-started.md` (the
   `SslCa` advice for 1.2.1). Re-read the vouchfx-mcp paragraph in `docs/getting-started.md`: it
   states the exact-pin rule and names no version, so it needs an edit only if that rule changes.
-- Confirm `move-floating-tag.yml` moved the floating `v1` tag, and that `docs/ci-integration.md` still
-  describes the tags truthfully.
+- Confirm that the `move-floating-tag` job, the last job of the release run, moved the floating tag
+  for this release (`v1` for a GA release), and that `docs/ci-integration.md` still describes the tags
+  truthfully. If the run is red before that job, no floating tag is expected to have moved.
+  See [The Docker integration gate](#the-docker-integration-gate) if the job fails or warns.
 - In `vouchfx-mcp`, bump `ENGINE_PIN` and run `scripts/sync-vendored.ps1 -Update`; `docs/recipes.md`,
   `docs/language-reference.md` and the two composed-schema goldens are vendored byte-for-byte, so
   mention any change to them in that pull request. In `vouchfx-samples`, bump its engine pin.
@@ -148,7 +213,8 @@ after publication:
   [The Docker integration gate](#the-docker-integration-gate)), builds all
   artifacts (nupkg, per-RID tarballs, SBOM, VSIX, MSI, deb, pkg), creates
   provenance attestations once the lane has passed and runs distribution checks.
-- **NuGet, GitHub Release and Marketplace publication are skipped.** The
+- **NuGet, GitHub Release and Marketplace publication are skipped**, and so is
+  the `move-floating-tag` job, so a preflight moves no floating tag. The
   cosign steps are also skipped; optional certificate-based signing remains
   dependent on configured secrets.
 - **Attestations are public records**, including on preflight runs; skipping

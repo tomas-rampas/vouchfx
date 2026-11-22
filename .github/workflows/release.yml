@@ -15,6 +15,7 @@
 # Attestation and cosign signing (`sign-and-attest`) and publication
 # (`publish-release`, and so `publish-marketplace`) wait for the Docker
 # integration lane (the `docker-integration` job) to pass on this run's commit.
+# So does the move of the floating tags (`move-floating-tag`, the last job).
 # The build jobs are not gated: build-msi, build-deb and build-pkg still sign or
 # notarise at build time, where those secrets are configured, whatever the
 # lane's result. With the lane, a run is expected to take about 80 minutes. The
@@ -133,12 +134,23 @@ jobs:
   # build-provenance attestations, cosign signatures, the NuGet package GPG
   # signature, release assets, the NuGet pushes and the Marketplace extension.
   #
+  # ALSO WITHHELD: the floating tags (v1-alpha, v1-rc, v1). The last job,
+  # `move-floating-tag`, calls move-floating-tag.yml and lists `publish-release`
+  # and `publish-marketplace` in `needs`, so it is skipped with them when the lane
+  # fails. A release run that is skipped, cancelled or red before then leaves the
+  # floating tags where they were. That is the expected behaviour on GitHub; the
+  # contract tests check the job's `needs`, `if`, `permissions` and `with`, not a
+  # live run.
+  # LIMIT: for a `release` event GitHub runs the workflow files of the tagged
+  # commit. The release tags made before this change, from v1.0.0-alpha.6 on,
+  # carry the old move-floating-tag.yml, which moves the floating tag on
+  # `release: published` with no gate and no guard. A release created or
+  # re-published for one of those tags, or tagged on a commit that does not
+  # contain this change, therefore still moves the tag at once. Nothing in this
+  # file can prevent that.
+  #
   # NOT WITHHELD: the GitHub Release itself (tag and notes) is already public
   # when this workflow starts, and the build jobs are deliberately not gated.
-  # The floating tags (v1-alpha, v1-rc, v1) are not withheld either:
-  # move-floating-tag.yml runs on the same `release: published` event and does not
-  # wait for this workflow, so a red lane does not stop it moving a floating tag to
-  # the release commit. Gating it is a separate change.
   # Whatever the lane result, the installers are still built and, where those
   # secrets are configured, signed with the project's keys (Authenticode, the
   # .deb GPG signature) or, for the .pkg, submitted to Apple for notarisation. They
@@ -1598,3 +1610,28 @@ jobs:
             fi
           done
           exit $rc
+
+  # ===========================================================================
+  # move-floating-tag
+  # Moves the floating convenience tags (v1-alpha, v1-rc, v1) to this release,
+  # as the last job of the run. `needs` puts it behind publication; its `if`
+  # uses no status-check function, so a failed, cancelled or skipped dependency
+  # skips it. Do not add always() or similar to its guard.
+  # `expected_sha` is the commit this run tested. The called workflow refuses to
+  # move a tag whose release resolves to a different commit, and leaves a tag
+  # alone when the floating tag already sits on a newer release of its line (a
+  # late re-run of an older run). Which tag a release routes to is decided there.
+  # The job holds only `contents: write`, which the called workflow needs to
+  # move a tag, and maps no secrets. The called workflow sets the `concurrency`
+  # group that serialises tag moves; this job sets none.
+  # ===========================================================================
+  move-floating-tag:
+    name: Move floating tag
+    needs: [build-dotnet, publish-release, publish-marketplace]
+    if: github.event_name != 'workflow_dispatch'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/move-floating-tag.yml
+    with:
+      tag: ${{ needs.build-dotnet.outputs.tag }}
+      expected_sha: ${{ github.sha }}

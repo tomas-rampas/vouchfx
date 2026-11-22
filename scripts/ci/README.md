@@ -52,6 +52,33 @@ The release contract also requires exactly one public publishing trigger
 the actual version-step shell for stable, pre-release, dispatch and refused push
 events without invoking signing or publication.
 
+The same file pins the floating-tag move (`MoveFloatingTagStructureTests` and
+`MoveFloatingTagScriptTests`). `move-floating-tag.yml` has only the
+`workflow_call` and `workflow_dispatch` triggers and the inputs of each.
+`release.yml` is the only workflow that triggers on `release` and the only caller
+of it. The calling job's `needs` includes `build-dotnet`, `publish-release` and
+`publish-marketplace`, and its `if`, `permissions` and `with` are fixed. In
+`release.yml` only that job and `publish-release` hold `contents: write`; in
+`move-floating-tag.yml` only the called job does (the `write-all` shorthand
+counts as write). The called workflow has exactly one job, with its repository
+condition and a job-level concurrency group that `release.yml` does not use at
+workflow level. Its keys, its three steps in order and the keys of each step are
+fixed, so a step cannot gain an `if`, a `continue-on-error` or an `env` of its own
+without failing a test. The checkout uses the full tag ref, and the step that
+moves the tag does not call `gh`. These tests pin the called workflow's
+current shape and the calling job's wiring. They are not a proof that no other edit
+could move a tag: for example, a new step in a job that already holds
+`contents: write`, or a job that starts the manual run, is not detected. The tests also run the actual step scripts under
+Bash with fixture `git` and `gh` commands. They cover the format check on
+`expected_sha`, the commit check, the no-downgrade check (it compares with the
+release the floating tag is on, read with `git ls-remote`: numeric version order,
+per release line, annotated tags, failing closed when the tags cannot be read or
+the floating tag is on no release of its line), the refusal of a missing or draft
+release on both paths, the manual move to an older release and the routing of each
+release to its tag. The test image has no `gh` or `jq`, so the fixture `gh` stands
+in for the draft check's `--jq` filter and the jq expression itself is not run.
+Nothing here runs on GitHub: how a real release run behaves is not tested.
+
 Run from the repository root with Python 3.12, Bash, yq 4.53.2 and ShellCheck 0.11.0:
 
 ```sh

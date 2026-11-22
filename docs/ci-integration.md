@@ -418,7 +418,11 @@ See [Getting Started](getting-started.md#net-compatibility).
 
 Three maintainer-moved tags exist as a convenience tier, maintained by
 [`.github/workflows/move-floating-tag.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/move-floating-tag.yml),
-which force-moves the matching tag to each published release's commit:
+which force-moves the matching tag to a release's commit. The tag is moved by the last job of the release
+run, which is expected to start only after the release's checks have passed and its packages have been
+published, so a release that fails its checks is expected to leave the tag where it was. This applies to
+releases tagged on a commit that contains this behaviour. A GitHub Release created or published again for
+an older tag still moves the tag as soon as it is published, with no checks:
 
 | Tag | Tracks | State |
 |---|---|---|
