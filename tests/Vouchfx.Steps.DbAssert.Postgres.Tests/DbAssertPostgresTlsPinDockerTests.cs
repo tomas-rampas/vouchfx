@@ -1,6 +1,6 @@
-// Pins what db-assert.postgres does today for TLS server-certificate validation, on Npgsql 8.0.9,
+// Pins what db-assert.postgres does today for TLS server-certificate validation, on Npgsql 9.0.5
 // against real PostgreSQL servers started with ssl=on and certificates generated at test time. It
-// records today's behaviour; it is not a regression net for the Npgsql 10 TLS change (see below).
+// records today's behaviour (the same matrix passed on 8.0.9, the version before the move to 9.x); it is not a regression net for the Npgsql 10 TLS change (see below).
 //
 // What a suite can set. The provider passes the connection string it finds in Vars straight to
 // new NpgsqlConnection(...); it adds, parses and validates nothing of its own. For an engine-managed
@@ -28,7 +28,7 @@
 // server certificate is already trusted by the SYSTEM store, so no cell here reaches it. The case that
 // would show the change is "the server certificate is trusted by the system store while the suite
 // provides a different root" (SSL Mode=VerifyFull with a Root Certificate: Npgsql 8 connects over TLS,
-// Npgsql 10 refuses, on the reviewer's reading). Covering it needs a system trust store the test can
+// Npgsql 10 refuses, on the reviewer's reading; Npgsql 9 was not read for this and is taken to behave as 8). Covering it needs a system trust store the test can
 // control, which this suite does not have; the change that upgrades the driver must cover that case.
 //
 // Lanes. These tests need Docker and run only in the daily Docker lane (requires=docker), not in the
@@ -48,7 +48,7 @@
 //             suite author cannot tell them apart from the verdict output.
 //       Pinned by: EveryValidationRefusal_ReportsTheSameDiagnostic_WhateverTheCause
 //   T2  INSECURE, pinned as current behaviour, not endorsed: the default connection encrypts without validating.
-//       What: the connection string the engine builds carries no SSL Mode, which Npgsql 8 treats as
+//       What: the connection string the engine builds carries no SSL Mode, which Npgsql 8 and 9 treat as
 //             Prefer: it uses TLS when the server offers it and accepts ANY certificate, including one
 //             from an unknown authority or for another host. An attacker in the path is not detected.
 //       Pinned by: DefaultConnectionString_Insecure_EncryptsWithoutValidatingTheCertificate

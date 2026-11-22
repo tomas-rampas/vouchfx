@@ -1,6 +1,7 @@
 // Pins what db-assert.postgres compares and reports for PostgreSQL date/time and other
-// "driver-rendered" column types on Npgsql 8.0.9, so that a later driver major shows exactly what
-// it changes (the dependency update policy holds Npgsql above 8 for this reason).
+// "driver-rendered" column types on Npgsql 9.0.5, so that a later driver major shows exactly what
+// it changes (the dependency update policy holds Npgsql above 9 for this reason). The same pins
+// passed unchanged on 8.0.9, the version before the move to 9.x.
 //
 // The emitted helper reads each column with the non-generic reader[col] and compares
 // value.ToString() ordinally with the suite's expect.row text. These tests run the REAL emitted
@@ -193,7 +194,7 @@ public sealed class DbAssertPostgresRenderingPinTests : IClassFixture<PostgresWi
     [Trait("pins", "defect")]
     public async Task Interval_WithAMonthsComponent_IsIndistinguishableFromSqlNull()
     {
-        // The recorded DEFECT R4: Npgsql 8 cannot return an interval with months as a TimeSpan, the
+        // The recorded DEFECT R4: Npgsql 8 and 9 cannot return an interval with months as a TimeSpan, the
         // helper swallows that read failure as null, and "null" is also the text it uses for SQL NULL.
         // So expect.row "null" passes for an interval that has a value.
         var withMonths = PostgresRenderCases.Find("interval / months, days and time");

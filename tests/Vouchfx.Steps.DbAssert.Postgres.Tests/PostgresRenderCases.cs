@@ -1,6 +1,6 @@
 // The value matrix shared by the fake-server (non-Docker) and real-server (Docker) rendering pins.
 //
-// Every row is ONE query returning ONE value in a column named "v", plus what Npgsql 8.0.9 hands
+// Every row is ONE query returning ONE value in a column named "v", plus what Npgsql 9.0.5 hands
 // back for it through the non-generic read the emitted helper uses (reader[col]) and the exact text
 // the helper then compares (value.ToString(), or "null" for SQL NULL) under each culture.
 //
@@ -14,7 +14,7 @@
 //       What: date, timestamp, timestamptz, timetz and numeric render with the current culture, so an
 //             expect.row written on one machine can fail on another.
 //       Pinned by: CultureDependence_ASuiteWrittenUnderOneCulture_FailsUnderAnother
-//       A driver upgrade: unchanged for these types on 9.0.5 and 10.0.4, except that on 10.0.4 the
+//       Driver versions: the same on 8.0.9 and 9.0.5; on 10.0.4 the
 //             date rows change type and lose their time-of-day text, and the time rows become
 //             culture-dependent too (see below).
 //   R2  Fractional seconds are dropped.
@@ -22,28 +22,29 @@
 //             no fractional seconds, so a different microsecond value gives the same text and the same
 //             expect.row passes for either.
 //       Pinned by: FractionalSeconds_AreDropped_SoADifferentMicrosecondValuePasses
-//       A driver upgrade: unchanged for these three types on 9.0.5 and 10.0.4; on 10.0.4 time joins
+//       Driver versions: the same on 8.0.9 and 9.0.5 for these three types; on 10.0.4 time joins
 //             them and also loses its seconds (see below).
 //   R3  bytea and arrays render as CLR type names.
 //       What: "System.Byte[]" and "System.Int32[]", so their content is never compared.
 //       Pinned by: ByteaAndArrays_RenderAsClrTypeNames_TheirContentIsNeverCompared
-//       A driver upgrade: unchanged on 9.0.5 and 10.0.4.
+//       Driver versions: the same on 8.0.9, 9.0.5 and 10.0.4.
 //   R4  An interval with a months part renders as "null".
 //       What: the read throws, the helper turns that into the text "null", which is also the text of SQL NULL.
 //       Pinned by: Interval_WithAMonthsComponent_IsIndistinguishableFromSqlNull
-//       A driver upgrade: unchanged on 9.0.5 and 10.0.4.
+//       Driver versions: the same on 8.0.9, 9.0.5 and 10.0.4.
 //   R5  timetz text carries a date part that means nothing (01/02/0001).
 //       What: the value is read as a DateTimeOffset on 0001-01-02, so PostgreSQL's own spelling never matches.
 //       Pinned by: TimeTz_Text_CarriesAMeaninglessDatePart
-//       A driver upgrade: unchanged on 9.0.5 and 10.0.4.
+//       Driver versions: the same on 8.0.9, 9.0.5 and 10.0.4.
 //   R6  Any exception from the read becomes "null", a misspelt column name included.
 //       What: the emitted helper catches everything from reader[column], so an unreadable value and a
 //             column that does not exist both pass expect.row "null".
 //       Pinned by: UnreadableValueAndMisspeltColumn_BothRenderAsNull
-//       A driver upgrade: unchanged (the read is the helper's own code).
+//       Driver versions: unchanged (the read is the helper's own code).
 //
-// What a reviewer measured on a scratch copy (22 November 2026): on Npgsql 9.0.5 nothing here
-// changes; on 10.0.4 exactly the date rows (DateTime becomes DateOnly) and the time rows (TimeSpan
+// The pins now run on Npgsql 9.0.5; the same pins, with the same expected values, passed on 8.0.9, so
+// the move from 8.0.9 to 9.0.5 changed nothing here. What a reviewer measured on a scratch copy
+// (22 November 2026): on 10.0.4 exactly the date rows (DateTime becomes DateOnly) and the time rows (TimeSpan
 // becomes TimeOnly: the text loses its seconds and becomes culture-dependent) fail, on the fake and
 // on a real server alike. Those type changes are the reason the driver is held (.github/dependabot.yml).
 //
@@ -68,7 +69,7 @@ internal sealed record RenderCase(
     public Type? ValueClrType { get; init; }
 
     /// <summary>
-    /// True when the non-generic read itself throws (Npgsql 8 cannot hand back an interval with a
+    /// True when the non-generic read itself throws (Npgsql 8 and 9 cannot hand back an interval with a
     /// months component as a TimeSpan). The emitted helper swallows that exception and compares the
     /// text "null" - the same text it uses for SQL NULL.
     /// </summary>

@@ -1,5 +1,5 @@
 // Pins whether db-assert.postgres rendering depends on the SESSION time zone or the PROCESS time
-// zone (TZ), on Npgsql 8.0.9, and what the connection itself sets. Fake-server half; the session
+// zone (TZ), on Npgsql 9.0.5 (the same pins passed on 8.0.9), and what the connection itself sets. Fake-server half; the session
 // zone's effect on a real server is pinned by DbAssertPostgresRenderingPinDockerTests.
 //
 // Finding: the provider sets no session time zone (the startup message carries only user, database

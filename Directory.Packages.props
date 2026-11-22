@@ -92,7 +92,7 @@
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.21.0" />
   </ItemGroup>
   <ItemGroup Label="Canonical clients (§5.7) — net8-era stable lines">
-    <PackageVersion Include="Npgsql" Version="8.0.9" />
+    <PackageVersion Include="Npgsql" Version="9.0.5" />
     <!-- Aspire.Hosting.SqlServer 13.4.6 transitively requires >= 7.0.1. The pin sits
          above that floor, at the 7.1.2 servicing release with security updates, and must
          stay at or above it to avoid NU1109/NU1605 downgrade errors under

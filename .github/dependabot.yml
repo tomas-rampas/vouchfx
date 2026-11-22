@@ -159,7 +159,7 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "AWSSDK.S3"
         update-types: ["version-update:semver-major"]
-      # Npgsql majors above 8 are held: Npgsql 10 reads PostgreSQL date/time as
+      # Npgsql majors above 9 are held: Npgsql 10 reads PostgreSQL date/time as
       # DateOnly/TimeOnly through non-generic reads, which would change db-assert.postgres
       # comparisons, and validates the TLS chain against the provided root CA only. Held
       # pending a dedicated upgrade with date/time and TLS-chain regression tests

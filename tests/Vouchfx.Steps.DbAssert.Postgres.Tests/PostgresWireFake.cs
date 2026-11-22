@@ -1,7 +1,7 @@
 // A minimal PostgreSQL v3 wire-protocol server on a loopback port, used so the Npgsql rendering
 // pins can run in the non-Docker lanes (the Docker lanes run daily).
 //
-// What it is: enough of the protocol for Npgsql 8 to open a connection with
+// What it is: enough of the protocol for Npgsql 8 and 9 to open a connection with
 // "Server Compatibility Mode=NoTypeLoading" (which skips the pg_type catalogue query), send one
 // unprepared query (Parse/Bind/Describe/Execute/Sync) and read ONE row of binary-format values
 // that the test supplies, encoded exactly as PostgreSQL's binary send functions do. It performs
