@@ -91,12 +91,14 @@ updates:
     # every Aspire package together in one pull request, never one package at a time. The
     # awssdk group follows the same rule: AWSSDK.* packages share AWSSDK.Core and move
     # together, because a major for one package alone needs a Core major that the other
-    # packages' dependency ranges refuse.
+    # packages' dependency ranges refuse. AWSSDK.Core is pinned centrally and no project
+    # references it directly: if a grouped update fails restore with NU1109 on AWSSDK.Core,
+    # raise that pin in Directory.Packages.props on the same branch.
     # open-pull-requests-limit stays at 5, and the limit is shared by both directories: the
-    # groups take up to three slots for "/" and may take more for the example, so two slots
-    # may be left for individual majors when only the three for "/" are open. The example
-    # has few packages, and no AWSSDK or Aspire package, so it should use at most one. Most majors are held below, so few are
-    # expected at once. Security updates have their own separate limit (10 open pull
+    # groups take up to three slots for "/" and may take one more for the example, so two
+    # slots may be left for individual majors when only the three for "/" are open. The
+    # example has few packages, and no AWSSDK or Aspire package. Most majors are held below,
+    # so few are expected at once. Security updates have their own separate limit (10 open pull
     # requests) and are not queued behind these.
     groups:
       aspire:
