@@ -436,6 +436,9 @@ public sealed class StorageAssertS3Provider
                     // would make a single poll attempt hang far longer than the step's own
                     // timeout budget. A local MinIO or RustFS container responds in milliseconds when
                     // healthy, so 5s is generous headroom, not a tight race.
+                    // MaxStaleConnectionRetries=0 as well: AWSSDK 4 retries a dropped or reset
+                    // connection up to 10 more times (11 requests in all) independently of
+                    // MaxErrorRetry, which would defeat the bound above.
                     // Step-timeout convention (#232): a declared step budget governs this call —
                     // lift the transport bound (infinite) and let the step token (ct) be the sole
                     // enforcement mechanism; otherwise keep the M2 5s connect/read convention.
@@ -444,6 +447,7 @@ public sealed class StorageAssertS3Provider
                         ServiceURL = serviceUrl,
                         ForcePathStyle = true,
                         MaxErrorRetry = 0,
+                        MaxStaleConnectionRetries = 0,
                         Timeout = budgetGoverned
                             ? System.Threading.Timeout.InfiniteTimeSpan
                             : System.TimeSpan.FromSeconds(5),

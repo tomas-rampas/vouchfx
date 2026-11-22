@@ -112,13 +112,13 @@
          mq-expect.nats providers were authored against this API surface. -->
     <PackageVersion Include="NATS.Net" Version="3.4.0" />
   </ItemGroup>
-  <ItemGroup Label="AWS SDK (db-assert.dynamodb / storage-assert.s3) — pinned to the latest 3.7.x line">
-    <!-- AWS SDK v4 (4.0.x) is a recent major rewrite with breaking API changes; the 3.7.x
-         line is the mature, stable series every existing worked example and StackOverflow
-         answer targets, and it fully supports net8.0. Pin to the latest 3.7.x build of each
-         package rather than v4 to avoid absorbing an unreviewed major-version migration here. -->
-    <PackageVersion Include="AWSSDK.DynamoDBv2" Version="3.7.513.4" />
-    <PackageVersion Include="AWSSDK.S3" Version="3.7.511.8" />
+  <ItemGroup Label="AWS SDK (db-assert.dynamodb / storage-assert.s3) - the 4.x line">
+    <!-- Both packages must resolve the same AWSSDK.Core major. AWSSDK 4 makes value-type
+         members nullable, so the emitted db-assert.dynamodb helper reads BOOL as a nullable,
+         and it adds MaxStaleConnectionRetries (default 10), which both providers set to 0 so a
+         dropped connection is one request. A new AWSSDK.* package must stay on the same major. -->
+    <PackageVersion Include="AWSSDK.DynamoDBv2" Version="4.1.0.3" />
+    <PackageVersion Include="AWSSDK.S3" Version="4.1.2" />
   </ItemGroup>
   <ItemGroup Label="Avro / schema-registry (S06) — ship in lockstep with Confluent.Kafka">
     <!-- Confluent.SchemaRegistry + Serdes.Avro version-match Confluent.Kafka.

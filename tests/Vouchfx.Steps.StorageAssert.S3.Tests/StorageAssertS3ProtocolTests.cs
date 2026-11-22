@@ -76,6 +76,74 @@ public sealed class StorageAssertS3ProtocolTests
         Assert.Matches("^[A-Za-z][A-Za-z0-9]*$", error.Value.GetString()!);
     }
 
+    // The bucket confirmation after an object-HEAD 404 is a single request even when the peer
+    // drops the connection: the client is built with MaxErrorRetry = 0, so neither the SDK nor
+    // the engine adds a second HeadBucket. The count is pinned for each way a connection can be
+    // dropped, and for a dropped object HEAD (which must not reach the bucket probe at all).
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task BucketConfirmation_DroppedConnection_IssuesExactlyOneHeadBucket(bool exists)
+    {
+        await using var peer = new S3Peer(request => Task.FromResult(request.Kind == "object"
+            ? new Reply(404) : new Reply(0, DropConnection: true)));
+        var result = await RunAsync(peer, new StorageExpectation(exists, null, null, null, null, null, null));
+        Trace(peer, result);
+
+        Assert.Equal(Verdict.EnvironmentError, result.Outcome.Verdict);
+        Assert.Equal(1, peer.Requests.Count(x => x.Kind == "bucket"));
+        Assert.Equal(1, peer.Requests.Count(x => x.Kind == "object"));
+        Assert.Equal(2, peer.Requests.Length);
+    }
+
+    [Fact]
+    public async Task ObjectHead_DroppedConnection_IsOneRequestAndNoBucketProbe()
+    {
+        await using var peer = new S3Peer(_ => Task.FromResult(new Reply(0, DropConnection: true)));
+        var result = await RunAsync(peer, new StorageExpectation(true, null, null, null, null, null, null));
+        Trace(peer, result);
+
+        Assert.Equal(Verdict.EnvironmentError, result.Outcome.Verdict);
+        Assert.Single(peer.Requests);
+        Assert.Equal(0, peer.Requests.Count(x => x.Kind == "bucket"));
+    }
+
+    // Response members that AWSSDK 4 made nullable or null-when-absent must read as before:
+    // no x-amz-meta-* header is "null", a matching header passes, and an empty object has size 0.
+    [Fact]
+    public async Task Metadata_AbsentOnObject_RendersAsNullAndFails()
+    {
+        await using var peer = new S3Peer(_ => Task.FromResult(new Reply(200)));
+        var result = await RunAsync(peer, new StorageExpectation(true, null, null, null, null, null,
+            new Dictionary<string, string> { ["source"] = "orders-api" }));
+        Trace(peer, result);
+
+        Assert.Equal(Verdict.Fail, result.Outcome.Verdict);
+        Assert.Equal("metadata.source", JsonElement.Parse(result.Outcome.Observation!).GetProperty("field").GetString());
+    }
+
+    [Fact]
+    public async Task Metadata_PresentOnObject_Matches()
+    {
+        await using var peer = new S3Peer(_ => Task.FromResult(new Reply(200, Metadata: "orders-api")));
+        var result = await RunAsync(peer, new StorageExpectation(true, null, null, null, null, null,
+            new Dictionary<string, string> { ["source"] = "orders-api" }));
+        Trace(peer, result);
+
+        Assert.Equal(Verdict.Pass, result.Outcome.Verdict);
+    }
+
+    [Fact]
+    public async Task EmptyObject_ReportsSizeZeroAndPassesSizeZero()
+    {
+        await using var peer = new S3Peer(_ => Task.FromResult(new Reply(200, Body: Array.Empty<byte>())));
+        var result = await RunAsync(peer, new StorageExpectation(true, "0", null, null, null, null, null));
+        Trace(peer, result);
+
+        Assert.Equal(Verdict.Pass, result.Outcome.Verdict);
+        Assert.Equal(0, JsonElement.Parse(result.Outcome.Observation!).GetProperty("size").GetInt64());
+    }
+
     [Theory]
     [InlineData("size")]
     [InlineData("minSize")]

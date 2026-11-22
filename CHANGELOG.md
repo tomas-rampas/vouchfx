@@ -28,6 +28,7 @@ to published pre-releases on 2026-07-14.
 
 ### Changed
 
+- `AWSSDK.DynamoDBv2` and `AWSSDK.S3`, which `db-assert.dynamodb` and `storage-assert.s3` use, move from the 3.7 line to version 4 (`AWSSDK.DynamoDBv2` 4.1.0.3 and `AWSSDK.S3` 4.1.2, on `AWSSDK.Core` 4). Neither step's behaviour, diagnostics or report text changes: the same data gives the same verdict and the same observation, and a dropped connection is still a single request that the step reports as an environment error, not the eleven that AWSSDK 4 would otherwise make. An external provider that ships its own AWSSDK 3 assemblies should move to version 4 as well, because the engine now carries version 4.
 - Schema validation now reads a `!!str`-tagged number or boolean as a string, as DSL §5.1 describes: `!!str 17` was read as the number 17 and is now the string `17`, and `!!str true` was read as `true` and is now the string `true`. A `!!str` tag gives a string, except on a null spelling (`~`, `null` or an empty value), which stays null. Because of this, a suite can now be refused that validated before: a field that requires a number or a boolean and is written with a `!!str` tag (`continueOnFailure: !!str true`, `healthCheck.port: !!str 8080`) is refused with its location, where it used to pass. Remove the tag. A plain out-of-range number such as `1e400` is likewise now the text written, where it used to be read as the string `Infinity`.
 
 ## [1.4.0] — 2026-11-21

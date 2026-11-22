@@ -317,7 +317,7 @@ Amazon.S3.Model
 Amazon.Runtime
 Vouchfx.Engine.Abstractions
 @@@@ step 6 helpers
-StorageAssertS3_Helpers sha256=9cdc79f9c81453b4d02d22a4cdcd910a54f97c8cb780394b2deb8d2c97c9ce87
+StorageAssertS3_Helpers sha256=99a7a944e66814903f2c745fb45e425a88a3b298921acf0d025e0fc86f592647
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
 @@@@ step 6 statement-block
@@ -379,7 +379,7 @@ Amazon.S3.Model
 Amazon.Runtime
 Vouchfx.Engine.Abstractions
 @@@@ step 7 helpers
-StorageAssertS3_Helpers sha256=9cdc79f9c81453b4d02d22a4cdcd910a54f97c8cb780394b2deb8d2c97c9ce87
+StorageAssertS3_Helpers sha256=99a7a944e66814903f2c745fb45e425a88a3b298921acf0d025e0fc86f592647
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
 @@@@ step 7 statement-block
@@ -425,7 +425,7 @@ using Amazon.Runtime;
 // [helper DbAssertSqlServer_Helpers sha256=ccefbb44ee09e1ba9a5a40772b38ba52dc08bfcf52ce7bb59e9dcfc4fa370fc5: body elided, recorded by name and hash]
 // [helper MetricsAssertPrometheus_Helpers sha256=7dbd8362a40b7636d93636d25873efc226fd5482485f3c2894bf2d3483b30f3d: body elided, recorded by name and hash]
 // [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
-// [helper StorageAssertS3_Helpers sha256=9cdc79f9c81453b4d02d22a4cdcd910a54f97c8cb780394b2deb8d2c97c9ce87: body elided, recorded by name and hash]
+// [helper StorageAssertS3_Helpers sha256=99a7a944e66814903f2c745fb45e425a88a3b298921acf0d025e0fc86f592647: body elided, recorded by name and hash]
 
 var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
     ? __vouchfxToken : System.Threading.CancellationToken.None;

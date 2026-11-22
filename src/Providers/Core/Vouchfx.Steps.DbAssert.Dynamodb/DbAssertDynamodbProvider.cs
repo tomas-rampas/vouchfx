@@ -413,8 +413,9 @@ public sealed class DbAssertDynamodbProvider
                     return attr.S;
                 if (attr.N is not null)
                     return attr.N;
-                if (attr.IsBOOLSet)
-                    return attr.BOOL ? "true" : "false";
+                // BOOL is a nullable bool: null means the attribute is not a BOOL (AWSSDK 4).
+                if (attr.BOOL is bool flag)
+                    return flag ? "true" : "false";
                 return "null";
             }
 
@@ -478,6 +479,9 @@ public sealed class DbAssertDynamodbProvider
                     // that would make a single poll attempt hang far longer than the step's own
                     // timeout budget. A local dynamodb-local container responds in milliseconds
                     // when healthy, so 5s is generous headroom, not a tight race.
+                    // MaxStaleConnectionRetries=0 as well: AWSSDK 4 retries a dropped or reset
+                    // connection up to 10 more times (11 requests in all) independently of
+                    // MaxErrorRetry, which would defeat the bound above.
                     // Step-timeout convention (#232): a declared step budget governs this call —
                     // lift the transport bound (infinite) and let the step token (ct) be the sole
                     // enforcement mechanism; otherwise keep the M2 5s connect/read convention.
@@ -485,6 +489,7 @@ public sealed class DbAssertDynamodbProvider
                     {
                         ServiceURL = serviceUrl,
                         MaxErrorRetry = 0,
+                        MaxStaleConnectionRetries = 0,
                         Timeout = budgetGoverned
                             ? System.Threading.Timeout.InfiniteTimeSpan
                             : System.TimeSpan.FromSeconds(5),
