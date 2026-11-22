@@ -88,22 +88,31 @@ updates:
     # minor and patch updates in the group; only the major arrives as its own pull request.
     # The aspire group is left without update-types on purpose: the Aspire.* ignore below
     # already limits it to patches, and if that hold is ever lifted a major must still move
-    # every Aspire package together in one pull request, never one package at a time.
+    # every Aspire package together in one pull request, never one package at a time. The
+    # awssdk group follows the same rule: AWSSDK.* packages share AWSSDK.Core and move
+    # together, because a major for one package alone needs a Core major that the other
+    # packages' dependency ranges refuse. AWSSDK.Core is pinned centrally and no project
+    # references it directly: if a grouped update fails restore with NU1109 on AWSSDK.Core,
+    # raise that pin in Directory.Packages.props on the same branch.
     # open-pull-requests-limit stays at 5, and the limit is shared by both directories: the
-    # groups take up to two slots for "/" and may take up to two more for the example, so
-    # one slot may be left for individual majors if all four are open at once. The example
-    # has few packages, so that is unlikely. Most majors are held below, so few are
-    # expected at once. Security updates have their own separate limit (10 open pull
+    # groups take up to three slots for "/" and may take one more for the example, so two
+    # slots may be left for individual majors when only the three for "/" are open. The
+    # example has few packages, and no AWSSDK or Aspire package. Most majors are held below,
+    # so few are expected at once. Security updates have their own separate limit (10 open pull
     # requests) and are not queued behind these.
     groups:
       aspire:
         patterns:
           - "Aspire.*"
+      awssdk:
+        patterns:
+          - "AWSSDK.*"
       nuget-dependencies:
         patterns:
           - "*"
         exclude-patterns:
           - "Aspire.*"
+          - "AWSSDK.*"
         update-types:
           - "minor"
           - "patch"
@@ -149,15 +158,6 @@ updates:
       # takes a YamlNode). A new assembly major makes the CLI refuse external providers built
       # against YamlDotNet 16 (ProviderLoadException). Held for the whole v1.x engine series.
       - dependency-name: "YamlDotNet"
-        update-types: ["version-update:semver-major"]
-      # AWSSDK 4 makes value-type members nullable, so the emitted DynamoDB CSX no longer
-      # compiles (CS0266), and the S3 provider's dropped-connection bucket confirmation
-      # re-issues the HeadBucket request repeatedly. Held pending a dedicated AWSSDK 4
-      # migration (see PR #662). Any AWSSDK.* package added later must join this hold
-      # (they share AWSSDK.Core).
-      - dependency-name: "AWSSDK.DynamoDBv2"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "AWSSDK.S3"
         update-types: ["version-update:semver-major"]
       # Npgsql majors above 8 are held: Npgsql 10 reads PostgreSQL date/time as
       # DateOnly/TimeOnly through non-generic reads, which would change db-assert.postgres

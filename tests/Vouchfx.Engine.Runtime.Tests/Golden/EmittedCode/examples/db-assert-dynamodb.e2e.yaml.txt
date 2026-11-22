@@ -221,7 +221,7 @@ Amazon.DynamoDBv2.Model
 Amazon.Runtime
 Vouchfx.Engine.Abstractions
 @@@@ step 3 helpers
-DbAssertDynamodb_Helpers sha256=ac46205054b59da5b37fd120df8761165f6af67e9310b0780ffc3daa180b53c4
+DbAssertDynamodb_Helpers sha256=9e163c21a956ae277ad04955efc3345ec5c22428cdb14c8addbf01ab98f504ad
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 @@@@ step 3 statement-block
 {
@@ -267,7 +267,7 @@ Amazon.DynamoDBv2.Model
 Amazon.Runtime
 Vouchfx.Engine.Abstractions
 @@@@ step 4 helpers
-DbAssertDynamodb_Helpers sha256=ac46205054b59da5b37fd120df8761165f6af67e9310b0780ffc3daa180b53c4
+DbAssertDynamodb_Helpers sha256=9e163c21a956ae277ad04955efc3345ec5c22428cdb14c8addbf01ab98f504ad
 Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
 @@@@ step 4 statement-block
 {
@@ -299,7 +299,7 @@ using Amazon.Runtime;
 // [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
 // [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
 // [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
-// [helper DbAssertDynamodb_Helpers sha256=ac46205054b59da5b37fd120df8761165f6af67e9310b0780ffc3daa180b53c4: body elided, recorded by name and hash]
+// [helper DbAssertDynamodb_Helpers sha256=9e163c21a956ae277ad04955efc3345ec5c22428cdb14c8addbf01ab98f504ad: body elided, recorded by name and hash]
 
 var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
     ? __vouchfxToken : System.Threading.CancellationToken.None;
