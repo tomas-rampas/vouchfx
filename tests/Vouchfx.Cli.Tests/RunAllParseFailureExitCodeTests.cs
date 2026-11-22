@@ -63,6 +63,74 @@ public sealed class RunAllParseFailureExitCodeTests : IDisposable
             telemetryHook: null,
             cancellationToken: default);
 
+    // The run path: a key alias that YamlStream.Load cannot hash in bounded time (an alias to a
+    // collection, or one before its anchor) is a parse failure, never a crash and never exit 0.
+    // With every scenario unparseable the Docker-touching call is not reached. Every test that
+    // could crash the host if the pre-scan were unwired first runs an acyclic document that Load
+    // survives, so a wiring regression fails that assertion cleanly. The assertion names the
+    // layer: ScenarioDiscovery writes "Parse / AST error: " before the message of a parse or
+    // AST-build failure, while DocumentValidator's own scan, which would still refuse the
+    // document with the same located text, reaches the output without that prefix. So the
+    // canary fails if YamlDocumentParser stops calling the scan.
+    // The canary proves only that the scan is wired in: a regression in the scan itself that
+    // stopped refusing one shape would still crash the host on that shape's row.
+    private async Task AssertRunRefusesKeyAlias(string yaml, string located)
+    {
+        var file = Path.Combine(_root, "key-alias.e2e.yaml");
+        File.WriteAllText(file, yaml);
+
+        var sw = new StringWriter();
+        var exitCode = await ExecuteAsync(file, sw);
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        Assert.Contains("Parse / AST error: YAML parse error at " + located, sw.ToString(), StringComparison.Ordinal);
+    }
+
+    private Task AssertRunKeyAliasGuardIsWired() =>
+        AssertRunRefusesKeyAlias(
+            "steps: []\na: &k [ 1 ]\nb: { ? *k : v }\n",
+            "line 3, column 8: alias 'k' inside a mapping key refers to a mapping or sequence");
+
+    [Fact]
+    public async Task ExecuteAsync_AcyclicCollectionAliasInMappingKey_ReturnsInconclusive()
+    {
+        await AssertRunKeyAliasGuardIsWired();
+    }
+
+    [Theory]
+    [InlineData("steps: []\na: &k [ *k ]\nb: { ? *k : v }\n", "line 3, column 8: alias 'k' inside a mapping key refers to a mapping or sequence")]
+    [InlineData("name: fwd\n? *k : v\nsteps: &k [ *k ]\n", "line 2, column 3: alias 'k' inside a mapping key refers to an anchor that is not defined before it")]
+    [InlineData("steps: []\n? *k : v\nb: &k x\n", "line 2, column 3: alias 'k' inside a mapping key refers to an anchor that is not defined before it")]
+    [InlineData("steps: []\n? { ? *k : 1 } : 2\nb: &k [ *k ]\n", "line 2, column 7: alias 'k' inside a mapping key refers to an anchor that is not defined before it")]
+    [InlineData("steps: []\na: [ *k : v ]\nb: &k [ *k ]\n", "line 2, column 6: alias 'k' inside a mapping key refers to an anchor that is not defined before it")]
+    [InlineData("steps: []\n? [ *k ] : *k\nb: &k [ *k ]\n", "line 2, column 5: alias 'k' inside a mapping key refers to an anchor that is not defined before it")]
+    [InlineData("steps: []\nb: { ? *nowhere : v }\n", "line 2, column 8: alias 'nowhere' inside a mapping key refers to an anchor that is not defined before it")]
+    public async Task ExecuteAsync_RefusedAliasInMappingKey_ReturnsInconclusive_WithoutCrashing(string yaml, string located)
+    {
+        await AssertRunKeyAliasGuardIsWired();
+        await AssertRunRefusesKeyAlias(yaml, located);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ForwardBillionLaughsKey_ReturnsInconclusivePromptly()
+    {
+        await AssertRunKeyAliasGuardIsWired();
+
+        var yaml = new System.Text.StringBuilder("variables:\n  ? [ *a9 ] : *a9\n  a0: &a0 [x, y]\n");
+        for (var level = 1; level <= 9; level++)
+        {
+            yaml.Append("  a").Append(level).Append(": &a").Append(level).Append(" [")
+                .Append(string.Join(", ", Enumerable.Repeat("*a" + (level - 1), 10))).Append("]\n");
+        }
+
+        yaml.Append("steps: []\n");
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        await AssertRunRefusesKeyAlias(
+            yaml.ToString(), "line 2, column 7: alias 'a9' inside a mapping key refers to an anchor that is not defined before it");
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"run took {watch.Elapsed}");
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

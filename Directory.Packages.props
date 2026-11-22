@@ -100,7 +100,7 @@
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.2" />
     <PackageVersion Include="MySqlConnector" Version="2.6.2" />
     <PackageVersion Include="Confluent.Kafka" Version="2.16.0" />
-    <PackageVersion Include="MongoDB.Driver" Version="3.14.0" />
+    <PackageVersion Include="MongoDB.Driver" Version="3.14.1" />
     <PackageVersion Include="StackExchange.Redis" Version="3.4.35" />
     <!-- Aspire.Hosting.RabbitMQ 13.4.6 transitively requires >= 7.2.1; pin to the
          exact required minimum to avoid NU1109/NU1605 downgrade errors under
@@ -110,7 +110,7 @@
          exact required minimum to avoid NU1109 downgrade errors under
          CentralPackageTransitivePinningEnabled. The mq-publish.nats and
          mq-expect.nats providers were authored against this API surface. -->
-    <PackageVersion Include="NATS.Net" Version="3.4.0" />
+    <PackageVersion Include="NATS.Net" Version="3.4.1" />
   </ItemGroup>
   <ItemGroup Label="AWS SDK (db-assert.dynamodb / storage-assert.s3) - the 4.x line">
     <!-- The three pins move together: AWSSDK.DynamoDBv2 and AWSSDK.S3 must resolve the same

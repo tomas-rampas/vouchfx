@@ -550,6 +550,157 @@ public static class TestCertificateAuthority
             leaf.Loadable);
     }
 
+    /// <summary>The only DNS name carried by <see cref="DatabaseServerMismatchCertFileName"/>.</summary>
+    public const string DatabaseServerMismatchDnsName = "db.mismatch.invalid";
+
+    /// <summary>The root a suite would declare as its trust anchor (shared by the direct and mismatch leaves).</summary>
+    public const string DatabaseServerRootFileName = "db-root.pem";
+
+    /// <summary>Server leaf for <c>localhost</c>/<c>127.0.0.1</c> issued directly by the declared root.</summary>
+    public const string DatabaseServerDirectCertFileName = "db-direct.pem";
+
+    /// <summary>Private key of <see cref="DatabaseServerDirectCertFileName"/>.</summary>
+    public const string DatabaseServerDirectKeyFileName = "db-direct-key.pem";
+
+    /// <summary>The OFFLINE root of the two-tier chain; the issuing intermediate is deliberately not written for a suite.</summary>
+    public const string DatabaseServerTwoTierRootFileName = "db-two-tier-root.pem";
+
+    /// <summary>The two-tier leaf followed by its issuing intermediate: what a correctly configured server sends.</summary>
+    public const string DatabaseServerTwoTierChainFileName = "db-two-tier-chain.pem";
+
+    /// <summary>The two-tier leaf alone: what a server that forgot the intermediate sends.</summary>
+    public const string DatabaseServerTwoTierLeafFileName = "db-two-tier-leaf.pem";
+
+    /// <summary>Private key of the two-tier leaf.</summary>
+    public const string DatabaseServerTwoTierKeyFileName = "db-two-tier-key.pem";
+
+    /// <summary>A <c>localhost</c> leaf issued by an UNRELATED root that no suite declares.</summary>
+    public const string DatabaseServerForeignCertFileName = "db-foreign.pem";
+
+    /// <summary>Private key of <see cref="DatabaseServerForeignCertFileName"/>.</summary>
+    public const string DatabaseServerForeignKeyFileName = "db-foreign-key.pem";
+
+    /// <summary>A leaf issued by the declared root but valid only for <see cref="DatabaseServerMismatchDnsName"/>.</summary>
+    public const string DatabaseServerMismatchCertFileName = "db-mismatch.pem";
+
+    /// <summary>Private key of <see cref="DatabaseServerMismatchCertFileName"/>.</summary>
+    public const string DatabaseServerMismatchKeyFileName = "db-mismatch-key.pem";
+
+    /// <summary>
+    /// Writes into <paramref name="directory"/> the PEM material a TLS-enabled database server fixture
+    /// needs to exercise server-certificate validation from a client: a declared root with a direct
+    /// leaf; a two-tier chain under a separate offline root (leaf, intermediate and root as separate
+    /// files, so a server can send the chain or the leaf alone); a leaf from an unrelated authority; and
+    /// a leaf from the declared root that is valid for a different host name.
+    /// </summary>
+    /// <remarks>
+    /// Generated per call and never committed: a checked-in certificate expires, and a checked-in key
+    /// is a secret. Every authority subject carries <see cref="ProcessToken"/>, so the store guard that
+    /// protects the other beds covers these too. A directory this call creates is owner-only (0700), and
+    /// each private key is created owner-only (0600) rather than written with the process umask and
+    /// narrowed afterwards, where the platform has POSIX permissions; a directory that already exists
+    /// keeps its mode. This writer's own file creation does not touch the helpers the older beds use.
+    /// </remarks>
+    public static void WriteDatabaseServerSuiteDirectory(string directory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        if (OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(directory);
+        }
+        else
+        {
+            Directory.CreateDirectory(
+                directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+
+        using var rootKey = RSA.Create(2048);
+        var rootRequest = new CertificateRequest(
+            AuthoritySubject("Vouchfx Test Database Root"), rootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        AddCaExtensions(rootRequest);
+        using var root = rootRequest.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
+
+        using var offlineRootKey = RSA.Create(2048);
+        var offlineRootRequest = new CertificateRequest(
+            AuthoritySubject("Vouchfx Test Database Offline Root"), offlineRootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        AddCaExtensions(offlineRootRequest);
+        using var offlineRoot = offlineRootRequest.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
+
+        using var intermediateKey = RSA.Create(2048);
+        var intermediateRequest = new CertificateRequest(
+            AuthoritySubject("Vouchfx Test Database Issuing Intermediate"), intermediateKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        AddCaExtensions(intermediateRequest);
+        using var intermediateSigned = intermediateRequest.Create(
+            offlineRoot, now.AddDays(-1), now.AddDays(1), RandomNumberGenerator.GetBytes(8));
+        using var intermediateWithKey = intermediateSigned.CopyWithPrivateKey(intermediateKey);
+        using var intermediateSigner = X509CertificateLoader.LoadPkcs12(
+            intermediateWithKey.Export(X509ContentType.Pkcs12), password: null);
+
+        using var foreignKey = RSA.Create(2048);
+        var foreignRequest = new CertificateRequest(
+            AuthoritySubject("Vouchfx Test Database Foreign Root"), foreignKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        AddCaExtensions(foreignRequest);
+        using var foreignRoot = foreignRequest.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
+
+        var direct = IssueLeaf(root, ServerSubjectCommonName, includeLocalhostSans: true, now);
+        var twoTier = IssueLeaf(intermediateSigner, ServerSubjectCommonName, includeLocalhostSans: true, now);
+        var foreign = IssueLeaf(foreignRoot, ServerSubjectCommonName, includeLocalhostSans: true, now);
+        var mismatch = IssueLeaf(
+            root, DatabaseServerMismatchDnsName, includeLocalhostSans: false, now, onlyDnsName: DatabaseServerMismatchDnsName);
+
+        try
+        {
+            void WriteCertificate(string name, string pem) =>
+                File.WriteAllText(Path.Combine(directory, name), pem + "\n");
+
+            void WriteKey(string name, string pem)
+            {
+                var path = Path.Combine(directory, name);
+                var options = new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None };
+                if (!OperatingSystem.IsWindows())
+                {
+                    options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+                }
+
+                using (var stream = new FileStream(path, options))
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write(pem);
+                }
+
+                // Only matters when the file already existed (its mode is then kept at creation).
+                RestrictToOwner(path);
+            }
+
+            WriteCertificate(DatabaseServerRootFileName, root.ExportCertificatePem());
+            WriteCertificate(DatabaseServerDirectCertFileName, direct.Certificate.ExportCertificatePem());
+            WriteKey(DatabaseServerDirectKeyFileName, direct.PrivateKeyPem);
+
+            WriteCertificate(DatabaseServerTwoTierRootFileName, offlineRoot.ExportCertificatePem());
+            WriteCertificate(DatabaseServerTwoTierLeafFileName, twoTier.Certificate.ExportCertificatePem());
+            WriteCertificate(
+                DatabaseServerTwoTierChainFileName,
+                twoTier.Certificate.ExportCertificatePem() + "\n" + intermediateSigned.ExportCertificatePem());
+            WriteKey(DatabaseServerTwoTierKeyFileName, twoTier.PrivateKeyPem);
+
+            WriteCertificate(DatabaseServerForeignCertFileName, foreign.Certificate.ExportCertificatePem());
+            WriteKey(DatabaseServerForeignKeyFileName, foreign.PrivateKeyPem);
+
+            WriteCertificate(DatabaseServerMismatchCertFileName, mismatch.Certificate.ExportCertificatePem());
+            WriteKey(DatabaseServerMismatchKeyFileName, mismatch.PrivateKeyPem);
+        }
+        finally
+        {
+            foreach (var leaf in new[] { direct, twoTier, foreign, mismatch })
+            {
+                leaf.Certificate.Dispose();
+                leaf.Loadable.Dispose();
+            }
+        }
+    }
+
     /// <summary>
     /// Creates a SELF-SIGNED certificate authority and a <c>localhost</c> leaf beneath it — the
     /// attacker's side of the <c>ExtraStore</c> negative control. Neither must ever become
@@ -774,7 +925,8 @@ public static class TestCertificateAuthority
         DateTimeOffset now,
         OidCollection? ekus = null,
         string? aiaUrl = null,
-        bool defaultEkus = true)
+        bool defaultEkus = true,
+        string? onlyDnsName = null)
     {
         using var key = RSA.Create(2048);
         var request = new CertificateRequest(
@@ -805,6 +957,13 @@ public static class TestCertificateAuthority
             var sans = new SubjectAlternativeNameBuilder();
             sans.AddDnsName("localhost");
             sans.AddIpAddress(IPAddress.Loopback);
+            request.CertificateExtensions.Add(sans.Build());
+        }
+        else if (onlyDnsName is not null)
+        {
+            // A leaf valid for exactly one name that is not the host a test connects to.
+            var sans = new SubjectAlternativeNameBuilder();
+            sans.AddDnsName(onlyDnsName);
             request.CertificateExtensions.Add(sans.Build());
         }
 

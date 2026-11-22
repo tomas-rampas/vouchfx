@@ -6606,8 +6606,9 @@ public static class ScenarioRunner
     /// The independent Core emission census gates this explicit field selection. Other
     /// placeholder-only and literal fields, including script code, remain opaque. A structured
     /// REST body is read through the binder's own conversion (HttpRestBodyConversion, the
-    /// provider's source file compiled into this assembly), so the text is exactly the body
-    /// that is sent, mapping keys included, with merge keys applied. A body the binder refuses
+    /// provider's source file compiled into this assembly), one JSON string at a time and
+    /// unescaped, exactly as the run-time resolver reads it, mapping keys included, with merge
+    /// keys applied. A body the binder refuses
     /// contributes no text: the provider's Validate reports that refusal before acquisition,
     /// and the step never runs. Validation, provenance and the receipt only read reference
     /// text and never invoke a secret resolver.

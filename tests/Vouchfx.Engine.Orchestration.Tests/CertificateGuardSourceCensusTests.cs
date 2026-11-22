@@ -40,7 +40,7 @@ public sealed class CertificateGuardSourceCensusTests
         var materialHosts = projects.Where(CertificateGuardSourceCensus.IsTestHost)
             .Where(project => CertificateGuardSourceCensus.CreatesOrImportsCertificate(project.Sources))
             .Select(project => project.Name).Order(StringComparer.Ordinal).ToArray();
-        string[] expected = { "Vouchfx.Cli.Tests", "Vouchfx.Engine.Orchestration.Tests", "Vouchfx.Engine.Runtime.Tests", "Vouchfx.Engine.Runtime.TransportAcceptance.Tests" };
+        string[] expected = { "Vouchfx.Cli.Tests", "Vouchfx.Engine.Orchestration.Tests", "Vouchfx.Engine.Runtime.Tests", "Vouchfx.Engine.Runtime.TransportAcceptance.Tests", "Vouchfx.Steps.DbAssert.Postgres.Tests" };
         Assert.All(expected, name => Assert.Contains(name, materialHosts));
         Assert.Empty(CertificateGuardSourceCensus.MissingGuards(projects));
     }

@@ -77,7 +77,8 @@ public sealed record HttpExpect(
 /// The template is emitted RAW (never pre-resolved): <c>{placeholder}</c> and
 /// <c>${secret:source/path}</c> tokens are resolved at step-execution time
 /// inside the emitted helper's guarded region (§17), exactly like the path and
-/// header values.  <see langword="null"/> when no body is declared.
+/// header values; in a structured body they are resolved per JSON string, through
+/// <see cref="BodyParts"/>.  <see langword="null"/> when no body is declared.
 /// </param>
 /// <param name="Expect">
 /// An optional assertion block applied to the HTTP response.
@@ -91,6 +92,20 @@ public sealed record HttpExpect(
 /// <see cref="HttpRestProvider.Bind"/> never throws for a body the author got wrong. The
 /// message never quotes a body value.
 /// </param>
+/// <param name="BodyParts">
+/// For a structured (mapping or sequence) <c>body</c> in which at least one JSON string
+/// holds a <c>{placeholder}</c> or <c>${secret:source/path}</c> reference: the body split so
+/// that each such string is resolved on its own at step-execution time. An even index is
+/// JSON text sent as it is; an odd index is the unescaped text of one JSON string (a member
+/// name or a value), resolved and then written as an escaped JSON string, so a resolved value
+/// can never change the body's structure and a reference can never span two strings. When
+/// set, it is what is sent and <see cref="Body"/> is the same body before resolution. A
+/// structured body with no reference whose JSON text would read as one once a string is read
+/// together with the JSON after it (a later string, or the closing brace) is the single part
+/// <see cref="Body"/>, sent without being resolved.
+/// <see langword="null"/> for a scalar body, for any other structured body with no reference
+/// (whose <see cref="Body"/> is sent as it is) and when no body is declared.
+/// </param>
 public sealed record HttpRestModel(
     string Target,
     string Method,
@@ -98,4 +113,5 @@ public sealed record HttpRestModel(
     IReadOnlyDictionary<string, string>? Headers,
     string? Body,
     HttpExpect? Expect,
-    string? BodyRefusal = null) : IStepModel;
+    string? BodyRefusal = null,
+    IReadOnlyList<string>? BodyParts = null) : IStepModel;

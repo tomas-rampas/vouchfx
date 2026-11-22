@@ -139,10 +139,10 @@ updates:
       # not be produced shows there as an error, not as a pull request. NuGet audit in the
       # build reports advisories independently. Security updates also have their own fixed
       # limit of 10 open pull requests; beyond that only the alerts remain.
-      # Aspire is held at the 13.4.x patch line for the v1.x series (ZEB-33). 13.5.x is
-      # unpatched for GHSA-f7vh-h5g3-7jrh, and 13.6.5, the only patched release,
-      # requires YamlDotNet 18.1.0 or later (as does 13.6.0), which the YamlDotNet hold
-      # below rules out. Patch updates within 13.4.x still flow.
+      # Aspire is held at the 13.4.x patch line for the v1.x series. 13.5.x is
+      # unpatched for GHSA-f7vh-h5g3-7jrh. Aspire 13.6.0 and 13.6.5 require YamlDotNet
+      # 18.1.0 or later, which the YamlDotNet hold below rules out, and 13.6.5 is the only
+      # patched release. Patch updates within 13.4.x still flow.
       # AspireVersionLockstepGuardTests fails an Aspire patch pull request until
       # VouchfxDcpVersion (Directory.Packages.props) and every Aspire.AppHost.Sdk
       # version are moved on the same branch. Dependabot may attempt a security update to
@@ -163,7 +163,9 @@ updates:
       # DateOnly/TimeOnly through non-generic reads, which would change db-assert.postgres
       # comparisons, and validates the TLS chain against the provided root CA only. Held
       # pending a dedicated upgrade with date/time and TLS-chain regression tests
-      # (see PR #662).
+      # (see PR #662). The Docker-backed pins (real-server rendering and the TLS matrix) run only
+      # in the daily Docker lane, so a driver-upgrade branch must run that lane by manual
+      # dispatch before it is merged.
       - dependency-name: "Npgsql"
         update-types: ["version-update:semver-major"]
       # System.Text.Json versions with the .NET release. Its major stays held although the
