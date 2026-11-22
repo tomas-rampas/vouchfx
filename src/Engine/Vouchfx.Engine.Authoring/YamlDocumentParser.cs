@@ -18,6 +18,7 @@
 using System.Globalization;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Model;
+using Vouchfx.Engine.YamlSafety;
 using Vouchfx.Sdk;
 using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
@@ -83,10 +84,16 @@ public static class YamlDocumentParser
         // 367 MB) YamlStream.Load plus this method complete in under 1 ms at a 25 MB working
         // set. Providers that DO re-materialise a subtree carry their own bound —
         // see HttpRestProvider's MaxBodyNodes (#346).
+        //
+        // A mapping key that aliases a node still being built is not a DAG. Load hashes
+        // that key, and the hash walks children with no visited set, which overflows the
+        // process stack. YamlMappingKeyCycleGuard refuses that key before Load. A cycle
+        // that lives only in a value, and an ordinary anchor or merge key, still loads.
         YamlStream stream;
         try
         {
             stream = new YamlStream();
+            YamlMappingKeyCycleGuard.Reject(yamlText);
             stream.Load(new StringReader(yamlText));
         }
         catch (YamlException ex)

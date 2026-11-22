@@ -24,6 +24,23 @@ public sealed class YamlJsonUnicodeBridgeTests
         typeof(MetricsAssertPrometheusProvider).Assembly,
     });
 
+    [Fact]
+    public void DocumentValidator_SelfReferentialMappingKey_ReturnsWithoutAborting()
+    {
+        const string yaml = """
+            steps:
+              - id: a
+                type: http.rest
+                target: svc
+                method: GET
+                path: /x
+                body: { ? &k [ *k ] : v }
+            """;
+
+        var result = DocumentValidator.Validate(yaml, s_registry);
+        Assert.NotNull(result);
+    }
+
     [Theory]
     [InlineData("http.rest", "/a\u2028b")]
     [InlineData("http.rest", "/a\u2029b")]

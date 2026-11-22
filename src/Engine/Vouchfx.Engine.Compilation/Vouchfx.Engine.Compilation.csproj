@@ -87,6 +87,13 @@
     <ProjectReference Include="..\..\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
   </ItemGroup>
 
+  <!-- DocumentValidator loads YAML itself, and this project does not reference
+       Authoring. The guard is internal, so linking the source keeps it off the
+       published surface and adds no package dependency. -->
+  <ItemGroup>
+    <Compile Include="..\Vouchfx.Engine.Authoring\YamlMappingKeyCycleGuard.cs" Link="Shared\YamlMappingKeyCycleGuard.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <EmbeddedResource Include="Schema\root-language-schema.json" />
   </ItemGroup>
