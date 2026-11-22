@@ -10,13 +10,17 @@ namespace Vouchfx.Engine.Runtime;
 /// This is not a raw-node secret scan. Map names and unlisted literals/placeholder-only
 /// fields remain opaque. PostgreSQL's historical collection is retained deliberately.
 /// The independent emission census tests gate additions without changing the frozen SDK.
-/// An http.rest structured body is read through the binder's own conversion, so its text
-/// is exactly the body that is sent; a body the binder refuses contributes nothing, and the
-/// refusal is reported once, by the provider's Validate.
+/// An http.rest structured body is read through the binder's own conversion, one JSON string
+/// per field, so each text is exactly what the run-time resolver reads; a body the binder
+/// refuses contributes nothing, and the refusal is reported once, by the provider's Validate.
 /// </remarks>
 internal static class StepTemplateCensus
 {
+    /// <summary>One field text the resolver reads, and where it is.</summary>
+    /// <param name="Location">The field's path within the step.</param>
+    /// <param name="Text">The text, as the run-time resolver reads it, exactly as written.</param>
     internal sealed record Field(string Location, string Text);
+
     internal sealed record Collection(IReadOnlyList<Field> Fields);
 
     internal static Collection Collect(StepNode node)
@@ -54,8 +58,23 @@ internal static class StepTemplateCensus
                     // nothing and is not reported here: Bind carries the same refusal to
                     // Validate, which reports it once on the authoring channel, and the step
                     // is never compiled, so no reference in it is ever fetched or sent.
+                    //
+                    // A structured body is read one JSON string at a time, unescaped, because
+                    // that is how the run-time resolver reads it: never as the serialised text,
+                    // whose escapes would change a reference and whose structure could join two
+                    // strings into one. Each string is then checked exactly as a header value
+                    // is, so an unclosed `${secret:` in any of them is refused, whatever a
+                    // later string holds. A scalar body is still one text.
                     var converted = ConvertBody(body, raw);
-                    if (converted is { Length: > 0 }) fields.Add(new Field("body", converted));
+                    if (converted?.Strings is { } strings)
+                    {
+                        foreach (var text in strings)
+                            if (text.Length > 0) fields.Add(new Field("body", text));
+                    }
+                    else if (converted?.Text is { Length: > 0 } text)
+                    {
+                        fields.Add(new Field("body", text));
+                    }
                 }
                 Values("expect.json"); Scalar("expect.bodyContains");
                 break;
@@ -136,14 +155,15 @@ internal static class StepTemplateCensus
     }
 
     /// <summary>
-    /// The text <c>HttpRestProvider.Bind</c> sends for <paramref name="body"/>, or
-    /// <see langword="null"/> when Bind sends none because the conversion refuses it.
+    /// The conversion of <paramref name="body"/> that <c>HttpRestProvider.Bind</c> sends, or
+    /// <see langword="null"/> when its conversion fails with an exception. A refusal comes back
+    /// as a result with no text and no strings, so it contributes nothing.
     /// </summary>
-    private static string? ConvertBody(YamlNode body, YamlMappingNode step)
+    private static HttpRestBodyConversion.Result? ConvertBody(YamlNode body, YamlMappingNode step)
     {
         try
         {
-            return HttpRestBodyConversion.ToTemplate(body, step).Text;
+            return HttpRestBodyConversion.ToTemplate(body, step);
         }
         catch (Exception exception) when (exception is ArgumentException or JsonException or InvalidOperationException or NotSupportedException)
         {

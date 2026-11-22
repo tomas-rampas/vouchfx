@@ -232,7 +232,9 @@ public sealed class SecretTemplateReferenceTests
     // The census reads a structured body through the binder's own conversion (ZEB-67 review:
     // HttpRestBodyConversion is one source file compiled into both assemblies). One row per
     // rule the conversion applies — merge with an override, block scalar, plain empty value,
-    // !!str and the other core tags, non-finite number text — beside the original rows.
+    // !!str and the other core tags, non-finite number text — beside the original rows. A
+    // structured body is collected one JSON string at a time, unescaped, as the run-time
+    // resolver reads it; a scalar body is collected as its one text.
     [Theory]
     [InlineData("body: { integer: 42, float: 1.25, boolean: true, nil: null, quoted: '42', sequence: [false, null, 'a\\b'] }")]
     [InlineData("body: { '${secret:env/BODY_KEY}': { nested: '${secret:env/BODY_VALUE}' }, unicode: 'é😀', empty: '' }")]
@@ -244,15 +246,17 @@ public sealed class SecretTemplateReferenceTests
     [InlineData("body:\n  note:\n  quoted: ''\n  count: 1")]
     [InlineData("body: { count: !!str 123, n: !!int '5', f: !!float '1.5', b: !!bool 'true', z: !!null '', ts: !!timestamp 2026-11-17 }")]
     [InlineData("body: { nan: NaN, inf: Infinity, neg: -Infinity, big: 1e400, fin: 1e308 }")]
-    public void RestBody_CollectedTextExactlyEqualsOnceBoundBody(string yaml)
+    public void RestBody_CollectedTextsExactlyEqualOnceBoundBody(string yaml)
     {
         var node = RestNode(yaml);
         Assert.True(Discover().TryGet("http.rest", out var provider));
         var (model, _) = BindAndEmit(provider!.Instance, node);
         var bound = (HttpRestModel)model;
         Assert.Null(bound.BodyRefusal);
-        var collection = StepTemplateCensus.Collect(node);
-        Assert.Equal(bound.Body, Assert.Single(collection.Fields, field => field.Location == "body").Text);
+        var collected = StepTemplateCensus.Collect(node).Fields
+            .Where(field => field.Location == "body").Select(field => field.Text);
+        var structured = RestNode(yaml).RawNode.Children[new YamlScalarNode("body")] is not YamlScalarNode;
+        Assert.Equal(structured ? JsonStrings(bound.Body!) : new[] { bound.Body! }, collected);
     }
 
     // The two invariants the reviewer named, end to end through the census's three consumers:
