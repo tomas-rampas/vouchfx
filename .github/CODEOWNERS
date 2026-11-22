@@ -57,7 +57,8 @@
 # contract depends on, so its owner is recorded here too. Whether that owner's review is required
 # is a repository setting, not this file.
 /.github/dependabot.yml                         @tomas-rampas
-# The guard for the NuGet audit suppression is owner-reviewed alongside the suppression itself.
+# The owner of the guard for the NuGet audit suppression is recorded here, alongside the suppression
+# itself. Whether that owner's review is required is a repository setting, not this file.
 /tests/Vouchfx.Engine.Compilation.Tests/AspireAuditSuppressionGuardTests.cs @tomas-rampas
 
 # Memory-leak regression harness — the permanent Phase-1 (M1) CI gate (5,000-iteration

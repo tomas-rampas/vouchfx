@@ -33,15 +33,16 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// A directory or file that disappears during the walk is treated as absent.
 /// </para>
 /// <para>
-/// Imports are checked rather than followed. After <c>%XX</c> decoding (up to four times), an
-/// <c>&lt;Import Project&gt;</c> value passes only in one of two forms, and in neither may it contain
-/// <c>;</c> or a wildcard (<c>*</c> or <c>?</c>). (a) A path: an optional plain property at its start
+/// Imports are checked rather than followed. An <c>&lt;Import Project&gt;</c> value has its <c>%XX</c>
+/// escapes decoded once, as MSBuild does; if it still contains <c>%</c> it fails, and otherwise it
+/// passes only in one of two forms, and in neither may it contain <c>;</c> or a wildcard (<c>*</c> or
+/// <c>?</c>). (a) A path: an optional plain property at its start
 /// (<c>$(Name)</c>, not a property function), then text with no other <c>$(</c> and no hidden,
 /// skipped or Windows-special segment, ending in <c>.props</c> or <c>.targets</c>. A hidden segment
 /// starts with a dot and is not <c>.</c> or <c>..</c>; a skipped segment is named <c>bin</c>,
 /// <c>obj</c> or <c>node_modules</c>, compared without regard to case or to trailing dots and spaces;
-/// these are the directories the walk skips. A Windows-special segment holds <c>~</c> (a possible
-/// short name) or a <c>:</c> other than a leading drive letter (an alternate data stream).
+/// these match the directories the walk skips, and more. A Windows-special segment holds <c>~</c> (a
+/// possible short name) or a <c>:</c> other than a leading drive letter (an alternate data stream).
 /// (b) <c>$([MSBuild]::GetPathOfFileAbove('&lt;file&gt;', '&lt;start&gt;'))</c>, with each argument
 /// in single quotes and the start optional, where the file argument is a path as in (a), the start
 /// argument is one except that it need not end in <c>.props</c> or <c>.targets</c>, and only
@@ -64,7 +65,9 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// scanned, comments included. A <c>TreatWarningsAsErrors</c> value is the exception to the decoding
 /// and is decoded once, as MSBuild does, so <c>%2574rue</c> is not accepted as true. Every
 /// <c>&lt;TreatWarningsAsErrors&gt;</c> element's value, trimmed, must be <c>true</c>, the root
-/// <c>Directory.Build.props</c> must set it without a condition, and no attribute may name the
+/// <c>Directory.Build.props</c> must set it to <c>true</c> in a <c>PropertyGroup</c> directly under
+/// <c>Project</c> with no <c>Condition</c> on the element, its group or the project (a setting inside
+/// a <c>Choose</c>, a <c>Target</c> or an item does not count), and no attribute may name the
 /// property on its own or in a <c>;</c> list (<c>&lt;Output PropertyName="TreatWarningsAsErrors" /&gt;</c>).
 /// In a text line or an XML value, every <c>TreatWarningsAsErrors</c> followed by <c>=</c> or
 /// <c>:</c> (optional spaces and a quote allowed on each side) must have a value that, read up to
@@ -95,49 +98,84 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// type any file aliases it to, so an alias in one file can only make the construction-site check
 /// stricter in another. A <c>&lt;Using&gt;</c> item that names a <c>DistributedApplication</c> type
 /// is refused for the same reason. In test sources <c>DisableDashboard</c> may be assigned only the
-/// literal <c>true</c>, and options may be created without setting it. The check that no Aspire
-/// dashboard package is referenced, and the check that every Aspire host imports the shared DCP
+/// literal <c>true</c>, with or without parentheses around the target, and a tuple assignment that
+/// names it on its left is refused whatever is on the right; options may be created without setting
+/// it. The check that no Aspire dashboard package is referenced, and the check that every Aspire
+/// host imports the shared DCP
 /// targets, back up NuGet audit: with warnings as errors, restoring a dashboard package that
 /// carries an advisory is expected to fail in NuGet audit first, and these checks name the cause.
 /// </para>
 /// <para>
-/// Accepted limits. The <c>DisableDashboard</c> check matches assignments in syntax, so a name built
-/// by reflection or a string is not seen, and an options object created by a type this guard cannot
-/// name is not either. Text of other kinds is not scanned (<c>*.py</c>, <c>*.bat</c>, <c>*.cmd</c>,
-/// <c>*.wxs</c>, Dockerfiles, and YAML under <c>scripts</c> and <c>examples</c>). YAML <c>\x</c> and
-/// <c>\u</c> escapes and shell quote concatenation are not decoded, so a setting spelled with them is
-/// not seen. A <c>TreatWarningsAsErrors</c> setting in text that has no <c>=</c> or <c>:</c> after
-/// the name (a PowerShell <c>SetEnvironmentVariable('TreatWarningsAsErrors', 'false')</c> or
-/// <c>Set-Item env:TreatWarningsAsErrors false</c>) is not seen. A PowerShell <c>$true</c> and an
-/// escaped quote around <c>true</c> are refused even where they would read as true, because the same
-/// text is not true everywhere: <c>$true</c> is an empty variable in a POSIX shell and literal text
-/// in a single-quoted PowerShell string, and PowerShell does not treat <c>\"</c> as an escape. An
-/// import is not proved to stay in the repository: a target that starts with a plain property
-/// other than <c>$(MSBuildThisFileDirectory)</c> or <c>$(MSBuildProjectDirectory)</c> (a
-/// property set elsewhere, <c>$(NuGetPackageRoot)</c>, <c>$(MSBuildToolsPath)</c>), an absolute path,
-/// a <c>..</c> path that leaves the repository root, an <c>Sdk=</c> import, and a
+/// Accepted limits. This guard targets accidental or careless weakening of the audit. Indirection
+/// written to get past it is a matter for review, not for this test: further forms of that kind are
+/// recorded here as limits and do not get new rules. The decision to keep the suppression rests on
+/// the premise checks (<c>DisableDashboard</c> is only ever assigned <c>true</c>, no YARP package is
+/// referenced and nothing calls <c>AddYarp</c>, the engine has a single Aspire construction site, and
+/// the <c>Aspire.Hosting</c> pin is below the first patched release); the other checks keep the audit
+/// itself from being weakened.
+/// </para>
+/// <list type="bullet">
+/// <item><description>
+/// Not read. Text of other kinds is not scanned (<c>*.py</c>, <c>*.bat</c>, <c>*.cmd</c>,
+/// <c>*.wxs</c>, Dockerfiles, and YAML under <c>scripts</c> and <c>examples</c>), nor is a script
+/// outside the five directories above whose scripts are read. A project in a hidden or skipped
+/// directory is not read either, even when a project this guard reads references it.
+/// </description></item>
+/// <item><description>
+/// Not decoded or evaluated. The <c>DisableDashboard</c> check matches assignments in syntax, so a
+/// name built by reflection or a string is not seen, and an options object created by a type this
+/// guard cannot name is not either. YAML <c>\x</c> and <c>\u</c> escapes and shell quote
+/// concatenation are not decoded, so a setting spelled with them is not seen. A
+/// <c>TreatWarningsAsErrors</c> setting in text that has no <c>=</c> or <c>:</c> after the name (a
+/// PowerShell <c>SetEnvironmentVariable('TreatWarningsAsErrors', 'false')</c> or
+/// <c>Set-Item env:TreatWarningsAsErrors false</c>) is not seen. A setting whose name or code is
+/// built from a property or from item metadata (<c>&lt;Output PropertyName="$(N)" /&gt;</c>,
+/// <c>Properties="@(P->'%(N)=%(V)')"</c>, <c>&lt;NoWarn&gt;$(C)1903&lt;/NoWarn&gt;</c>) is not seen.
+/// Items are not evaluated: a package id or a <c>&lt;Using&gt;</c> written through a property, an
+/// item list or a wildcard, and metadata that an <c>&lt;ItemDefinitionGroup&gt;</c> gives every
+/// package item, are not resolved, so a package reference, <c>VersionOverride</c> or
+/// <c>&lt;Using&gt;</c> written that way is not seen. An Aspire host is recognised from its own
+/// project file only: an <c>Aspire.AppHost.Sdk</c> declaration or an <c>IsAspireHost</c> in a file
+/// the project imports is not traced to the project.
+/// </description></item>
+/// <item><description>
+/// Imports not followed. An import is not proved to stay in the repository: a target that starts
+/// with a plain property other than <c>$(MSBuildThisFileDirectory)</c> or
+/// <c>$(MSBuildProjectDirectory)</c> (any other plain property, including one the same file sets one
+/// line earlier, <c>$(NuGetPackageRoot)</c>, <c>$(MSBuildToolsPath)</c>), an absolute path, a
+/// <c>..</c> path that leaves the repository root, an <c>Sdk=</c> import, and a
 /// <c>GetPathOfFileAbove</c> search that finds its file above the repository root (from a start
 /// directory outside it, or by walking up past it) are all allowed, because SDK imports need the
 /// first kinds and this guard does not resolve where a path or a search ends, and a file such an
-/// import reaches is not read. Of the files MSBuild imports without an <c>&lt;Import&gt;</c> in a file
-/// this guard reads, only those the walk finds anyway are read (the repository's
+/// import reaches is not read. Of the files MSBuild imports without an <c>&lt;Import&gt;</c> in a
+/// file this guard reads, only those the walk finds anyway are read (the repository's
 /// <c>Directory.Build.props</c>, <c>Directory.Build.targets</c> and <c>Directory.Packages.props</c>
 /// are): an SDK's own files and a <c>&lt;project&gt;.csproj.user</c> file are not, and neither is a
 /// file outside the walk that an SDK import names through a property such as
-/// <c>CustomAfterMicrosoftCommonTargets</c>. A project in a hidden or skipped directory is not read
-/// either, even when a project this guard reads references it. Items are not evaluated: a package
-/// id or a <c>&lt;Using&gt;</c> written through a property, an item list or a wildcard, and metadata
-/// that an <c>&lt;ItemDefinitionGroup&gt;</c> gives every package item, are not resolved, so a package
-/// reference, <c>VersionOverride</c> or <c>&lt;Using&gt;</c> written that way is not seen. An Aspire
-/// host is recognised from its own project file only: an <c>Aspire.AppHost.Sdk</c>
-/// declaration or an <c>IsAspireHost</c> in a file the project imports is not traced to the
-/// project. The agreement of <c>VouchfxDcpVersion</c>, the central <c>Aspire.Hosting.AppHost</c>
-/// version and each <c>Aspire.AppHost.Sdk</c> version is checked by
+/// <c>CustomAfterMicrosoftCommonTargets</c>.
+/// </description></item>
+/// <item><description>
+/// Refused by design although harmless. A PowerShell <c>$true</c> and an escaped quote around
+/// <c>true</c> are refused even where they would read as true, because the same text is not true
+/// everywhere: <c>$true</c> is an empty variable in a POSIX shell and literal text in a single-quoted
+/// PowerShell string, and PowerShell does not treat <c>\"</c> as an escape. A value <c>true</c>
+/// followed directly by a character such as <c>)</c>, <c>]</c>, <c>}</c>, <c>|</c>, <c>&amp;</c>,
+/// <c>&gt;</c> or a backtick is refused; put a space after <c>true</c>. Forwarding the property as its
+/// own setting (<c>TreatWarningsAsErrors=$(TreatWarningsAsErrors)</c> in an <c>Exec Command</c>, an
+/// <c>MSBuild Properties</c> or a <c>Message Text</c>), and an item that merely names the property
+/// (<c>&lt;CompilerVisibleProperty Include="TreatWarningsAsErrors" /&gt;</c>), are refused. An import
+/// through <c>GetDirectoryNameOfFileAbove</c> is refused like every property function other than
+/// <c>GetPathOfFileAbove</c>, which can do the same search and is accepted instead.
+/// </description></item>
+/// <item><description>
+/// Covered elsewhere. The agreement of <c>VouchfxDcpVersion</c>, the central
+/// <c>Aspire.Hosting.AppHost</c> version and each <c>Aspire.AppHost.Sdk</c> version is checked by
 /// <c>AspireVersionLockstepGuardTests</c>, not here. Code ownership of the files of this contract is
-/// recorded in <c>.github/CODEOWNERS</c> and has no test: whether an owner's review is required is
-/// a repository setting, which a file in the tree cannot prove. Host platforms outside the four that
+/// recorded in <c>.github/CODEOWNERS</c> and has no test: whether an owner's review is required is a
+/// repository setting, which a file in the tree cannot prove. Host platforms outside the four that
 /// <c>Vouchfx.Dcp.targets</c> covers are documented there and are not this guard's concern.
-/// </para>
+/// </description></item>
+/// </list>
 /// <para>
 /// <c>YamlDotNetPinGuardTests</c> and <c>AspireVersionLockstepGuardTests</c> use this class's loaded
 /// MSBuild documents and package-item helpers, so removing this guard needs those helpers moved first.
@@ -452,6 +490,8 @@ public sealed class AspireAuditSuppressionGuardTests
     [InlineData("CFG~1/audit.props", "short name")]
     [InlineData("build/x.props:hidden.props", "alternate data stream")]
     [InlineData("C:\\build\\x.props", null)]
+    [InlineData("build/x.prop%2573", "still percent-encoded")]
+    [InlineData("$([MSBuild]::GetPathOfFileAbove('audit.prop%2573', '$(MSBuildThisFileDirectory)tools/'))", "still percent-encoded")]
     public void GivenImportTarget_WhenItIsChecked_ThenOnlyVisibleProjectFilesPass(string? project, string? expectedProblem)
     {
         var problem = ImportProblem(project);
@@ -543,11 +583,13 @@ public sealed class AspireAuditSuppressionGuardTests
             + $"[{string.Join("; ", violations)}]. {DismissalHint}");
         Assert.True(
             warningViolations.Count == 0,
-            "Warnings must stay errors. Giving TreatWarningsAsErrors (after = or :) a value that is not exactly true once "
-            + "read up to the next unescaped space, quote, ';' or ',' and decoded once (true$X, true-x and true%20x are "
-            + "not; on a line that starts with # one full stop after the value is ignored), or passing -warnaserror-, on "
-            + "any line of a response file, workflow, action, CI definition or script, comments included, would turn "
-            + "NU190x audit warnings back into warnings. Remove these: "
+            "Warnings must stay errors. On any line of a response file, workflow, action, CI definition or script, "
+            + "comments included, this rule accepts a TreatWarningsAsErrors value (after = or :) only when it is exactly "
+            + "true once read up to the next unescaped space, quote, ';' or ',' and decoded once (true$X, true-x and "
+            + "true%20x are not; on a line that starts with # one full stop after the value is ignored), and it refuses "
+            + "-warnaserror-, because a value it cannot read as true may turn NU190x audit warnings back into warnings. "
+            + "If the value is true and a character such as ), ], }, |, &, > or a backtick follows it directly, put a "
+            + "space after true. Change or remove these: "
             + $"[{string.Join("; ", warningViolations)}]. {DismissalHint}");
     }
 
@@ -667,7 +709,9 @@ public sealed class AspireAuditSuppressionGuardTests
         Assert.True(imports > 0, "No <Import> element was found in any MSBuild file, so the search is probably broken.");
         Assert.True(
             violations.Count == 0,
-            "Every <Import Project> must contain no ';' and no wildcard, and must be either (a) a path: an optional plain "
+            $"Found imports this guard cannot check: [{string.Join("; ", violations)}]. {DismissalHint} "
+            + "The rule: every <Import Project>, once its %XX escapes are decoded once as MSBuild does, must contain no "
+            + "'%', no ';' and no wildcard, and must be either (a) a path: an optional plain "
             + "property such as $(MSBuildThisFileDirectory) at its start, no other $(, no path segment other than . and .. "
             + "that starts with a dot, none named bin, obj or node_modules, none with '~' or with a ':' other than a drive "
             + "letter, and "
@@ -675,12 +719,12 @@ public sealed class AspireAuditSuppressionGuardTests
             + "arguments quoted, the file argument a path as in (a), the start argument one that need not end in .props "
             + "or .targets, and only $(MSBuildThisFileDirectory) or $(MSBuildProjectDirectory) at the start of either. Any "
             + "other property function fails. That way a relative import that stays inside the repository, alone or after "
-            + "$(MSBuildThisFileDirectory) or $(MSBuildProjectDirectory), reaches only files the audit guard reads: an "
-            + "audit override in a file of another extension, in a directory the guard skips, or behind a property whose "
-            + "value the guard cannot know would not be seen. Accepted limit: a target that starts with another plain "
-            + "property, an absolute path, a .. path that leaves the repository root, an Sdk= import, and a "
-            + "GetPathOfFileAbove search that finds its file above the repository root are not rejected, and a file they "
-            + $"reach is not read. Found: [{string.Join("; ", violations)}]. {DismissalHint}");
+            + "$(MSBuildThisFileDirectory) or $(MSBuildProjectDirectory) (for the latter, when the project being built is "
+            + "one the guard reads), reaches only files the audit guard reads: an audit override in a file of another "
+            + "extension, in a directory the guard skips, or behind a property whose value the guard cannot know would "
+            + "not be seen. Accepted limit: a target that starts with another plain property, an absolute path, a .. path "
+            + "that leaves the repository root, an Sdk= import, and a GetPathOfFileAbove search that finds its file above "
+            + "the repository root are not rejected, and a file they reach is not read.");
     }
 
     [Fact]
@@ -697,16 +741,34 @@ public sealed class AspireAuditSuppressionGuardTests
             "TreatWarningsAsErrors must only ever be the literal true (decoded once, as MSBuild does), as an element and "
             + "inside any attribute value or element text, such as a task's Properties=\"TreatWarningsAsErrors=...\", and "
             + "no attribute may name it on its own, as <Output PropertyName=\"TreatWarningsAsErrors\" /> does. A project "
-            + "setting it to false, or to a value this guard cannot read, would turn NU190x audit warnings back into "
-            + "warnings. "
+            + "setting it to false, or to a value this guard cannot read, may turn NU190x audit warnings back into "
+            + "warnings. If the value is true and a character such as ), ], }, |, &, > or a backtick follows it directly, "
+            + "put a space after true. "
             + $"Found: [{string.Join("; ", off)}]. "
             + DismissalHint);
 
         var rootProps = Assert.Single(MsBuildDocuments.Value, d => IsRootProps(d.File)).Document;
-        Assert.Contains(
-            rootProps.Descendants().Where(e => NameIs(e, "TreatWarningsAsErrors")),
-            e => string.Equals(e.Value.Trim(), "true", StringComparison.OrdinalIgnoreCase)
-                && !e.AncestorsAndSelf().Any(a => AttributeValue(a, "Condition") is not null));
+        Assert.True(
+            SetsWarningsAsErrorsUnconditionally(rootProps),
+            "The root Directory.Build.props must set TreatWarningsAsErrors to true in a PropertyGroup directly under "
+            + "Project, with no Condition on it or on its group, so that every project that imports it treats warnings, "
+            + "NU190x audit warnings among them, as errors unless a later file changes that, which the check above "
+            + "refuses in the files this guard reads. A setting inside a Choose, a Target or an item does not count. "
+            + DismissalHint);
+    }
+
+    [Theory]
+    [InlineData("<PropertyGroup><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup>", true)]
+    [InlineData("<PropertyGroup Condition=\"'$(CI)' == 'true'\"><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup>", false)]
+    [InlineData("<PropertyGroup><TreatWarningsAsErrors Condition=\"'$(CI)' == 'true'\">true</TreatWarningsAsErrors></PropertyGroup>", false)]
+    [InlineData("<Choose><When Condition=\"'$(CI)' == 'true'\"></When><Otherwise><PropertyGroup><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup></Otherwise></Choose>", false)]
+    [InlineData("<ItemGroup><X Include=\"all\"><TreatWarningsAsErrors>true</TreatWarningsAsErrors></X></ItemGroup>", false)]
+    [InlineData("<Target Name=\"Strict\"><PropertyGroup><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup></Target>", false)]
+    public void GivenRootProps_WhenWarningsAsErrorsIsChecked_ThenOnlyAnUnconditionalTopLevelPropertyCounts(string body, bool expected)
+    {
+        var document = XDocument.Parse($"<Project>{body}</Project>");
+
+        Assert.Equal(expected, SetsWarningsAsErrorsUnconditionally(document));
     }
 
     [Theory]
@@ -979,6 +1041,9 @@ public sealed class AspireAuditSuppressionGuardTests
     [InlineData("class C { object M() => new DistributedApplicationOptions { DisableDashboard = false }; }", 1)]
     [InlineData("class C { void M(DistributedApplicationOptions o) { o.DisableDashboard = false; } }", 1)]
     [InlineData("class C { void M(DistributedApplicationOptions o) { o.DisableDashboard |= false; } }", 1)]
+    [InlineData("class C { void M(DistributedApplicationOptions o) { (o.DisableDashboard, _) = (false, 0); } }", 1)]
+    [InlineData("class C { void M(DistributedApplicationOptions o) { (o.DisableDashboard, _) = (true, 0); } }", 1)]
+    [InlineData("class C { void M(DistributedApplicationOptions o) { (o.DisableDashboard) = false; } }", 1)]
     public void GivenTestSource_WhenDashboardAssignmentsAreInspected_ThenOnlyAssignmentsOtherThanTrueAreBad(string code, int expectedBad)
     {
         var files = new[] { ("tests/Case.cs", CSharpSyntaxTree.ParseText(code).GetRoot()) }.Cast<(string File, SyntaxNode Root)>().ToList();
@@ -1393,10 +1458,16 @@ public sealed class AspireAuditSuppressionGuardTests
     /// </summary>
     private static string? ImportProblem(string? project)
     {
-        var target = DecodeEscapes(project ?? string.Empty).Trim();
+        var target = DecodeOnce(project ?? string.Empty).Trim();
         if (target.Length == 0)
         {
             return "has no Project attribute";
+        }
+
+        if (target.Contains('%'))
+        {
+            return "is still percent-encoded after one decoding of its %XX escapes, which is all MSBuild does, so the file "
+                + "it names may not be the one this guard reads. Write the path without escapes";
         }
 
         if (target.Contains(';'))
@@ -1458,7 +1529,9 @@ public sealed class AspireAuditSuppressionGuardTests
         }
         else if (rest.StartsWith("$(", StringComparison.Ordinal))
         {
-            return "starts with a property function, and the only one accepted is GetPathOfFileAbove with quoted arguments";
+            return "starts with a property function, and the only one accepted is GetPathOfFileAbove with quoted arguments. "
+                + "For a search upwards, write it as $([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', "
+                + "'$(MSBuildThisFileDirectory)../'))";
         }
 
         if (rest.Contains("$(", StringComparison.Ordinal))
@@ -1743,6 +1816,8 @@ public sealed class AspireAuditSuppressionGuardTests
         {
             IdentifierNameSyntax identifier => identifier.Identifier.ValueText == "DisableDashboard",
             MemberAccessExpressionSyntax access => access.Name.Identifier.ValueText == "DisableDashboard",
+            ParenthesizedExpressionSyntax parenthesized => IsDisableDashboardTarget(parenthesized.Expression),
+            TupleExpressionSyntax tuple => tuple.Arguments.Any(a => IsDisableDashboardTarget(a.Expression)),
             _ => false,
         };
 
@@ -1787,6 +1862,20 @@ public sealed class AspireAuditSuppressionGuardTests
 
     private static bool IsRootProps(string relativePath) =>
         string.Equals(relativePath, RootPropsName, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Whether <paramref name="document"/> sets <c>TreatWarningsAsErrors</c> to <c>true</c> in a
+    /// <c>PropertyGroup</c> directly under <c>Project</c>, with no <c>Condition</c> on the element,
+    /// its group or the project. A setting inside a <c>Choose</c> depends on its conditions, one
+    /// inside a <c>Target</c> on the target running, and one inside an item is item metadata, so
+    /// none of them counts.
+    /// </summary>
+    private static bool SetsWarningsAsErrorsUnconditionally(XDocument document) =>
+        document.Descendants().Any(e => NameIs(e, "TreatWarningsAsErrors")
+            && string.Equals(e.Value.Trim(), "true", StringComparison.OrdinalIgnoreCase)
+            && e.Parent is { } group && NameIs(group, "PropertyGroup")
+            && group.Parent == document.Root
+            && !e.AncestorsAndSelf().Any(a => AttributeValue(a, "Condition") is not null));
 
     private static bool RootSuppressionIsPresent() =>
         ReadSuppressions().Any(s => IsRootProps(s.File) && string.Equals(s.Url, AdvisoryUrl, StringComparison.Ordinal));
