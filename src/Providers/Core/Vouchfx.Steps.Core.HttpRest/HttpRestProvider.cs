@@ -1421,7 +1421,8 @@ public sealed class HttpRestProvider
         // baked into the emitted IL — only the reference token text is.
         //
         // A structured body that binds BodyParts is the exception (one holding a reference, or
-        // one whose JSON text reads as a reference across two strings): its references are
+        // one whose JSON text reads as a reference once a string is read together with the
+        // JSON after it): its references are
         // resolved per JSON string, so it is emitted as the bound parts (a trailing named
         // bodyParts argument) and the body template is the bare literal null. Every other
         // body, and a step with no body at all, emits exactly the call it always has.

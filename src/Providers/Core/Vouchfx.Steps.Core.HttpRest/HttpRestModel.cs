@@ -100,8 +100,9 @@ public sealed record HttpExpect(
 /// name or a value), resolved and then written as an escaped JSON string, so a resolved value
 /// can never change the body's structure and a reference can never span two strings. When
 /// set, it is what is sent and <see cref="Body"/> is the same body before resolution. A
-/// structured body with no reference whose JSON text would read as one across two strings is
-/// the single part <see cref="Body"/>, sent without being resolved.
+/// structured body with no reference whose JSON text would read as one once a string is read
+/// together with the JSON after it (a later string, or the closing brace) is the single part
+/// <see cref="Body"/>, sent without being resolved.
 /// <see langword="null"/> for a scalar body, for any other structured body with no reference
 /// (whose <see cref="Body"/> is sent as it is) and when no body is declared.
 /// </param>

@@ -210,7 +210,8 @@ internal static class HttpRestBodyConversion
     /// resolved on its own and written back as a JSON string. Writing every odd part with
     /// <c>JsonSerializer.Serialize</c> before any resolution gives back
     /// <paramref name="Text"/> exactly. A body none of whose strings holds a reference, but
-    /// whose JSON text reads as one across two strings, is the single part
+    /// whose JSON text reads as one once a string is read together with the JSON after it (a
+    /// later string, or the closing brace), is the single part
     /// <paramref name="Text"/>, so that it is sent without being resolved. The pre-run check
     /// refuses such a body, because one of its strings holds a <c>${secret:</c> with no
     /// closing <c>}</c>; this part keeps the run-time resolver from reading across strings
@@ -384,9 +385,10 @@ internal static class HttpRestBodyConversion
                     + "the body's JSON. This is a defect in the body conversion, not in the suite.");
             }
 
-            // No string holds a reference, but the JSON text reads as one across two strings
-            // (a key and its value, two items): sent as one part, which is never resolved,
-            // because resolving the text as a template would read that joined reference. The
+            // No string holds a reference, but the JSON text reads as one once a string is read
+            // together with the JSON after it (a later string, or the closing brace): sent as
+            // one part, which is never resolved, because resolving the text as a template
+            // would read that joined reference. The
             // pre-run check refuses such a body (one of its strings holds an unclosed
             // `${secret:`), so this only keeps the run-time reading per string.
             if (_parts is null && s_reference.IsMatch(text))

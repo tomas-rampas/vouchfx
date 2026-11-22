@@ -1429,7 +1429,7 @@ capture:
 
 Anywhere a value is expected in a declarative step, a captured or seeded variable can be substituted with brace syntax: `{newUserId}` is replaced, at execution time, by the current value of the `newUserId` variable. Substitution also works with secret references: `{foo}` reads from the context, whilst `${secret:source/path}` resolves from a configured secret source. Both are resolved at step-execution time (never at compile time), ensuring secrets are never baked into the compiled code. Substitution works inside:
 
-- HTTP paths, headers, and request **body** (the body is treated as a template string if a scalar, or serialised to JSON and then used as a template if a YAML mapping or sequence).
+- HTTP paths, headers, and request **body** (the body is treated as a template string if a scalar; for a YAML mapping or sequence, each of its JSON strings, member names and string values, is resolved on its own: see §5.1, *References in a structured body*).
 - The expected values of `http.rest`'s `expect.json` entries and `expect.bodyContains` (§5.1); the JSONPath keys themselves are used verbatim. Here, unlike the fields above, a placeholder naming a variable that is not set makes the step Inconclusive instead of resolving to an empty string, and the request is not sent.
 - Kafka topic names, message keys, plain payloads, Avro field values, and message headers.
 - Database query strings and parameter values.
