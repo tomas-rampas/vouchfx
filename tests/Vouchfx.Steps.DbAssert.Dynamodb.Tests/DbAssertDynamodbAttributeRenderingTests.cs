@@ -6,6 +6,7 @@
 // Rendering contract (unchanged since the provider was written): S as-is; N as the raw stored
 // number string; BOOL as "true"/"false"; every other kind (B, NULL, SS, NS, BS, L, M, empty L,
 // empty M) and a missing attribute as the literal "null".
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -94,9 +95,10 @@ public sealed class DbAssertDynamodbAttributeRenderingTests
     }
 
     [Fact]
-    public async Task ItemWithNoAttributes_IsReportedAbsent()
+    public async Task AbsentItem_IsReportedAbsent()
     {
-        // An absent item: the SDK reports no Item (null under AWSSDK 4, empty under 3.7).
+        // An absent item: the response has no Item member, so the SDK reports none (null under
+        // AWSSDK 4, empty under 3.7).
         var outcome = await RunAsync(itemJson: null);
 
         Assert.Equal(Verdict.Fail, outcome.Verdict);
@@ -104,12 +106,26 @@ public sealed class DbAssertDynamodbAttributeRenderingTests
     }
 
     [Fact]
-    public async Task DroppedConnection_IsOneGetItemRequestAndAnEnvironmentError()
+    public async Task ItemWithNoAttributes_IsReportedAbsent()
     {
-        // AWSSDK 4 retries a dropped connection up to MaxStaleConnectionRetries (default 10)
-        // times regardless of MaxErrorRetry; the helper sets it to 0, so exactly one request
-        // reaches the peer and the engine-owned retry runner keeps the polling cadence.
-        await using var peer = new GetItemPeer("{}", dropConnection: true);
+        // The other shape: an Item member that is present and empty ({"Item":{}}).
+        var outcome = await RunAsync(itemJson: "{}");
+
+        Assert.Equal(Verdict.Fail, outcome.Verdict);
+        Assert.Equal("{\"exists\":false}", outcome.Observation);
+    }
+
+    [Theory]
+    [InlineData(Fault.Close)]
+    [InlineData(Fault.Reset)]
+    public async Task DroppedOrResetConnection_IsOneGetItemRequestAndAnEnvironmentError(Fault fault)
+    {
+        // AWSSDK 4 retries a dropped or reset connection up to MaxStaleConnectionRetries (default
+        // 10) times, whatever MaxErrorRetry says (MaxErrorRetry = 0 alone still gives 11 requests).
+        // The helper sets MaxStaleConnectionRetries to 0, so exactly one request reaches the peer
+        // and the engine-owned retry runner keeps the polling cadence. Both a clean close and an
+        // RST after the status line are pinned.
+        await using var peer = new GetItemPeer("{}", fault);
         var model = new DbAssertDynamodbModel("orders", "Orders", "{\"pk\":\"1\"}", new DynamoExpectation(true, null));
         var fragment = new DbAssertDynamodbProvider().Emit(model, new StubCompileContext());
         var compiled = RoslynScriptCompiler.CompileOnce(
@@ -125,6 +141,8 @@ public sealed class DbAssertDynamodbAttributeRenderingTests
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
         Assert.Equal(1, peer.RequestCount);
     }
+
+    public enum Fault { None, Close, Reset }
 
     private static string ActualCell(StepOutcome outcome)
     {
@@ -156,7 +174,8 @@ public sealed class DbAssertDynamodbAttributeRenderingTests
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
         private readonly CancellationTokenSource _stop = new();
         private readonly byte[] _body;
-        private readonly bool _dropConnection;
+        private readonly Fault _fault;
+        private readonly ConcurrentBag<Task> _handlers = new();
         private readonly Task _accept;
         private int _requestCount;
 
@@ -164,9 +183,9 @@ public sealed class DbAssertDynamodbAttributeRenderingTests
 
         public int RequestCount => Volatile.Read(ref _requestCount);
 
-        public GetItemPeer(string body, bool dropConnection = false)
+        public GetItemPeer(string body, Fault fault = Fault.None)
         {
-            _dropConnection = dropConnection;
+            _fault = fault;
             _body = Encoding.UTF8.GetBytes(body);
             _listener.Start();
             Url = "http://127.0.0.1:" + ((IPEndPoint)_listener.LocalEndpoint).Port;
@@ -180,7 +199,7 @@ public sealed class DbAssertDynamodbAttributeRenderingTests
                 while (!_stop.IsCancellationRequested)
                 {
                     var client = await _listener.AcceptTcpClientAsync(_stop.Token);
-                    _ = HandleAsync(client);
+                    _handlers.Add(HandleAsync(client));
                 }
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
@@ -224,10 +243,12 @@ public sealed class DbAssertDynamodbAttributeRenderingTests
                         }
                     }
 
-                    if (_dropConnection)
+                    if (_fault != Fault.None)
                     {
                         // A parsed status line stops HttpClient's own transparent pre-response retry.
                         await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\n"), _stop.Token);
+                        // A reset sends an RST (zero-timeout linger) instead of a FIN.
+                        if (_fault == Fault.Reset) client.LingerState = new LingerOption(true, 0);
                         return;
                     }
 
@@ -246,6 +267,7 @@ public sealed class DbAssertDynamodbAttributeRenderingTests
             _stop.Cancel();
             _listener.Stop();
             await _accept;
+            await Task.WhenAll(_handlers);
             _stop.Dispose();
         }
     }

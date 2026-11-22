@@ -88,22 +88,29 @@ updates:
     # minor and patch updates in the group; only the major arrives as its own pull request.
     # The aspire group is left without update-types on purpose: the Aspire.* ignore below
     # already limits it to patches, and if that hold is ever lifted a major must still move
-    # every Aspire package together in one pull request, never one package at a time.
+    # every Aspire package together in one pull request, never one package at a time. The
+    # awssdk group follows the same rule: AWSSDK.* packages share AWSSDK.Core and move
+    # together, because a major for one package alone needs a Core major that the other
+    # packages' dependency ranges refuse.
     # open-pull-requests-limit stays at 5, and the limit is shared by both directories: the
-    # groups take up to two slots for "/" and may take up to two more for the example, so
-    # one slot may be left for individual majors if all four are open at once. The example
-    # has few packages, so that is unlikely. Most majors are held below, so few are
+    # groups take up to three slots for "/" and may take more for the example, so two slots
+    # may be left for individual majors when only the three for "/" are open. The example
+    # has few packages, and no AWSSDK or Aspire package, so it should use at most one. Most majors are held below, so few are
     # expected at once. Security updates have their own separate limit (10 open pull
     # requests) and are not queued behind these.
     groups:
       aspire:
         patterns:
           - "Aspire.*"
+      awssdk:
+        patterns:
+          - "AWSSDK.*"
       nuget-dependencies:
         patterns:
           - "*"
         exclude-patterns:
           - "Aspire.*"
+          - "AWSSDK.*"
         update-types:
           - "minor"
           - "patch"

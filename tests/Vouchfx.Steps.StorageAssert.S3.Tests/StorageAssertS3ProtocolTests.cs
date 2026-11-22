@@ -76,18 +76,18 @@ public sealed class StorageAssertS3ProtocolTests
         Assert.Matches("^[A-Za-z][A-Za-z0-9]*$", error.Value.GetString()!);
     }
 
-    // The bucket confirmation after an object-HEAD 404 is a single request even when the peer
-    // drops the connection: the client is built with MaxErrorRetry = 0, so neither the SDK nor
-    // the engine adds a second HeadBucket. The count is pinned for each way a connection can be
-    // dropped, and for a dropped object HEAD (which must not reach the bucket probe at all).
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task BucketConfirmation_DroppedConnection_IssuesExactlyOneHeadBucket(bool exists)
+    // A connection reset after the status line (an RST, not a clean close) must not add a second
+    // HeadBucket either. AWSSDK 4 retries a stale or reset connection up to MaxStaleConnectionRetries
+    // times (default 10), whatever MaxErrorRetry says: MaxErrorRetry = 0 alone still gives 11
+    // requests. The single request holds because the client is built with
+    // MaxStaleConnectionRetries = 0 and the engine's own retry policy decides when to try again.
+    // The clean-close variant is BucketConfirmation_TruncatedResponse_IsEnvironmentError.
+    [Fact]
+    public async Task BucketConfirmation_ResetConnection_IssuesExactlyOneHeadBucket()
     {
         await using var peer = new S3Peer(request => Task.FromResult(request.Kind == "object"
-            ? new Reply(404) : new Reply(0, DropConnection: true)));
-        var result = await RunAsync(peer, new StorageExpectation(exists, null, null, null, null, null, null));
+            ? new Reply(404) : new Reply(0, ResetConnection: true)));
+        var result = await RunAsync(peer, new StorageExpectation(true, null, null, null, null, null, null));
         Trace(peer, result);
 
         Assert.Equal(Verdict.EnvironmentError, result.Outcome.Verdict);
@@ -502,7 +502,7 @@ public sealed class StorageAssertS3ProtocolTests
     private sealed record Request(string Method, string Kind, int Status, long BodyLength);
     private sealed record Reply(int Status, byte[]? Body = null, long? HeadLength = null,
         string ContentType = "application/octet-stream", string? Metadata = null,
-        bool HoldHeaders = false, bool HoldBody = false, bool DropConnection = false);
+        bool HoldHeaders = false, bool HoldBody = false, bool DropConnection = false, bool ResetConnection = false);
 
     private sealed class S3Peer : IAsyncDisposable
     {
@@ -561,6 +561,13 @@ public sealed class StorageAssertS3ProtocolTests
                     var request = new Request(first[0], first[1].TrimEnd('/').Count(c => c == '/') > 1 ? "object" : "bucket", 0, 0);
                     var reply = await _reply(request);
                     _requests.Enqueue(request with { Status = reply.Status, BodyLength = reply.Body?.LongLength ?? 0 });
+                    if (reply.ResetConnection)
+                    {
+                        // The same parsed status line, then an RST (zero-timeout linger) instead of a FIN.
+                        await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\n"), _stop.Token);
+                        client.LingerState = new LingerOption(true, 0);
+                        return;
+                    }
                     if (reply.DropConnection)
                     {
                         // A parsed status line prevents HttpClient's transparent pre-response retry.

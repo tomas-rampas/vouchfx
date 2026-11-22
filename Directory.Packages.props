@@ -113,10 +113,14 @@
     <PackageVersion Include="NATS.Net" Version="3.4.0" />
   </ItemGroup>
   <ItemGroup Label="AWS SDK (db-assert.dynamodb / storage-assert.s3) - the 4.x line">
-    <!-- Both packages must resolve the same AWSSDK.Core major. AWSSDK 4 makes value-type
-         members nullable, so the emitted db-assert.dynamodb helper reads BOOL as a nullable,
-         and it adds MaxStaleConnectionRetries (default 10), which both providers set to 0 so a
-         dropped connection is one request. A new AWSSDK.* package must stay on the same major. -->
+    <!-- The three pins move together: AWSSDK.DynamoDBv2 and AWSSDK.S3 must resolve the same
+         AWSSDK.Core, and AWSSDK.Core is pinned here (central transitive pinning) so every
+         project, including the CLI and the S3 test project, runs the same build of it. S3 4.1.2
+         requires Core 4.1.1.1 or later. AWSSDK 4 makes value-type members nullable, so the
+         emitted db-assert.dynamodb helper reads BOOL as a nullable, and it adds
+         MaxStaleConnectionRetries (default 10), which both providers set to 0 so a dropped
+         connection is one request. A new AWSSDK.* package must stay on the same major. -->
+    <PackageVersion Include="AWSSDK.Core" Version="4.1.1.2" />
     <PackageVersion Include="AWSSDK.DynamoDBv2" Version="4.1.0.3" />
     <PackageVersion Include="AWSSDK.S3" Version="4.1.2" />
   </ItemGroup>
