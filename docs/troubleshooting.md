@@ -303,7 +303,7 @@ env:
     retention-days: 7
 ```
 
-This repository's Docker/Aspire CI keeps the default per-user root so its READY-path guard remains meaningful. It snapshots before the test, then collects new matching captures even after a failed test and uploads them as `integration-dcp-captures` with seven-day retention. Existing files are excluded; a zero-capture run uploads only its count manifest. Collection refuses unsafe paths, links and excessive payload, and upload requires successful collection. This does not recover captures the engine has already pruned.
+This repository's Docker/Aspire CI keeps the default per-user root so its READY-path guard remains meaningful. It snapshots before the test, then collects new matching captures even after a failed test and uploads them as `integration-dcp-captures`, kept for 30 days if the job has already failed or been cancelled when the upload runs and for 7 days otherwise. Existing files are excluded; a zero-capture run uploads only its count manifest. Collection refuses unsafe paths, links and excessive payload, and upload requires successful collection. This does not recover captures the engine has already pruned.
 
 **A CI artefact is as public as an issue comment.** Actions does not mask secrets inside uploaded artefact *contents*, and on a public repository anyone can download them. Read the section below on what a capture can contain before uploading one from a job whose suite routes any credential in via `${env:NAME}`.
 

@@ -47,13 +47,34 @@ updates:
           - "github/codeql-action*"
 
   - package-ecosystem: "nuget"
-    directory: "/"
+    # One entry, several directories, so the groups and the ignore rules below apply to all
+    # of them. Dependabot's NuGet discovery reads the project and solution files in a
+    # directory it is given and the projects they reference; it does not recurse into
+    # subdirectories. "/" therefore reaches vouchfx.sln and everything in it, and
+    # Directory.Packages.props. examples/compose-orders/app/ComposeOrders.csproj is in no
+    # solution and pins its own Npgsql version, so it needs its own line here. A project
+    # outside the solution that uses only the central versions, and references only
+    # packages a solution project also references, is covered through "/" and needs none.
+    # Add a directory when a project outside the solution sets a version itself.
+    # Dependabot alerts, and so security updates, already covered the example through the
+    # dependency graph; this entry adds version updates for it.
+    # Check on the first weekly run: a separate grouped pull request for the example's
+    # directory is expected (see the groups note below), and its update should edit only
+    # ComposeOrders.csproj and leave the central Npgsql PackageVersion untouched.
+    directories:
+      - "/"
+      - "/examples/compose-orders/app"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    # Collapse each week's MINOR and PATCH version updates into ONE pull request (fewer PRs
-    # to triage, and any paired-pin / NU1109 fix-up is paid once per week). Aspire.Hosting.*
-    # ships in lockstep, so it is grouped on its own so a partial Aspire bump never lands.
+    # Collapse each week's MINOR and PATCH version updates into ONE pull request per
+    # directory (fewer PRs to triage, and any paired-pin / NU1109 fix-up is paid once per
+    # directory per week). With several directories, a group is expected to produce a
+    # separate pull request for each directory unless `group-by: dependency-name` is set,
+    # which GitHub's Dependabot options reference describes as one pull request per
+    # dependency across all the directories; that would defeat the weekly batching, so it
+    # is not set. Aspire.Hosting.* ships in lockstep, so it is grouped on its own so a
+    # partial Aspire bump never lands.
     # Security updates are not affected by `groups` unless `applies-to: security-updates`
     # is set, so these groups never batch an advisory fix: any security update that is
     # raised comes as its own PR. Whether a hold in the ignore list also stops one is a
@@ -68,10 +89,12 @@ updates:
     # The aspire group is left without update-types on purpose: the Aspire.* ignore below
     # already limits it to patches, and if that hold is ever lifted a major must still move
     # every Aspire package together in one pull request, never one package at a time.
-    # open-pull-requests-limit stays at 5: two slots serve the groups, leaving three for
-    # individual majors. Most majors are held below, so few are expected at once. Security
-    # updates have their own separate limit (10 open pull requests) and are not queued
-    # behind these.
+    # open-pull-requests-limit stays at 5, and the limit is shared by both directories: the
+    # groups take up to two slots for "/" and may take up to two more for the example, so
+    # one slot may be left for individual majors if all four are open at once. The example
+    # has few packages, so that is unlikely. Most majors are held below, so few are
+    # expected at once. Security updates have their own separate limit (10 open pull
+    # requests) and are not queued behind these.
     groups:
       aspire:
         patterns:
