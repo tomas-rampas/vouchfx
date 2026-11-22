@@ -118,6 +118,27 @@ change. Keys are compared by their text, so two keys whose text matches are refu
 case where YAML's own type resolution would distinguish them — `!!str 1:` beside `1:`. That is
 deliberate, and it fails closed.
 
+**A mapping key may refer by alias only to a scalar anchor defined earlier in the same document.**
+Inside a mapping key, at any depth, an alias (`*name`) is refused at parse time, with a YAML parse
+error that names the line and column of the alias, when its anchor is on a mapping or a sequence
+(whether that anchor is still being defined, as in `{ ? &k [ *k ] : v }`, or was completed earlier),
+or when its anchor is not defined before it in the same document (a forward alias, a name defined
+only in an earlier document of the stream, or a name never defined). The scalar text that aliases
+bring into the keys of one document, tags included, is also capped at 1,048,576 characters, counted
+again for each key that encloses the alias. This applies to suite files, Compose configuration files
+and the Compose manifests they reference. The loader hashes a key when it inserts it and walks
+everything the key can reach: a key that reached a cyclic, very deep or heavily shared collection
+would crash the process or take exponential time, an alias whose anchor comes later is held as a
+placeholder that crashes the process when it is used as a key, whatever its target, and a long
+scalar or a long tag repeated through many keys by alias costs time that grows with the square of
+the file's length. An alias to a scalar anchor defined earlier stays legal in a key, as does a
+collection written out inline in a key (`{ ? [a, b] : v }`). Aliases outside keys are unaffected,
+including a value that refers to its own anchor, a forward alias in a value (which schema validation
+refuses with its own message) and merge keys (`<<: *base`). The rule refuses some documents that
+would otherwise load: for example, `a: &k [1]` followed by `{ ? *k : v }`, an alias to an anchored
+mapping used as a key, or an alias to an anchored sequence nested in a key written out inline
+(`{ ? [ *k ] : v }`).
+
 ### 3.1 The metadata section
 
 The metadata section carries information about the test rather than instructions to the engine. Its fields feed reporting dashboards and let the runner select a subset of tests — for example, only those tagged as a smoke test, or only those owned by a particular team. None of it affects execution.
@@ -602,7 +623,7 @@ An `http` step issues an HTTP request to one of the services declared in the env
 | method | The HTTP verb: GET, POST, PUT, PATCH, or DELETE. |
 | path | The request path, which may contain `{placeholder}` and `${secret:…}` tokens resolved at execution time. |
 | headers | An optional map of request headers. Each header value may contain `{placeholder}` and `${secret:…}` tokens. |
-| body | An optional request body. A YAML scalar is treated as a template string; a YAML mapping or sequence is serialised to JSON and then used as a template, including mapping keys, following the conversion rules in *How a structured body becomes JSON* below. The exact bound text is checked for secret-reference syntax before acquisition, after merge keys and tags are applied, so a reference that appears only in a merged member the mapping overrides is neither checked nor sent; secret values are read only at step execution. Structured bodies are bounded to depth 64 and 50000 nodes. All `{placeholder}` and `${secret:…}` tokens are resolved at step-execution time. |
+| body | An optional request body. A YAML scalar is treated as a template string; a YAML mapping or sequence is serialised to JSON, and each of its strings, mapping keys included, is used as a template, following the conversion rules in *How a structured body becomes JSON* below. The exact bound text (for a mapping or sequence, each of its JSON strings) is checked for secret-reference syntax before acquisition, after merge keys and tags are applied, so a reference that appears only in a merged member the mapping overrides is neither checked nor sent; secret values are read only at step execution. Each JSON string of a mapping or sequence is checked on its own, as a header value is, so a `${secret:` with no closing `}` in any of them refuses the suite (see *References in a structured body* below). Structured bodies are bounded to depth 64 and 50000 nodes. All `{placeholder}` and `${secret:…}` tokens are resolved at step-execution time; in a mapping or sequence, each JSON string is resolved on its own (see *References in a structured body* below). |
 | expect | An optional assertion block. `status` is the expected status code (any 2xx when omitted); `json` maps a JSONPath to an expected value or to `{ exists: true }` / `{ exists: false }`; `bodyContains` is a substring the decoded body must contain. See *Response-body assertions* below. Response headers are not asserted on. |
 
 For `http.rest`, `http.soap`, and `metrics-assert.prometheus`, author `path` as a rooted relative path beginning with one `/`. Absolute URLs, a leading `//`, backslashes, and raw C0/DEL/C1 control characters (U+0000–001F and U+007F–009F) are rejected by provider validation and the composed schema. Percent-encoded text such as `%0D`, `%0A`, and `%7F` remains valid; this authoring check does not decode it. Query strings, fragments, and placeholders remain supported.
@@ -665,6 +686,14 @@ A `body` written as a single scalar (plain, quoted or a block scalar) is sent as
 The second step sends `{"currency":"EUR","channel":"web","amount":20,"reference":"00123","memo":"Paid by {payer}\n","note":null}`, with `{payer}` substituted when the step runs.
 
 A merge key whose value is not a mapping or a sequence of mappings, a tag a body does not accept, a value that does not fit its tag, or a body that nests deeper than 64 levels or expands to more than 50000 nodes stops the suite before anything runs. It is reported once, as an error in the suite rather than a fault in vouchfx or in the service under test, with a diagnostic that names the step and, for a merge key or tag, the line and column to correct. Schema validation runs before this and reads every tag in the suite, not only those in a body. A tag it cannot read stops the suite with its general YAML parse message ("Failed to parse YAML: ..."), which never names the step and usually not the line. The rule: a plain value whose text reads as a decimal number or as `true` or `false` in any letter case (`NaN`, `Infinity` and `1e400` included) gets past this check whatever its tag; any other scalar, plain, quoted or block, gets past it only with `!!str`, `!!int`, `!!float`, `!!bool`, `!!timestamp` or `!!map`; and a tagged mapping or sequence only with `!!map` on a mapping. For example, `!!null ~`, `!!binary aGk=`, `!money abc`, `!money "5"`, `! abc`, `!money {a: 1}` and `!!seq [1, 2]` stop at schema validation, while `!money 5`, `!money NaN`, `! NaN`, `!!null 5`, `!!int abc`, `!!int 1.5` and `!!map abc` get past it and are then sent or refused as the Tags bullet describes. Merge keys apply only inside `body`: elsewhere in a suite, including at step level (`- <<: *shared`), `<<` is an ordinary key, so a step cannot inherit its fields from another through a merge key.
+
+#### `http.rest` — references in a structured body
+
+In a `body` written as a YAML mapping or sequence, `{placeholder}` and `${secret:…}` references are found and resolved in each JSON string on its own: every member name and every string value. A reference is read exactly as written, so `${secret:vault/kv/a+b#f}` requests the Vault path `kv/a+b` and the field `f`, the same reference a header or a scalar body would request, and it is recorded under the same hash in the reproducibility envelope. Each resolved value is written into its string as JSON text, so a value holding a quote, a backslash or a line break is escaped and the body keeps the structure written in the suite. Resolved values are written with the same escaping as the rest of the converted body, so a non-ASCII character and `+`, `<`, `>`, `&` and `'` arrive as `\u` escapes; the JSON means the same, but a service that signs, hashes or compares the body's bytes sees them escaped. A string that holds only a reference is still sent as a JSON string, even when the value reads as a number, and numbers, booleans and null beside it are sent unchanged. A structured body with no reference is sent exactly as before.
+
+A reference never spans two strings. Each string is checked on its own before anything runs, with the rule a header value gets: a `${secret:` that is not closed by `}` before the end of its string is a malformed reference, and the suite is refused, exactly as the same text in a header is. That holds wherever the string stands (the only member, the last, nested, or followed by others) and when another string would have completed it: `'a${secret:env/': 'X}'` is refused, because its member name holds an unclosed reference, even though the two strings joined would read as one. A closed reference that is malformed or names an unknown source is refused in the same way.
+
+A folded (`>`) or literal (`|`) block scalar is one string after YAML has folded or kept its lines, so a reference inside it is an ordinary reference in that string. A `body` written as a single scalar, including a block scalar holding JSON text, is resolved as one text, as before: its resolved values are inserted as they are, without JSON escaping.
 
 #### `http.rest` — response-body assertions
 
@@ -1421,7 +1450,7 @@ capture:
 
 Anywhere a value is expected in a declarative step, a captured or seeded variable can be substituted with brace syntax: `{newUserId}` is replaced, at execution time, by the current value of the `newUserId` variable. Substitution also works with secret references: `{foo}` reads from the context, whilst `${secret:source/path}` resolves from a configured secret source. Both are resolved at step-execution time (never at compile time), ensuring secrets are never baked into the compiled code. Substitution works inside:
 
-- HTTP paths, headers, and request **body** (the body is treated as a template string if a scalar, or serialised to JSON and then used as a template if a YAML mapping or sequence).
+- HTTP paths, headers, and request **body** (the body is treated as a template string if a scalar; for a YAML mapping or sequence, each of its JSON strings, member names and string values, is resolved on its own: see §5.1, *References in a structured body*).
 - The expected values of `http.rest`'s `expect.json` entries and `expect.bodyContains` (§5.1); the JSONPath keys themselves are used verbatim. Here, unlike the fields above, a placeholder naming a variable that is not set makes the step Inconclusive instead of resolving to an empty string, and the request is not sent.
 - Kafka topic names, message keys, plain payloads, Avro field values, and message headers.
 - Database query strings and parameter values.

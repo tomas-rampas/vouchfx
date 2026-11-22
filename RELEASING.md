@@ -62,6 +62,10 @@ after publication:
   (the current receipts used `sdk:8.0`).
 - Re-check the landing page (`site/index.html`) for statements that were worded around an unpublished
   release.
+- Open the Actions tab and confirm that `CI`, `.NET compatibility` and `Scheduled run alerts` show no
+  "disabled" notice, and that no "Scheduled run alert" issue is open. GitHub disables scheduled
+  workflows after 60 days without repository activity, and the watchdog that raises those issues is
+  itself scheduled. Re-enable all three together if any is disabled.
 
 ### Smoke-test without cutting a tag (`workflow_dispatch`)
 

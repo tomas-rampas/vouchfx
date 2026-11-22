@@ -1,0 +1,674 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Runtime.Tests/EmittedCodeCorpus/http-rest-body-references.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 6
+
+@@@@ step 1 of 6
+id: escaped-path-characters
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/escaped",
+  "Headers": {
+    "Authorization": "${secret:vault/kv/a+b#f}"
+  },
+  "Body": "{\"token\":\"${secret:vault/kv/a\\u002Bb#f}\",\"markup\":\"${secret:vault/kv/a\\u003Cb\\u003E\\u0026c#f}\",\"accented\":\"${secret:vault/kv/caf\\u00E9#f}\"}",
+  "Expect": null,
+  "BodyRefusal": null,
+  "BodyParts": [
+    "{\"token\":",
+    "${secret:vault/kv/a+b#f}",
+    ",\"markup\":",
+    "${secret:vault/kv/a<b>&c#f}",
+    ",\"accented\":",
+    "${secret:vault/kv/café#f}",
+    "}"
+  ]
+}
+@@@@ step 1 host-resources
+[]
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::escaped_path_characters",
+        "__capture_status::escaped_path_characters",
+        "svc::app",
+        "app",
+        "POST",
+        "/escaped",
+        null,
+        new string[] { "Authorization" },
+        new string[] { "${secret:vault/kv/a\u002Bb#f}" },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_escaped_path_characters,
+        __stepBudgetGoverned_escaped_path_characters,
+        bodyParts: new string[] { "{\u0022token\u0022:", "${secret:vault/kv/a\u002Bb#f}", ",\u0022markup\u0022:", "${secret:vault/kv/a\u003Cb\u003E\u0026c#f}", ",\u0022accented\u0022:", "${secret:vault/kv/caf\u00E9#f}", "}" });
+}
+
+@@@@ step 2 of 6
+id: folded-scalar-reference
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/folded",
+  "Headers": null,
+  "Body": "{\"note\":\"token ${secret:env/FOLDED_TOKEN}\"}",
+  "Expect": null,
+  "BodyRefusal": null,
+  "BodyParts": [
+    "{\"note\":",
+    "token ${secret:env/FOLDED_TOKEN}",
+    "}"
+  ]
+}
+@@@@ step 2 host-resources
+[]
+@@@@ step 2 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 2 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::folded_scalar_reference",
+        "__capture_status::folded_scalar_reference",
+        "svc::app",
+        "app",
+        "POST",
+        "/folded",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_folded_scalar_reference,
+        __stepBudgetGoverned_folded_scalar_reference,
+        bodyParts: new string[] { "{\u0022note\u0022:", "token ${secret:env/FOLDED_TOKEN}", "}" });
+}
+
+@@@@ step 3 of 6
+id: keys-and-values
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 3 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/keys",
+  "Headers": null,
+  "Body": "{\"{tenant}\":\"${secret:env/TENANT_TOKEN}\",\"${secret:env/KEY_NAME}\":\"{orderId}\",\"mixed\":\"id={orderId}; token=${secret:env/TENANT_TOKEN}\"}",
+  "Expect": null,
+  "BodyRefusal": null,
+  "BodyParts": [
+    "{",
+    "{tenant}",
+    ":",
+    "${secret:env/TENANT_TOKEN}",
+    ",",
+    "${secret:env/KEY_NAME}",
+    ":",
+    "{orderId}",
+    ",\"mixed\":",
+    "id={orderId}; token=${secret:env/TENANT_TOKEN}",
+    "}"
+  ]
+}
+@@@@ step 3 host-resources
+[]
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 3 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::keys_and_values",
+        "__capture_status::keys_and_values",
+        "svc::app",
+        "app",
+        "POST",
+        "/keys",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_keys_and_values,
+        __stepBudgetGoverned_keys_and_values,
+        bodyParts: new string[] { "{", "{tenant}", ":", "${secret:env/TENANT_TOKEN}", ",", "${secret:env/KEY_NAME}", ":", "{orderId}", ",\u0022mixed\u0022:", "id={orderId}; token=${secret:env/TENANT_TOKEN}", "}" });
+}
+
+@@@@ step 4 of 6
+id: typed-beside-references
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 4 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/typed",
+  "Headers": null,
+  "Body": "{\"count\":3,\"ratio\":1.5,\"active\":true,\"none\":null,\"empty\":null,\"only\":\"${secret:env/ONLY_REFERENCE}\",\"list\":[1,\"{orderId}\",false]}",
+  "Expect": null,
+  "BodyRefusal": null,
+  "BodyParts": [
+    "{\"count\":3,\"ratio\":1.5,\"active\":true,\"none\":null,\"empty\":null,\"only\":",
+    "${secret:env/ONLY_REFERENCE}",
+    ",\"list\":[1,",
+    "{orderId}",
+    ",false]}"
+  ]
+}
+@@@@ step 4 host-resources
+[]
+@@@@ step 4 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 4 helpers
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 4 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::typed_beside_references",
+        "__capture_status::typed_beside_references",
+        "svc::app",
+        "app",
+        "POST",
+        "/typed",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_typed_beside_references,
+        __stepBudgetGoverned_typed_beside_references,
+        bodyParts: new string[] { "{\u0022count\u0022:3,\u0022ratio\u0022:1.5,\u0022active\u0022:true,\u0022none\u0022:null,\u0022empty\u0022:null,\u0022only\u0022:", "${secret:env/ONLY_REFERENCE}", ",\u0022list\u0022:[1,", "{orderId}", ",false]}" });
+}
+
+@@@@ step 5 of 6
+id: no-reference
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 5 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/plain",
+  "Headers": null,
+  "Body": "{\"escaped\":\"x\\u002By\\u003Cz\\u003E\\u0026\\u0022q\\\\\",\"braces\":\"} ${ { not-a-reference\",\"list\":[1,2.5,true,null]}",
+  "Expect": null,
+  "BodyRefusal": null,
+  "BodyParts": null
+}
+@@@@ step 5 host-resources
+[]
+@@@@ step 5 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 5 helpers
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 5 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::no_reference",
+        "__capture_status::no_reference",
+        "svc::app",
+        "app",
+        "POST",
+        "/plain",
+        "{\u0022escaped\u0022:\u0022x\\u002By\\u003Cz\\u003E\\u0026\\u0022q\\\\\u0022,\u0022braces\u0022:\u0022} ${ { not-a-reference\u0022,\u0022list\u0022:[1,2.5,true,null]}",
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_no_reference,
+        __stepBudgetGoverned_no_reference);
+}
+
+@@@@ step 6 of 6
+id: raw-text-body
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 6 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/raw",
+  "Headers": null,
+  "Body": "{\"token\":\"${secret:env/RAW_TOKEN}\",\"id\":\"{orderId}\"}\n",
+  "Expect": null,
+  "BodyRefusal": null,
+  "BodyParts": null
+}
+@@@@ step 6 host-resources
+[]
+@@@@ step 6 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 6 helpers
+HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 6 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::raw_text_body",
+        "__capture_status::raw_text_body",
+        "svc::app",
+        "app",
+        "POST",
+        "/raw",
+        "{\u0022token\u0022:\u0022${secret:env/RAW_TOKEN}\u0022,\u0022id\u0022:\u0022{orderId}\u0022}\n",
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_raw_text_body,
+        __stepBudgetGoverned_raw_text_body);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+
+// [helper HttpRest_Helpers sha256=d6d217a396cf7f0c4c2c9d676b927dfa2695a65341a57398b9c5fdc1347621ae: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_escaped_path_characters = __vouchfxRunCt;
+    _ = __stepCt_escaped_path_characters;
+    bool __stepBudgetGoverned_escaped_path_characters = false;
+    _ = __stepBudgetGoverned_escaped_path_characters;
+    StepEvents?.OnStepStarted("escaped-path-characters");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::escaped_path_characters",
+        "__capture_status::escaped_path_characters",
+        "svc::app",
+        "app",
+        "POST",
+        "/escaped",
+        null,
+        new string[] { "Authorization" },
+        new string[] { "${secret:vault/kv/a\u002Bb#f}" },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_escaped_path_characters,
+        __stepBudgetGoverned_escaped_path_characters,
+        bodyParts: new string[] { "{\u0022token\u0022:", "${secret:vault/kv/a\u002Bb#f}", ",\u0022markup\u0022:", "${secret:vault/kv/a\u003Cb\u003E\u0026c#f}", ",\u0022accented\u0022:", "${secret:vault/kv/caf\u00E9#f}", "}" });
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::escaped_path_characters");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "escaped-path-characters",
+        Vars.TryGetValue("__outcome::escaped_path_characters", out var __sco_escaped_path_characters) ? __sco_escaped_path_characters as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::escaped_path_characters", out var __scs_escaped_path_characters) ? __scs_escaped_path_characters as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_folded_scalar_reference = __vouchfxRunCt;
+    _ = __stepCt_folded_scalar_reference;
+    bool __stepBudgetGoverned_folded_scalar_reference = false;
+    _ = __stepBudgetGoverned_folded_scalar_reference;
+    StepEvents?.OnStepStarted("folded-scalar-reference");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::folded_scalar_reference",
+        "__capture_status::folded_scalar_reference",
+        "svc::app",
+        "app",
+        "POST",
+        "/folded",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_folded_scalar_reference,
+        __stepBudgetGoverned_folded_scalar_reference,
+        bodyParts: new string[] { "{\u0022note\u0022:", "token ${secret:env/FOLDED_TOKEN}", "}" });
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::folded_scalar_reference");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "folded-scalar-reference",
+        Vars.TryGetValue("__outcome::folded_scalar_reference", out var __sco_folded_scalar_reference) ? __sco_folded_scalar_reference as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::folded_scalar_reference", out var __scs_folded_scalar_reference) ? __scs_folded_scalar_reference as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_keys_and_values = __vouchfxRunCt;
+    _ = __stepCt_keys_and_values;
+    bool __stepBudgetGoverned_keys_and_values = false;
+    _ = __stepBudgetGoverned_keys_and_values;
+    StepEvents?.OnStepStarted("keys-and-values");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::keys_and_values",
+        "__capture_status::keys_and_values",
+        "svc::app",
+        "app",
+        "POST",
+        "/keys",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_keys_and_values,
+        __stepBudgetGoverned_keys_and_values,
+        bodyParts: new string[] { "{", "{tenant}", ":", "${secret:env/TENANT_TOKEN}", ",", "${secret:env/KEY_NAME}", ":", "{orderId}", ",\u0022mixed\u0022:", "id={orderId}; token=${secret:env/TENANT_TOKEN}", "}" });
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::keys_and_values");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "keys-and-values",
+        Vars.TryGetValue("__outcome::keys_and_values", out var __sco_keys_and_values) ? __sco_keys_and_values as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::keys_and_values", out var __scs_keys_and_values) ? __scs_keys_and_values as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_typed_beside_references = __vouchfxRunCt;
+    _ = __stepCt_typed_beside_references;
+    bool __stepBudgetGoverned_typed_beside_references = false;
+    _ = __stepBudgetGoverned_typed_beside_references;
+    StepEvents?.OnStepStarted("typed-beside-references");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::typed_beside_references",
+        "__capture_status::typed_beside_references",
+        "svc::app",
+        "app",
+        "POST",
+        "/typed",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_typed_beside_references,
+        __stepBudgetGoverned_typed_beside_references,
+        bodyParts: new string[] { "{\u0022count\u0022:3,\u0022ratio\u0022:1.5,\u0022active\u0022:true,\u0022none\u0022:null,\u0022empty\u0022:null,\u0022only\u0022:", "${secret:env/ONLY_REFERENCE}", ",\u0022list\u0022:[1,", "{orderId}", ",false]}" });
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::typed_beside_references");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "typed-beside-references",
+        Vars.TryGetValue("__outcome::typed_beside_references", out var __sco_typed_beside_references) ? __sco_typed_beside_references as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::typed_beside_references", out var __scs_typed_beside_references) ? __scs_typed_beside_references as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_no_reference = __vouchfxRunCt;
+    _ = __stepCt_no_reference;
+    bool __stepBudgetGoverned_no_reference = false;
+    _ = __stepBudgetGoverned_no_reference;
+    StepEvents?.OnStepStarted("no-reference");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::no_reference",
+        "__capture_status::no_reference",
+        "svc::app",
+        "app",
+        "POST",
+        "/plain",
+        "{\u0022escaped\u0022:\u0022x\\u002By\\u003Cz\\u003E\\u0026\\u0022q\\\\\u0022,\u0022braces\u0022:\u0022} ${ { not-a-reference\u0022,\u0022list\u0022:[1,2.5,true,null]}",
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_no_reference,
+        __stepBudgetGoverned_no_reference);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::no_reference");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "no-reference",
+        Vars.TryGetValue("__outcome::no_reference", out var __sco_no_reference) ? __sco_no_reference as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::no_reference", out var __scs_no_reference) ? __scs_no_reference as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_raw_text_body = __vouchfxRunCt;
+    _ = __stepCt_raw_text_body;
+    bool __stepBudgetGoverned_raw_text_body = false;
+    _ = __stepBudgetGoverned_raw_text_body;
+    StepEvents?.OnStepStarted("raw-text-body");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::raw_text_body",
+        "__capture_status::raw_text_body",
+        "svc::app",
+        "app",
+        "POST",
+        "/raw",
+        "{\u0022token\u0022:\u0022${secret:env/RAW_TOKEN}\u0022,\u0022id\u0022:\u0022{orderId}\u0022}\n",
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_raw_text_body,
+        __stepBudgetGoverned_raw_text_body);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::raw_text_body");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "raw-text-body",
+        Vars.TryGetValue("__outcome::raw_text_body", out var __sco_raw_text_body) ? __sco_raw_text_body as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::raw_text_body", out var __scs_raw_text_body) ? __scs_raw_text_body as string : null);
+}
+@@@@ end

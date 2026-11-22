@@ -27,7 +27,8 @@ timeout-ms: none
     "Json": null,
     "BodyContains": null
   },
-  "BodyRefusal": null
+  "BodyRefusal": null,
+  "BodyParts": null
 }
 @@@@ step 1 host-resources
 []

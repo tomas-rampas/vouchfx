@@ -40,9 +40,12 @@ public sealed class SecretTemplateEmissionCensusTests
     {
         var registry = Discover();
         Assert.True(registry.TryGet(kind, out var provider));
-        foreach (var avro in kind is "mq-publish.kafka" or "mq-expect.kafka" ? new[] { false, true } : new[] { false })
+        // The second variant is Kafka's Avro mode, and http.rest's scalar body: a structured
+        // body is resolved through bodyParts and a scalar one through bodyTemplate, so each
+        // input is marked by a fixture of its own.
+        foreach (var avro in kind is "mq-publish.kafka" or "mq-expect.kafka" or "http.rest" ? new[] { false, true } : new[] { false })
         {
-            var fixture = CreateFixture(kind, avro);
+            var fixture = kind == "http.rest" ? CreateFixture(kind, scalarBody: avro) : CreateFixture(kind, avro);
             var (model, fragment) = BindAndEmit(provider!.Instance, fixture.Node);
             if (kind == "mq-publish.kafka" && avro)
             {
@@ -67,8 +70,13 @@ public sealed class SecretTemplateEmissionCensusTests
             Assert.True(expectedCollected.SetEquals(collected),
                 $"{kind} collector drift: expected [{string.Join(',', expectedCollected)}], actual [{string.Join(',', collected)}]");
             if (kind == "http.rest")
-                Assert.Equal(((Vouchfx.Steps.HttpRest.HttpRestModel)model).Body,
-                    Assert.Single(collection.Fields, field => field.Location == "body").Text);
+            {
+                // A scalar body is collected as its one text; a structured body as each of its
+                // JSON strings, unescaped, which is what the resolver reads.
+                var body = ((Vouchfx.Steps.HttpRest.HttpRestModel)model).Body!;
+                var collectedBody = collection.Fields.Where(field => field.Location == "body").Select(field => field.Text);
+                Assert.Equal(avro ? new[] { body } : JsonStrings(body), collectedBody);
+            }
         }
     }
 
@@ -119,7 +127,25 @@ public sealed class SecretTemplateEmissionCensusTests
         return (model, fragment);
     }
 
-    internal static Fixture CreateFixture(string kind, bool avro = false)
+    /// <summary>
+    /// The non-empty JSON strings of <paramref name="json"/> (member names and string values)
+    /// in document order, unescaped, read with the JSON reader rather than the conversion.
+    /// </summary>
+    internal static IReadOnlyList<string> JsonStrings(string json)
+    {
+        var strings = new List<string>();
+        var reader = new System.Text.Json.Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(json));
+        while (reader.Read())
+        {
+            if (reader.TokenType is System.Text.Json.JsonTokenType.PropertyName or System.Text.Json.JsonTokenType.String
+                && reader.GetString() is { Length: > 0 } text)
+                strings.Add(text);
+        }
+
+        return strings;
+    }
+
+    internal static Fixture CreateFixture(string kind, bool avro = false, bool scalarBody = false)
     {
         // Inputs use distinct legal reference labels, including map names/literal slots.
         // Bind occurs once; inspection never calls a resolver or reads a secret value.
@@ -131,7 +157,11 @@ public sealed class SecretTemplateEmissionCensusTests
         };
         var markers = new Dictionary<string, Slot>(StringComparer.Ordinal);
         var index = 0;
-        foreach (var declared in Slots(kind))
+        // http.rest's scalar-body variant: one scalar body in place of the structured one.
+        var slots = scalarBody
+            ? Slots(kind).Where(slot => !slot.Path.StartsWith("body.", StringComparison.Ordinal)).Append(new Slot("body", Mode.Secret))
+            : Slots(kind);
+        foreach (var declared in slots)
         {
             var slot = kind == "mq-publish.kafka" && declared.Path == "payload" && avro
                 ? declared with { Mode = Mode.Literal } : declared;
@@ -318,6 +348,8 @@ public sealed class SecretTemplateEmissionCensusTests
     private static (HashSet<int> Secret, HashSet<int> Placeholder) InputsForInvocation(
         Method[] methods, Method method, InvocationExpressionSyntax invocation)
     {
+        if (method.Class == "HttpRest_Helpers" && method.Syntax.Identifier.Text == "ExecuteAsync")
+            return HttpRestBodyInputs(method, invocation);
         if (method.Class != "MqPublishKafka_Helpers" || method.Syntax.Identifier.Text != "PublishAsync")
             return (method.Secret, method.Placeholder);
         // One supported native dispatch shape, checked against actual helper syntax.
@@ -353,6 +385,42 @@ public sealed class SecretTemplateEmissionCensusTests
                     destination.UnionWith(Formals(method.Syntax, call.ArgumentList.Arguments[slot].Expression));
         }
         return (secret, placeholder);
+    }
+
+    /// <summary>
+    /// http.rest's one supported body dispatch shape, checked against the actual call: a
+    /// structured body with something to resolve passes the trailing named argument
+    /// <c>bodyParts</c> and the null literal for <c>bodyTemplate</c>; every other step passes
+    /// <c>bodyTemplate</c> and no <c>bodyParts</c>. Only the input the call actually uses is
+    /// required to carry markers. Any other shape fails here and needs an explicit gate update.
+    /// </summary>
+    private static (HashSet<int> Secret, HashSet<int> Placeholder) HttpRestBodyInputs(
+        Method method, InvocationExpressionSyntax invocation)
+    {
+        var parameters = method.Syntax.ParameterList.Parameters;
+        var templateSlot = parameters.IndexOf(parameter => parameter.Identifier.ValueText == "bodyTemplate");
+        var partsSlot = parameters.IndexOf(parameter => parameter.Identifier.ValueText == "bodyParts");
+        Assert.True(templateSlot >= 0 && partsSlot == parameters.Count - 1, "Unsupported http.rest body parameters.");
+        Assert.Contains(templateSlot, method.Secret);
+        Assert.Contains(partsSlot, method.Secret);
+
+        var arguments = invocation.ArgumentList.Arguments;
+        var secret = new HashSet<int>(method.Secret);
+        if (arguments.Count == partsSlot)
+        {
+            Assert.All(arguments, argument => Assert.Null(argument.NameColon));
+            secret.Remove(partsSlot);
+        }
+        else
+        {
+            Assert.Equal(parameters.Count, arguments.Count);
+            Assert.Equal("bodyParts", arguments[partsSlot].NameColon?.Name.Identifier.ValueText);
+            Assert.True(arguments[templateSlot].Expression.IsKind(SyntaxKind.NullLiteralExpression),
+                "A call passing bodyParts must pass the null literal for bodyTemplate.");
+            secret.Remove(templateSlot);
+        }
+
+        return (secret, method.Placeholder);
     }
 
     private static Method? Find(IEnumerable<Method> methods, InvocationExpressionSyntax call, string? ownClass)
