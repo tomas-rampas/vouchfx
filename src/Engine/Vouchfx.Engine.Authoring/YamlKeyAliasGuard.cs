@@ -17,7 +17,7 @@ internal static partial class YamlKeyAliasGuard
     {
         if (TryFindRefusedKeyAlias(text, out var refusal))
         {
-            throw new YamlParseException(refusal.Message, refusal.Line, refusal.Column);
+            throw new YamlParseException(refusal.Message(), refusal.Line, refusal.Column);
         }
     }
 }

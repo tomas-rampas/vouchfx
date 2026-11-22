@@ -310,7 +310,9 @@ public sealed class ValidateCommandTests : IDisposable
     // overflow the stack inside YamlStream.Load (uncatchable). The pre-scan must turn it into an
     // ordinary parse failure: a non-zero exit, never a crash and never exit 0. Every test that
     // could crash the host if the pre-scan were unwired first validates an acyclic document that
-    // Load survives, so a wiring regression fails that assertion cleanly.
+    // Load survives, so a wiring regression fails that assertion cleanly. The canary proves only
+    // that the scan is wired in: a regression in the scan itself that stopped refusing one shape
+    // would still crash the host on that shape's row.
     private const string CollectionCause = "refers to a mapping or sequence";
     private const string ForwardCause = "refers to an anchor that is not defined before it";
 
@@ -379,6 +381,45 @@ public sealed class ValidateCommandTests : IDisposable
         var watch = System.Diagnostics.Stopwatch.StartNew();
         AssertValidateRefusesKeyAlias(yaml.ToString(), "a9", 2, 7, ForwardCause);
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"validate took {watch.Elapsed}");
+    }
+
+    // The cap on the scalar text that aliases bring into keys, tags included: line 1 anchors a
+    // 100,000-character value, or the value `x` under a 100,000-character tag; each key that
+    // uses it is charged 100,001 or 100,002, so the eleventh key (line 12) passes the cap.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Execute_ScalarTextRepeatedInKeysPastTheCap_ReturnsNonZeroParseFailure(bool tagged)
+    {
+        var yaml = new System.Text.StringBuilder("a: &a ");
+        if (tagged)
+            yaml.Append('!').Append('t', 99_999).Append(" x\n");
+        else
+            yaml.Append('x', 100_000).Append('\n');
+        for (var i = 0; i < 11; i++)
+            yaml.Append("[*a, ").Append(i).Append("]: v\n");
+
+        AssertValidateRefusesKeyAlias(
+            yaml.ToString(), "a", 12, 2, "brings the scalar text repeated through aliases in keys, tags included, past 1048576 characters");
+    }
+
+    // YamlDotNet 16.3.0's scanner throws exceptions that are not YamlException for some
+    // malformed input; the key-alias scan leaves them to the load, and validate reports a parse
+    // failure (no location: the library gives none) and exits non-zero.
+    [Theory]
+    [InlineData("steps: []\na: \"\\UFFFFFFFF\"\n")]
+    [InlineData("%TAG ! \n---\nsteps: []\n")]
+    [InlineData("steps: []\na: !<> b\n")]
+    public void Execute_ScannerThrowsANonYamlException_ReturnsNonZeroParseFailure(string yaml)
+    {
+        var sw = new StringWriter();
+        var file = Path.Combine(_root, "scanner-throws.e2e.yaml");
+        File.WriteAllText(file, yaml);
+
+        var exitCode = Execute(file, json: false, sw);
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+        Assert.Contains("[Parse]", sw.ToString(), StringComparison.Ordinal);
     }
 
     // ── a Failed discovery surfaces its OWN ParseError, not a re-validation ───

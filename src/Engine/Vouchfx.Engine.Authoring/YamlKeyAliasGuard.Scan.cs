@@ -15,18 +15,19 @@ namespace Vouchfx.Engine.Authoring;
 internal static partial class YamlKeyAliasGuard
 {
     /// <summary>
-    /// The most scalar text, in UTF-16 code units, that aliases inside mapping keys may bring
-    /// into key hashing across one document. Each alias is charged the length of its scalar
-    /// once for every mapping key that encloses it, because <c>YamlStream.Load</c> hashes a
-    /// nested key again as part of each enclosing key.
+    /// The most scalar text, tags included, in UTF-16 code units, that aliases inside mapping
+    /// keys may bring into key hashing across one document. Each alias is charged its scalar's
+    /// value length plus its tag length plus one, once for every mapping key that encloses it,
+    /// because <c>YamlStream.Load</c> hashes a scalar's tag with its value and hashes a nested
+    /// key again as part of each enclosing key.
     /// </summary>
     internal const long MaxKeyAliasText = 1_048_576;
 
     private const int MaxEchoedAliasLength = 64;
 
     // The recorded kind of an anchor whose node is a mapping or a sequence. A scalar anchor
-    // records its value's length instead, which is never negative.
-    private const int CollectionAnchor = -1;
+    // records its charge (value length + tag length + 1) instead, which is always positive.
+    private const long CollectionAnchor = -1;
 
     /// <summary>Why an alias inside a mapping key was refused.</summary>
     internal enum RefusalKind
@@ -67,24 +68,26 @@ internal static partial class YamlKeyAliasGuard
     /// YAML requires an anchor to precede its alias, so no valid document is refused.
     /// </description></item>
     /// <item><description>
-    /// An alias to a scalar is hashed over the scalar's full text at every use, so a long
-    /// scalar repeated through many keys costs time quadratic in the document's length. The
-    /// text aliases bring into keys is capped at <see cref="MaxKeyAliasText"/> per document.
+    /// An alias to a scalar is hashed over the scalar's full text, its tag included, at every
+    /// use, so a long scalar or a long tag repeated through many keys costs time quadratic in
+    /// the document's length. The text, tags included, that aliases bring into keys is capped
+    /// at <see cref="MaxKeyAliasText"/> per document.
     /// </description></item>
     /// </list>
     /// <para>
     /// With these rules every alias in a key resolves at once to a scalar, and the cost of
-    /// hashing keys is bounded by the key text written in the document plus that cap. A
-    /// collection written inline in a key (<c>? [a, b] : v</c>) stays legal, as does every
-    /// alias outside a key, including a forward or self-referencing value
-    /// (<c>a: &amp;k [ *k ]</c>), which is never hashed.
+    /// hashing what those aliases bring into keys is bounded by that cap. This bounds aliases
+    /// only: a key written out inline, nested or colliding, is not measured here. A collection
+    /// written inline in a key (<c>{ ? [a, b] : v }</c>) stays legal, as does every alias
+    /// outside a key, including a forward or self-referencing value (<c>a: &amp;k [ *k ]</c>),
+    /// which is never hashed.
     /// </para>
     /// <para>
     /// The kind of an anchor follows YAML and YamlDotNet: the most recent definition of a name
     /// wins, and anchors do not carry across documents. The walk is iterative and O(n): one
     /// pass over the parser events with an explicit stack of open containers. A malformed
-    /// document ends the scan quietly (returns false) so that <c>YamlStream.Load</c> reports
-    /// the syntax error with its own message.
+    /// document ends the scan quietly (returns false), whatever the scanner throws for it, so
+    /// that the load which follows reports the failure as it would without the scan.
     /// </para>
     /// </remarks>
     /// <param name="text">The YAML text.</param>
@@ -95,8 +98,8 @@ internal static partial class YamlKeyAliasGuard
         refusal = default;
 
         // Latest definition of each anchor name in the current document: CollectionAnchor for
-        // a mapping or a sequence, otherwise the scalar's length.
-        var anchors = new Dictionary<string, int>(StringComparer.Ordinal);
+        // a mapping or a sequence, otherwise the scalar's charge.
+        var anchors = new Dictionary<string, long>(StringComparer.Ordinal);
         var frames = new Stack<Frame>();
         long keyAliasText = 0;
 
@@ -142,7 +145,12 @@ internal static partial class YamlKeyAliasGuard
                             EnterChild(frames);
                             if (!scalar.Anchor.IsEmpty)
                             {
-                                anchors[scalar.Anchor.Value] = scalar.Value.Length;
+                                // YamlDotNet hashes a scalar's tag with its value, so a short
+                                // value under a long tag costs as much as a long value: the
+                                // charge counts the tag too, and one more so that every use
+                                // costs something.
+                                anchors[scalar.Anchor.Value] = (long)scalar.Value.Length
+                                    + (scalar.Tag.IsEmpty ? 0 : scalar.Tag.Value.Length) + 1;
                             }
 
                             break;
@@ -158,17 +166,17 @@ internal static partial class YamlKeyAliasGuard
 
                             var name = alias.Value.Value;
                             RefusalKind? kind = null;
-                            if (!anchors.TryGetValue(name, out var length))
+                            if (!anchors.TryGetValue(name, out var charge))
                             {
                                 kind = RefusalKind.AnchorNotDefinedBefore;
                             }
-                            else if (length == CollectionAnchor)
+                            else if (charge == CollectionAnchor)
                             {
                                 kind = RefusalKind.CollectionAnchor;
                             }
                             else
                             {
-                                keyAliasText += (long)length * keyDepth;
+                                keyAliasText += charge * keyDepth;
                                 if (keyAliasText > MaxKeyAliasText)
                                 {
                                     kind = RefusalKind.KeyAliasTextBudget;
@@ -186,8 +194,15 @@ internal static partial class YamlKeyAliasGuard
                 }
             }
         }
-        catch (YamlException)
+        catch (Exception ex) when (ex is not (OutOfMemoryException or OperationCanceledException
+            or TypeInitializationException))
         {
+            // A malformed document. Besides YamlException, YamlDotNet 16.3.0's scanner throws
+            // ArgumentOutOfRangeException for a \U escape above U+10FFFF, ArgumentNullException
+            // for a %TAG directive with an empty prefix and ArgumentException for an empty
+            // verbatim tag (measured). Every such failure belongs to the load that follows, which
+            // meets the same text. The exclusions follow EventStreamJson.FromLine: a host
+            // condition or a type initialiser's failure is not a malformed document.
             return false;
         }
 
@@ -211,9 +226,9 @@ internal static partial class YamlKeyAliasGuard
                 where + "refers to an anchor that is not defined before it; a key may refer by alias " +
                 "only to a scalar anchor defined earlier in the same document.",
             RefusalKind.KeyAliasTextBudget =>
-                where + $"brings the scalar text repeated through aliases in keys past {MaxKeyAliasText} " +
-                "characters (a key nested in another key counts again); shorten the aliased scalars or " +
-                "write fewer such keys.",
+                where + "brings the scalar text repeated through aliases in keys, tags included, past " +
+                $"{MaxKeyAliasText} characters (a key nested in another key counts again); shorten the " +
+                "aliased scalars or their tags, or write fewer such keys.",
             _ =>
                 where + "refers to a mapping or sequence; a key may refer by alias only to a scalar.",
         };
@@ -257,13 +272,20 @@ internal static partial class YamlKeyAliasGuard
     /// <param name="Anchor">The alias name as written.</param>
     /// <param name="Line">1-based line of the alias.</param>
     /// <param name="Column">1-based column of the alias.</param>
+    /// <remarks>
+    /// The diagnostic texts are methods rather than properties so that the generated
+    /// <c>ToString</c>, which prints every property, stays safe on <c>default(Refusal)</c>,
+    /// whose <see cref="Anchor"/> is null.
+    /// </remarks>
     internal readonly record struct Refusal(RefusalKind Kind, string Anchor, long Line, long Column)
     {
         /// <summary>The full diagnostic, starting "YAML parse error at".</summary>
-        public string Message => YamlKeyAliasGuard.Message(Kind, Anchor, Line, Column);
+        /// <returns>The diagnostic text.</returns>
+        public string Message() => YamlKeyAliasGuard.Message(Kind, Anchor, Line, Column);
 
         /// <summary>The diagnostic without the "YAML parse error at" prefix.</summary>
-        public string Detail => YamlKeyAliasGuard.Detail(Kind, Anchor, Line, Column);
+        /// <returns>The diagnostic text.</returns>
+        public string Detail() => YamlKeyAliasGuard.Detail(Kind, Anchor, Line, Column);
     }
 
     private sealed class Frame

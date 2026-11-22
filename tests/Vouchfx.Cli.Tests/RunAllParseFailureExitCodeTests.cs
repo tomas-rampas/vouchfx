@@ -67,7 +67,13 @@ public sealed class RunAllParseFailureExitCodeTests : IDisposable
     // collection, or one before its anchor) is a parse failure, never a crash and never exit 0.
     // With every scenario unparseable the Docker-touching call is not reached. Every test that
     // could crash the host if the pre-scan were unwired first runs an acyclic document that Load
-    // survives, so a wiring regression fails that assertion cleanly.
+    // survives, so a wiring regression fails that assertion cleanly. The assertion names the
+    // layer: ScenarioDiscovery writes "Parse / AST error: " before the message of a parse or
+    // AST-build failure, while DocumentValidator's own scan, which would still refuse the
+    // document with the same located text, reaches the output without that prefix. So the
+    // canary fails if YamlDocumentParser stops calling the scan.
+    // The canary proves only that the scan is wired in: a regression in the scan itself that
+    // stopped refusing one shape would still crash the host on that shape's row.
     private async Task AssertRunRefusesKeyAlias(string yaml, string located)
     {
         var file = Path.Combine(_root, "key-alias.e2e.yaml");
@@ -77,7 +83,7 @@ public sealed class RunAllParseFailureExitCodeTests : IDisposable
         var exitCode = await ExecuteAsync(file, sw);
 
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
-        Assert.Contains(located, sw.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Parse / AST error: YAML parse error at " + located, sw.ToString(), StringComparison.Ordinal);
     }
 
     private Task AssertRunKeyAliasGuardIsWired() =>

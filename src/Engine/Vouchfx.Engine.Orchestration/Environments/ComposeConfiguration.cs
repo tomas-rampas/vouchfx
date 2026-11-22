@@ -42,7 +42,7 @@ internal sealed record ComposeConfiguration(
         var yaml = new YamlStream();
         var configText = Encoding.UTF8.GetString(bytes);
         if (Vouchfx.Engine.Authoring.YamlKeyAliasGuard.TryFindRefusedKeyAlias(configText, out var refusal))
-            throw new ArgumentException("Compose configuration: invalid YAML at " + refusal.Detail);
+            throw new ArgumentException("Compose configuration: invalid YAML at " + refusal.Detail());
         try { yaml.Load(new StringReader(configText)); }
         catch (YamlDotNet.Core.YamlException) { throw new ArgumentException("Compose configuration: invalid YAML. Check its syntax and duplicate keys."); }
         if (yaml.Documents.Count != 1 || yaml.Documents[0].RootNode is not YamlMappingNode root)
@@ -168,7 +168,7 @@ internal sealed record ComposeConfiguration(
         var manifest = new YamlStream();
         var manifestText = Encoding.UTF8.GetString(bytes);
         if (Vouchfx.Engine.Authoring.YamlKeyAliasGuard.TryFindRefusedKeyAlias(manifestText, out var refusal))
-            throw new ArgumentException("Compose manifest: invalid YAML at " + refusal.Detail);
+            throw new ArgumentException("Compose manifest: invalid YAML at " + refusal.Detail());
         try { manifest.Load(new StringReader(manifestText)); }
         catch (YamlDotNet.Core.YamlException) { throw new ArgumentException("Compose manifest: invalid YAML; check syntax and duplicate keys."); }
         var referenced = new List<string>();

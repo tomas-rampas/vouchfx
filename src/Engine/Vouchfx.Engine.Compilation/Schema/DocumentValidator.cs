@@ -166,7 +166,7 @@ public static class DocumentValidator
         // the authoring parser gives: the schema conversion below would otherwise expand the
         // key's aliases up to its own budget before anything reported the real cause.
         if (Vouchfx.Engine.Authoring.YamlKeyAliasGuard.TryFindRefusedKeyAlias(yamlText, out var refusal))
-            return new SchemaValidationResult(false, new[] { new SchemaValidationError(string.Empty, refusal.Message) });
+            return new SchemaValidationResult(false, new[] { new SchemaValidationError(string.Empty, refusal.Message()) });
 
         // Delegate to the composed-schema path; this is the authoritative
         // schema validation (root schema + provider fragments).
@@ -564,8 +564,8 @@ public static class DocumentValidator
     /// </summary>
     /// <remarks>
     /// Only <see cref="Validate(string, StepKindRegistry, SecurityProfileRegistry)"/> calls
-    /// this, after its key-alias scan has passed, so the load below cannot meet a mapping key
-    /// it is unable to hash in bounded time.
+    /// this, after its key-alias scan has passed, so the load below cannot meet an alias in a
+    /// mapping key that it is unable to hash in bounded time.
     /// </remarks>
     private static YamlMappingNode? TryParseYamlRoot(string yamlText)
     {

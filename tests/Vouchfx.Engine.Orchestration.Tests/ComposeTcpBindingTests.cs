@@ -36,6 +36,8 @@ public sealed class ComposeTcpBindingTests : IDisposable
     // time). The pre-scan must refuse every shape before Load, with the line and column. Most rows
     // would crash the test host if the scan were unwired, so each crash-capable test first loads an
     // acyclic document that Load survives: a wiring regression then fails that assertion cleanly.
+    // The canary proves only that the scan is wired in: a regression in the scan itself that
+    // stopped refusing one shape would still crash the host on that shape's row.
     private const string ConfigurationCanary = "a: &k [ x ]\nb: { ? *k : v }";
     private const string ManifestCanary = "x: &k [ one ]\ny: { ? *k : v }";
 
@@ -112,6 +114,40 @@ public sealed class ComposeTcpBindingTests : IDisposable
         AssertManifestRefuses(ManifestCanary, 2, 8, CollectionCause);
         AssertManifestRefuses(manifest, line, column, forward ? ForwardCause : CollectionCause);
     }
+
+    // The cap on the scalar text that aliases bring into keys, tags included: line 1 anchors a
+    // 100,000-character value, or the value `x` under a 100,000-character tag; each key that
+    // uses it is charged 100,001 or 100,002, so the eleventh key (line 12) passes the cap.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ScalarTextRepeatedInKeysPastTheCap_IsRefusedAsInvalidYaml(bool tagged)
+    {
+        var text = new System.Text.StringBuilder("a: &a ");
+        if (tagged)
+            text.Append('!').Append('t', 99_999).Append(" x\n");
+        else
+            text.Append('x', 100_000).Append('\n');
+        for (var i = 0; i < 11; i++)
+            text.Append("[*a, ").Append(i).Append("]: v\n");
+
+        AssertConfigurationRefuses(text.ToString(), 12, 2, BudgetCause);
+    }
+
+    [Fact]
+    public void ScalarTextRepeatedInManifestKeysPastTheCap_IsRefusedAsInvalidManifestYaml()
+    {
+        var manifest = new System.Text.StringBuilder("x: &a !").Append('t', 99_999).Append(" x\n");
+        for (var i = 0; i < 11; i++)
+            manifest.Append("[*a, ").Append(i).Append("]: v\n");
+        manifest.Append("services: { web: { image: app } }\n");
+
+        AssertManifestRefuses(manifest.ToString(), 12, 2, BudgetCause);
+    }
+
+    private const string BudgetCause =
+        "brings the scalar text repeated through aliases in keys, tags included, past 1048576 characters " +
+        "(a key nested in another key counts again); shorten the aliased scalars or their tags, or write fewer such keys.";
 
     private const string CollectionCause = "refers to a mapping or sequence; a key may refer by alias only to a scalar.";
     private const string ForwardCause =

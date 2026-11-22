@@ -3,7 +3,9 @@
 // quadratic time, inside YamlStream.Load, so the scan tests drive the scan directly and never
 // load them. The validator tests do reach a load if the scan is not wired in, so each of them
 // first proves the wiring with an acyclic document that Load would survive: a wiring
-// regression then fails that assertion cleanly instead of crashing the test host.
+// regression then fails that assertion cleanly instead of crashing the test host. The canary
+// proves only that the scan is wired in: a regression in the scan itself that stopped refusing
+// one shape would still crash the host on that shape's validator row.
 using System.Diagnostics;
 using System.Text;
 using Vouchfx.Engine.Authoring;
@@ -167,6 +169,74 @@ public sealed class YamlKeyAliasGuardTests
             BuildRepeatedScalarKeys(100_000, 10) + "---\n" + BuildRepeatedScalarKeys(100_000, 10), out _));
     }
 
+    // YamlDotNet hashes a scalar's tag together with its value, so a short value under a long
+    // tag costs as much to hash at every use as a long value: the cap counts the tag too. Each
+    // use below is charged 1 (the value) + 100,000 (the tag) + 1, so ten uses fit under the cap
+    // and the eleventh passes it.
+    [Fact]
+    public void TryFindRefusedKeyAlias_LongTagRepeatedInKeys_CountsTowardsTheCap()
+    {
+        var underCap = BuildRepeatedTaggedScalarKeys(100_000, 10);
+        Assert.False(YamlKeyAliasGuard.TryFindRefusedKeyAlias(underCap, out _));
+        var watch = Stopwatch.StartNew();
+        new YamlDotNet.RepresentationModel.YamlStream().Load(new StringReader(underCap));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"load took {watch.Elapsed}");
+
+        Assert.True(YamlKeyAliasGuard.TryFindRefusedKeyAlias(BuildRepeatedTaggedScalarKeys(100_000, 11), out var refusal));
+        Assert.Equal(YamlKeyAliasGuard.RefusalKind.KeyAliasTextBudget, refusal.Kind);
+        Assert.Equal("a", refusal.Anchor);
+        Assert.Equal(12, refusal.Line);
+        Assert.Equal(2, refusal.Column);
+    }
+
+    [Fact]
+    public void TryFindRefusedKeyAlias_QuadraticTaggedScalarKeyDocument_IsRefusedPromptly()
+    {
+        // A one-character value under a 500,000-character tag, used in 50,000 keys: two uses
+        // fit under the cap, the third (line 4) passes it.
+        var yaml = BuildRepeatedTaggedScalarKeys(500_000, 50_000);
+        var watch = Stopwatch.StartNew();
+        Assert.True(YamlKeyAliasGuard.TryFindRefusedKeyAlias(yaml, out var refusal));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"scan took {watch.Elapsed}");
+        Assert.Equal(YamlKeyAliasGuard.RefusalKind.KeyAliasTextBudget, refusal.Kind);
+        Assert.Equal(4, refusal.Line);
+        Assert.Equal(2, refusal.Column);
+    }
+
+    // YamlDotNet 16.3.0's scanner throws exceptions that are not YamlException for some
+    // malformed input: ArgumentOutOfRangeException for a \U escape above U+10FFFF,
+    // ArgumentNullException for a %TAG directive with an empty prefix, and ArgumentException
+    // for an empty verbatim tag. The scan must leave such a document to the load that follows.
+    public static TheoryData<string> ScannerThrowsANonYamlException => new()
+    {
+        "steps: []\na: \"\\UFFFFFFFF\"\n",
+        "%TAG ! \n---\nsteps: []\n",
+        "steps: []\na: !<> b\n",
+    };
+
+    [Theory]
+    [MemberData(nameof(ScannerThrowsANonYamlException))]
+    public void TryFindRefusedKeyAlias_ScannerThrowsANonYamlException_ReturnsFalse(string yaml)
+    {
+        Assert.False(YamlKeyAliasGuard.TryFindRefusedKeyAlias(yaml, out _));
+    }
+
+    [Theory]
+    [MemberData(nameof(ScannerThrowsANonYamlException))]
+    public void Validate_ScannerThrowsANonYamlException_IsInvalidWithoutThrowing(string yaml)
+    {
+        var result = DocumentValidator.Validate(yaml, s_registry);
+
+        Assert.False(result.IsValid);
+        Assert.StartsWith("Failed to parse YAML: ", Assert.Single(result.Errors).Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Refusal_Default_ToStringDoesNotThrow()
+    {
+        Assert.Contains("Kind = CollectionAnchor", default(YamlKeyAliasGuard.Refusal).ToString(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void TryFindRefusedKeyAlias_QuadraticScalarKeyDocument_IsRefusedPromptly()
     {
@@ -183,7 +253,7 @@ public sealed class YamlKeyAliasGuardTests
     [Theory]
     [InlineData(Collection, "refers to a mapping or sequence; a key may refer by alias only to a scalar.")]
     [InlineData(Forward, "refers to an anchor that is not defined before it; a key may refer by alias only to a scalar anchor defined earlier in the same document.")]
-    [InlineData(nameof(YamlKeyAliasGuard.RefusalKind.KeyAliasTextBudget), "brings the scalar text repeated through aliases in keys past 1048576 characters")]
+    [InlineData(nameof(YamlKeyAliasGuard.RefusalKind.KeyAliasTextBudget), "brings the scalar text repeated through aliases in keys, tags included, past 1048576 characters")]
     public void Message_IsAsciiAndTruncatesALongAliasName(string kind, string cause)
     {
         var message = YamlKeyAliasGuard.Message(Enum.Parse<YamlKeyAliasGuard.RefusalKind>(kind), new string('x', 400_000), 3, 5);
@@ -255,6 +325,13 @@ public sealed class YamlKeyAliasGuardTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"validate took {watch.Elapsed}");
     }
 
+    [Fact]
+    public void Validate_LongTagRepeatedInKeys_IsInvalidAtTheCap()
+    {
+        var error = AssertValidatorRefuses(BuildRepeatedTaggedScalarKeys(100_000, 11), "a", 12, 2);
+        Assert.Contains("tags included, past 1048576 characters", error.Message, StringComparison.Ordinal);
+    }
+
     private static SchemaValidationError AssertValidatorRefuses(string yaml, string anchor, int line, int column)
     {
         var result = DocumentValidator.Validate(yaml, s_registry);
@@ -319,6 +396,19 @@ public sealed class YamlKeyAliasGuardTests
     internal static string BuildRepeatedScalarKeys(int scalarLength, int keys)
     {
         var sb = new StringBuilder("a: &a ").Append('x', scalarLength).Append('\n');
+        for (var i = 0; i < keys; i++)
+        {
+            sb.Append("[*a, ").Append(i).Append("]: v\n");
+        }
+
+        return sb.ToString();
+    }
+
+    // As BuildRepeatedScalarKeys, but the anchored scalar is the one character `x` under a local
+    // tag `!ttt...` whose text (the tag YamlDotNet reports, `!` included) is tagLength long.
+    internal static string BuildRepeatedTaggedScalarKeys(int tagLength, int keys)
+    {
+        var sb = new StringBuilder("a: &a !").Append('t', tagLength - 1).Append(" x\n");
         for (var i = 0; i < keys; i++)
         {
             sb.Append("[*a, ").Append(i).Append("]: v\n");

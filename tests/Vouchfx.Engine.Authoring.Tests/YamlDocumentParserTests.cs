@@ -20,7 +20,9 @@ public sealed class YamlDocumentParserTests
     // before it overflows the stack whatever its target. The pre-scan must refuse every such key
     // with a located parse error BEFORE Load. If the scan were ever unwired, most rows below would
     // crash the test host rather than fail, so each crash-capable test first parses this acyclic
-    // document, which Load survives: a wiring regression then fails that assertion cleanly.
+    // document, which Load survives: a wiring regression then fails that assertion cleanly. The
+    // canary proves only that the scan is wired in: a regression in the scan itself that stopped
+    // refusing one shape would still crash the host on that shape's row.
     private const string KeyAliasWiringCanary = "steps: []\na: &k [ 1 ]\nb: { ? *k : v }\n";
 
     private static void AssertKeyAliasGuardIsWired()
@@ -138,7 +140,59 @@ public sealed class YamlDocumentParserTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"refusal took {watch.Elapsed}");
         Assert.Equal(4, ex.Line);
         Assert.Equal(2, ex.Column);
-        Assert.Contains("alias 'a' inside a mapping key brings the scalar text repeated through aliases in keys past 1048576 characters", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("alias 'a' inside a mapping key brings the scalar text repeated through aliases in keys, tags included, past 1048576 characters", ex.Message, StringComparison.Ordinal);
+    }
+
+    // YamlDotNet hashes a scalar's tag with its value, so the cap counts the tag: each use below
+    // is charged 1 (the value `x`) + 100,000 (the tag) + 1. Ten uses fit under the cap and load
+    // promptly; an eleventh is refused.
+    [Theory]
+    [InlineData(10, false)]
+    [InlineData(11, true)]
+    public void Parse_LongTagRepeatedThroughKeys_IsCapped(int keys, bool refused)
+    {
+        var sb = new System.Text.StringBuilder("extra:\n  a: &a !").Append('t', 99_999).Append(" x\n");
+        for (var i = 0; i < keys; i++)
+        {
+            sb.Append("  [*a, ").Append(i).Append("]: v\n");
+        }
+
+        sb.Append("steps: []\n");
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        if (!refused)
+        {
+            Assert.Empty(YamlDocumentParser.Parse(sb.ToString()).Steps);
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"parse took {watch.Elapsed}");
+            return;
+        }
+
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(sb.ToString()));
+        Assert.Equal(13, ex.Line);
+        Assert.Equal(4, ex.Column);
+        Assert.Contains("alias 'a' inside a mapping key brings the scalar text repeated through aliases in keys, tags included, past 1048576 characters", ex.Message, StringComparison.Ordinal);
+    }
+
+    // YamlDotNet 16.3.0's scanner throws exceptions that are not YamlException for some
+    // malformed input (a \U escape above U+10FFFF, a %TAG directive with an empty prefix, an
+    // empty verbatim tag). The key-alias scan must stay out of the way: Parse fails exactly as
+    // YamlStream.Load does on the same text, from the load and not from the scan.
+    [Theory]
+    [InlineData("steps: []\na: \"\\UFFFFFFFF\"\n")]
+    [InlineData("%TAG ! \n---\nsteps: []\n")]
+    [InlineData("steps: []\na: !<> b\n")]
+    public void Parse_ScannerThrowsANonYamlException_FailsAsTheLoadDoes_NotInTheKeyAliasScan(string yaml)
+    {
+        var expected = Record.Exception(() => new YamlDotNet.RepresentationModel.YamlStream().Load(new StringReader(yaml)));
+        Assert.NotNull(expected);
+        Assert.IsNotAssignableFrom<YamlDotNet.Core.YamlException>(expected);
+
+        var ex = Record.Exception(() => YamlDocumentParser.Parse(yaml));
+
+        Assert.NotNull(ex);
+        Assert.IsType(expected.GetType(), ex);
+        Assert.Equal(expected.Message, ex.Message);
+        Assert.DoesNotContain("YamlKeyAliasGuard", ex.StackTrace, StringComparison.Ordinal);
     }
 
     [Fact]
