@@ -11,6 +11,11 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/build.yml"
+# The Docker / Aspire lane's steps: a reusable workflow that build.yml's
+# `integration` job calls. When and on which events the lane runs stays in
+# build.yml (the caller's `needs` and `if`).
+DOCKER_WORKFLOW = ROOT / ".github/workflows/docker-integration.yml"
+DOCKER_JOB = "integration"
 PREWARM_WORKFLOW = ROOT / ".github/workflows/vouchfx-run.yml"
 PULL_NAME = "Pre-pull dependency images (warm Docker cache; fail fast on an unpullable pin)"
 PREWARM_NAME = "Pre-warm container images (best-effort, non-fatal)"
@@ -36,8 +41,8 @@ def workflow(path=WORKFLOW):
     return json.loads(result.stdout)
 
 
-def step(name, data=None, job_name="integration"):
-    matches = [s for s in (data or workflow())["jobs"][job_name]["steps"] if s.get("name") == name]
+def step(name, data=None, job_name=DOCKER_JOB):
+    matches = [s for s in (data or workflow(DOCKER_WORKFLOW))["jobs"][job_name]["steps"] if s.get("name") == name]
     if len(matches) != 1:
         raise AssertionError(f"Require one step named {name!r} in job {job_name!r}")
     return matches[0]
@@ -72,8 +77,8 @@ def extract_literal_run(path, job_name, step_name):
     return raw
 
 
-def extract_pull(path=WORKFLOW):
-    return extract_literal_run(path, "integration", PULL_NAME)
+def extract_pull(path=DOCKER_WORKFLOW):
+    return extract_literal_run(path, DOCKER_JOB, PULL_NAME)
 
 
 def extract_prewarm(path=PREWARM_WORKFLOW):

@@ -673,10 +673,14 @@ because `build.yml` already runs those on the same .NET 10 runtime. It also runs
 scheduled for 06:47 UTC, so that a new .NET 10 or .NET 11 runtime build that breaks either lane is
 noticed on a day with no pull request.
 
-The Docker integration suite (the `integration` job in `build.yml`) does not run on pull requests or
-pushes. It runs daily on `main`, scheduled for 06:17 UTC, and on manual dispatch from any branch. A
-Docker-test failure therefore surfaces on the next daily run, not before merge. On a pull request the
-Docker integration check is reported as skipped, which is expected. GitHub disables scheduled
+The Docker integration suite does not run on pull requests or pushes. Its steps live in the reusable
+workflow `.github/workflows/docker-integration.yml`, which the `integration` job in `build.yml` calls
+at the commit under test; the job's `if:` keeps it to the daily run on `main`, scheduled for
+06:17 UTC, and to manual dispatch from any branch. A Docker-test failure therefore surfaces on the
+next daily run, not before merge. The `integration-gate` job in `build.yml` reports the lane's result
+under the required check name **Integration tests — Docker / Aspire**: on a pull request that check
+is reported as skipped, which is expected, and on a run where the lane ran it fails unless the lane
+succeeded. GitHub disables scheduled
 workflows after 60 days without repository activity; re-enable them from the Actions tab if the daily
 runs stop.
 

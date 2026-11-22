@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 
-from docker_ci_support import BASH, ROOT, TEST_NAME, workflow
+from docker_ci_support import BASH, DOCKER_JOB, DOCKER_WORKFLOW, ROOT, TEST_NAME, workflow
 
 
 SCRATCH = Path(tempfile.mkdtemp(prefix="vouchfx-ci-capture-fixtures-"))
@@ -24,8 +24,8 @@ BODY = b"vouchfx DCP flight recorder capture\nwritten: 2026-10-11T01:02:03.004Z\
 class DcpCaptureArtefactTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.yaml = workflow()
-        cls.steps = cls.yaml["jobs"]["integration"]["steps"]
+        cls.yaml = workflow(DOCKER_WORKFLOW)
+        cls.steps = cls.yaml["jobs"][DOCKER_JOB]["steps"]
         print(f"Retained real capture fixtures and integer exits: {SCRATCH}", flush=True)
 
     def case(self):
@@ -128,7 +128,7 @@ class DcpCaptureArtefactTests(unittest.TestCase):
         self.assertEqual([CAPTURE, "manifest.json"], sorted(p.name for p in destination.iterdir()))
 
     def test_workflow_preserves_default_guard_and_always_collection(self):
-        job = self.yaml["jobs"]["integration"]
+        job = self.yaml["jobs"][DOCKER_JOB]
         serialised = json.dumps({"env": self.yaml.get("env", {}), "job": job})
         self.assertNotIn("secrets.", serialised)
         self.assertNotIn("VOUCHFX_DCP_CAPTURE_DIR", serialised)

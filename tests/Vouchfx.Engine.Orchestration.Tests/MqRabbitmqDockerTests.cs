@@ -38,7 +38,7 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// <c>mq-expect.rabbitmq</c> Core providers.
 /// Requires a running Docker daemon with the RabbitMQ management image available — the exact
 /// tag is Aspire.Hosting.RabbitMQ's own pinned default (currently <c>rabbitmq:4.3-management</c>;
-/// see the pre-pull comment in <c>.github/workflows/build.yml</c>), not hardcoded here.
+/// see the pre-pull comment in <c>.github/workflows/docker-integration.yml</c>), not hardcoded here.
 /// </summary>
 /// <remarks>
 /// This test class carries <c>[Trait("requires","docker")]</c> on every method so it is
