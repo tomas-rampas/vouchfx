@@ -9,6 +9,7 @@ import os
 import stat
 import re
 from pathlib import Path
+from typing import NoReturn
 
 CASES = {"compose-capabilities": 1, "warm-host-compiled-image": 20, "cold-host-compiler-profile": 5}
 
@@ -99,6 +100,157 @@ def require_raw_stream(directory: Path, raw: Path, channel: str, binding: object
     require(len(value) == size and hashlib.sha256(value).hexdigest().upper() == digest, "Raw stream bytes do not match their reported size/hash")
 
 
+TEARDOWN_REFUSAL = "Case or fixture teardown did not complete"
+FIELD_LIMIT = 400
+LIST_LIMIT = 20
+EVENT_LINE_LIMIT = 20
+RELATED_EVENT_LIMIT = 10
+RELATED_ID_LIMIT = 40
+WAIT_LINE_LIMIT = 4000
+TRUNCATED = "...(truncated)"
+ZERO_WIDTH_SPACE = "\u200b"
+PROGRESS_FIELDS = ("ExpectedCycles", "CompletedCycles", "AttemptedCycles", "CurrentCycle", "LastReleaseCompleted")
+WAIT_FIELDS = ("Purpose", "Outcome", "StartedUtc", "ElapsedMilliseconds", "BoundMilliseconds", "ContainersStillPresent", "NetworksStillPresent",
+               "VolumesStillPresent", "BaselineContainersMissing", "BaselineMissing", "DcpProcessesStillPresent", "JournalsStillPresent", "ContainerStates",
+               "NetworkNames", "StateReadError", "Polls", "LastInventoryUtc", "FailedInspect", "Error", "EventsSinceUtc", "EventsUntilUtc", "EventsReadError")
+INVENTORY_KEYS = ("Containers", "Networks", "Volumes", "DcpProcesses", "Journals")
+# Interrupts and interpreter exits keep their meaning; every other failure while gathering diagnostics is absorbed.
+EXITS = (KeyboardInterrupt, SystemExit)
+
+
+def render(value: object) -> str:
+    """Render one evidence field for a log line: bounded, single-line, and explicit about absence."""
+    if value is None:
+        return "null"
+    if type(value) is list:
+        shown = ", ".join(render(item) for item in value[:LIST_LIMIT])
+        return "[" + shown + (f", ... +{len(value) - LIST_LIMIT} more" if len(value) > LIST_LIMIT else "") + "]"
+    text = " ".join(str(value).split())
+    # Neutralise runner workflow commands, in both the current (::) and the older (##[) syntax: evidence text
+    # such as a container name or an exception message must never be readable as a command.
+    text = text.replace("##[", "##" + ZERO_WIDTH_SPACE + "[").replace("::", ":" + ZERO_WIDTH_SPACE + ":")
+    return text if len(text) <= FIELD_LIMIT else text[:FIELD_LIMIT] + "...(truncated)"
+
+
+def cap_line(line: str) -> str:
+    return line if len(line) <= WAIT_LINE_LIMIT else line[:WAIT_LINE_LIMIT - len(TRUNCATED)] + TRUNCATED
+
+
+def related_ids(wait: dict) -> list[str]:
+    """The failed inspect's ID and the IDs of the resources still present, which the recorded events may name."""
+    ids: list[str] = []
+    failed = wait.get("FailedInspect")
+    if type(failed) is str and failed.split():
+        ids.append(failed.split()[-1])
+    for name, items in wait.items():
+        if type(name) is str and name.endswith("StillPresent") and type(items) is list:
+            ids.extend(item for item in items if type(item) is str and item)
+    return ids[:RELATED_ID_LIMIT]
+
+
+def select_events(wait: dict, events: list) -> tuple[list, int]:
+    """The last EVENT_LINE_LIMIT events, preceded by at most RELATED_EVENT_LIMIT earlier ones that name a related ID."""
+    split = max(len(events) - EVENT_LINE_LIMIT, 0)
+    ids, related = related_ids(wait), []
+    if ids:
+        for index in range(split - 1, -1, -1):
+            event = events[index]
+            if type(event) is str and any(item in event for item in ids):
+                related.append(event)
+                if len(related) == RELATED_EVENT_LIMIT:
+                    break
+    related.reverse()
+    return related + events[split:], len(related)
+
+
+def describe_wait(label: str, wait: object, *, may_be_absent: bool) -> list[str]:
+    if wait is None and may_be_absent:
+        return [f"    {label}: not recorded (evidence predates wait diagnostics, or no wait ran)"]
+    if type(wait) is not dict:
+        return [f"    {label}: malformed ({type(wait).__name__} instead of a wait record)"]
+    lines = [f"    {label}: " + " ".join(f"{name}={render(wait[name])}" for name in WAIT_FIELDS if name in wait)]
+    events = wait.get("Events")
+    if type(events) is list and events:
+        shown, earlier = select_events(wait, events)
+        extra = f", preceded by {earlier} earlier naming the failed inspect or a still-present resource" if earlier else ""
+        lines.append(f"      Docker events in this wait's window ({len(events)} recorded, last {len(shown) - earlier} shown{extra}):")
+        lines.extend(f"        {render(event)}" for event in shown)
+    return [cap_line(line) for line in lines]
+
+
+def describe_teardown(kind: str, report: dict) -> list[str]:
+    """Diagnostics must never replace the refusal: any failure to read the evidence degrades to one line."""
+    try:
+        return describe_teardown_lines(kind, report)
+    except EXITS:
+        raise
+    except BaseException as error:  # noqa: BLE001 - the refusal itself is raised by the caller
+        return [f"  {kind}: diagnostics unavailable: {type(error).__name__}"]
+
+
+def describe_teardown_lines(kind: str, report: dict) -> list[str]:
+    roles = []
+    if report.get("Completed") is not True:
+        roles.append("case did not complete")
+    if report.get("FixtureCleanupCompleted") is not True:
+        roles.append("fixture teardown did not complete")
+    lines = [f"  {kind}: " + "; ".join(roles)]
+    lines.append("    markers: " + " ".join(f"{name}={render(report.get(name, '<absent>'))}" for name in ("Completed", "FixtureCleanupCompleted")))
+    lines.append("    progress: " + " ".join(f"{name}={render(report.get(name, '<absent>'))}" for name in PROGRESS_FIELDS))
+    for name in ("Failure", "CleanupFailure"):
+        lines.append(f"    {name}: {render(report.get(name))}")
+    before, closure = report.get("LastBefore"), report.get("FixtureClosureLastInventory")
+    if type(before) is dict and type(closure) is dict:
+        for key in INVENTORY_KEYS:
+            if all(type(items) is list and all(type(item) is str for item in items) for items in (before.get(key), closure.get(key))):
+                lines.append(f"    {key} present at last closure check but absent from the cycle baseline: {render(sorted(set(closure[key]) - set(before[key])))}")
+                lines.append(f"    {key} in the cycle baseline but absent at last closure check: {render(sorted(set(before[key]) - set(closure[key])))}")
+    lines.extend(describe_wait("last baseline wait", report.get("LastClosureWait"), may_be_absent=True))
+    failed = report.get("FailedClosureWaits")
+    if type(failed) is list:
+        lines.append(f"    non-converged baseline waits: {len(failed)}")
+        for index, wait in enumerate(failed[:LIST_LIMIT], 1):
+            lines.extend(describe_wait(f"non-converged wait {index}", wait, may_be_absent=False))
+        if len(failed) > LIST_LIMIT:
+            lines.append(f"    ... +{len(failed) - LIST_LIMIT} more")
+    return lines
+
+
+def refuse_incomplete_teardown(directory: Path, kind: str, report: dict) -> NoReturn:
+    """Always raise ValueError whose first line is the teardown refusal; never return, never raise anything else.
+
+    Called from the per-case loop, at the position the plain refusal always had, so an earlier refusal still wins.
+    The current case is described from the report already in hand. The other cases are read again only to list
+    any whose teardown also did not complete; a report that cannot be read or described is skipped, since it
+    keeps its own refusal for when the loop reaches it.
+    """
+    lines: list[str] = []
+    try:
+        lines.extend(describe_teardown(kind, report))
+        for other in CASES:
+            if other == kind:
+                continue
+            try:
+                other_report = read_json(directory / (other + ".json"))
+                if other_report.get("Completed") is not True or other_report.get("FixtureCleanupCompleted") is not True:
+                    lines.extend(describe_teardown(other, other_report))
+            except EXITS:
+                raise
+            except BaseException:  # noqa: BLE001 - diagnostics only; the refusal below is unconditional
+                continue
+    except EXITS:
+        raise
+    except BaseException:  # noqa: BLE001 - diagnostics only; the refusal below is unconditional
+        pass
+    try:
+        message = "\n".join([TEARDOWN_REFUSAL, *lines])
+    except EXITS:
+        raise
+    except BaseException:  # noqa: BLE001 - diagnostics only; the refusal below is unconditional
+        message = TEARDOWN_REFUSAL
+    raise ValueError(message)
+
+
 def validate(directory: Path, cli: Path) -> dict:
     invocation = read_json(directory / "invocation.json")
     require(integer(invocation.get("schemaVersion"), 1), "Malformed invocation schema")
@@ -110,7 +262,8 @@ def validate(directory: Path, cli: Path) -> dict:
     for kind, count in CASES.items():
         report = read_json(directory / (kind + ".json"))
         require(integer(report.get("SchemaVersion"), 1) and report.get("Kind") == kind, "Wrong case/schema")
-        require(report.get("Completed") is True and report.get("FixtureCleanupCompleted") is True, "Case or fixture teardown did not complete")
+        if report.get("Completed") is not True or report.get("FixtureCleanupCompleted") is not True:
+            refuse_incomplete_teardown(directory, kind, report)
         require(report.get("Failure") is None and report.get("CleanupFailure") is None, "A first-attempt failure is present")
         for name in ("ExpectedCycles", "CompletedCycles", "AttemptedCycles", "CurrentCycle"):
             require(integer(report.get(name), count), "Missing, partial or non-integer cycle count")
