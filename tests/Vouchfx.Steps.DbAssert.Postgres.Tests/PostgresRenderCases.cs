@@ -14,14 +14,16 @@
 //       What: date, timestamp, timestamptz, timetz and numeric render with the current culture, so an
 //             expect.row written on one machine can fail on another.
 //       Pinned by: CultureDependence_ASuiteWrittenUnderOneCulture_FailsUnderAnother
-//       A driver upgrade: unchanged for these types on 9.0.5 and 10.0.4, except that the date rows
-//             change type and the time rows become culture-dependent too (see below).
+//       A driver upgrade: unchanged for these types on 9.0.5 and 10.0.4, except that on 10.0.4 the
+//             date rows change type and lose their time-of-day text, and the time rows become
+//             culture-dependent too (see below).
 //   R2  Fractional seconds are dropped.
 //       What: timestamp, timestamptz and timetz render through DateTime or DateTimeOffset, whose text has
 //             no fractional seconds, so a different microsecond value gives the same text and the same
 //             expect.row passes for either.
 //       Pinned by: FractionalSeconds_AreDropped_SoADifferentMicrosecondValuePasses
-//       A driver upgrade: unchanged on 9.0.5 and 10.0.4.
+//       A driver upgrade: unchanged for these three types on 9.0.5 and 10.0.4; on 10.0.4 time joins
+//             them and also loses its seconds (see below).
 //   R3  bytea and arrays render as CLR type names.
 //       What: "System.Byte[]" and "System.Int32[]", so their content is never compared.
 //       Pinned by: ByteaAndArrays_RenderAsClrTypeNames_TheirContentIsNeverCompared
