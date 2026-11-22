@@ -12,7 +12,9 @@
 using System.Collections.Concurrent;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Runtime.Loader;
+using System.Security.Cryptography;
 using Microsoft.CodeAnalysis.CSharp.Scripting;
 using Microsoft.CodeAnalysis.Scripting;
 using Microsoft.CodeAnalysis.Scripting.Hosting;
@@ -71,19 +73,39 @@ public static class RoslynScriptCompiler
     // that the GC cannot see and that is freed only by a finalizer. Callers pass the
     // full trusted-platform-assemblies list (about 490 files, about 150 MB in a CLI or
     // test host), so creating fresh references per compile allocated that much native
-    // memory per compile and let it pile up between gen2 collections (ZEB-49).
+    // memory per compile and let it pile up between gen2 collections.
     //
-    // Only files on that list are shared: one reference per file for the life of the
-    // process, because these are the files the runtime itself loads for this process
-    // (the shared framework and the host's deps.json assemblies); replacing one under a
-    // running process is unsupported, and whoever can write them already controls the
-    // process.
-    // Every other path (provider and customer assemblies, anything passed through
-    // additionalReferencePaths or ScriptOptions) gets a fresh reference per compile, as
-    // it always did, because such a file may be rewritten at the same path. The set is
-    // ordinal, as the runtime spells the paths. When the value is absent or empty
-    // nothing is cached. The same rule is mirrored in the Cli tests'
-    // PlatformMetadataReferences.
+    // Two kinds of path are cached, by different rules:
+    //
+    // - Files on that list are shared: one reference per file for the life of the process,
+    //   because these are the files the runtime itself loads for this process (the shared
+    //   framework and the host's deps.json assemblies); replacing one under a running
+    //   process is unsupported, and whoever can write them already controls the process.
+    //   They are never read again.
+    // - Every other path (provider and customer assemblies, anything passed through
+    //   additionalReferencePaths) may be rewritten at the same path, so
+    //   its reference is keyed on the file's content (references the caller has already built, in
+    //   ScriptOptions, are used as given): each call with an entry for the path
+    //   hashes the file (SHA-256, streamed, so an unchanged file allocates no image) and
+    //   reuses the cached reference only when the hash matches. A path with no entry yet is
+    //   read without a prior hash, once by each caller that reaches it first at the same time. On a mismatch the reference is built from
+    //   the very bytes that were read and hashed again, so no reference ever pairs a
+    //   hash with an image from a different read. Length and timestamp are not part of
+    //   the key: a file rewritten with the same length and a restored timestamp is
+    //   still caught. At most one entry is kept per path.
+    //
+    // The image-backed reference keeps its managed byte[] alive for as long as the reference
+    // is reachable, instead of unmanaged memory; the array may also be pinned by
+    // System.Reflection.Metadata with a handle freed only by a finalizer, so a replaced image
+    // may be reclaimed only after a finalizer pass. Entries are never evicted, so the cache
+    // holds one image per distinct path the process has seen. In the engine's own hosts (the CLI and
+    // the runner) those paths come from provider assemblies that are already loaded and do not
+    // change while the process runs, so the retained set is bounded in practice. An embedder
+    // that passes a new path on every call is not bounded.
+    //
+    // The set is ordinal, as the runtime spells the paths. When the value is absent or
+    // empty nothing is treated as a platform path. The platform rule is mirrored in the
+    // Cli tests' PlatformMetadataReferences.
     private static readonly HashSet<string> PlatformPaths = new(
         ((AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty)
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries),
@@ -91,6 +113,20 @@ public static class RoslynScriptCompiler
 
     private static readonly ConcurrentDictionary<string, Microsoft.CodeAnalysis.MetadataReference> PlatformReferences =
         new(StringComparer.Ordinal);
+
+    // A hash and the reference built from the bytes that hash. Immutable, replaced whole.
+    private sealed record ExternalEntry(byte[] Hash, Microsoft.CodeAnalysis.MetadataReference Reference);
+
+    private static readonly ConcurrentDictionary<string, ExternalEntry> ExternalReferences =
+        new(StringComparer.Ordinal);
+
+    // Serialises only the miss path, so concurrent compiles of one changed file build one
+    // image rather than several. Hits take no lock.
+    private static readonly object ExternalBuildGate = new();
+
+    // Test seam: invoked with the path after the streamed hash and before the build gate is
+    // taken, so a test can rewrite the file at exactly that point. Null in production.
+    internal static Action<string>? BeforeExternalBuildForTest;
 
     /// <summary>
     /// Compiles <paramref name="csxSource"/> into a portable-executable image exactly once.
@@ -112,6 +148,8 @@ public static class RoslynScriptCompiler
     /// that are not already on the Roslyn reference list.  At runtime, those assemblies
     /// must be made available either via the Default context or via
     /// <c>collectibleProbingPaths</c> on <see cref="RunIsolatedAsync"/>.
+    /// Each distinct path outside the trusted-platform list is cached by content and its image
+    /// is kept for the life of the process, so pass stable paths.
     /// </param>
     /// <param name="cancellationToken">
     /// Propagated to Roslyn's <c>Compilation.Emit</c> call — bounds a compile whose
@@ -400,6 +438,8 @@ public static class RoslynScriptCompiler
     /// Optional list of absolute paths to assemblies that should be added as
     /// Roslyn metadata references at compile time.  See
     /// <see cref="CompileOnce"/> for full semantics.
+    /// Each distinct path outside the trusted-platform list is cached by content and its image
+    /// is kept for the life of the process, so pass stable paths.
     /// </param>
     /// <returns>
     /// A <see cref="CompiledScenario"/> whose <see cref="CompiledScenario.Compiled"/>
@@ -549,18 +589,126 @@ public static class RoslynScriptCompiler
 
     /// <summary>
     /// Returns the metadata reference for <paramref name="path"/>: one shared instance for a
-    /// trusted-platform assembly, a fresh one for every other path.
+    /// trusted-platform assembly, and for any other path the one cached for its current content.
     /// </summary>
     /// <remarks>
-    /// The reference still prefetches the whole image (no file stays open or locked).
-    /// A missing or unreadable file throws from
-    /// <see cref="Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(string, Microsoft.CodeAnalysis.MetadataReferenceProperties, Microsoft.CodeAnalysis.DocumentationProvider?)"/>
-    /// exactly as it did before the cache existed.
+    /// <para>
+    /// A platform file is read once per process. Any other file with an entry is hashed on every call;
+    /// the cached reference is returned while the SHA-256 matches, and otherwise a new reference is
+    /// built from the bytes just read and replaces the entry for that path. A path with no entry is
+    /// read without a prior hash, once by each caller that reaches it first at the same time. No
+    /// file stays open or locked.
+    /// </para>
+    /// <para>
+    /// A missing or unreadable file throws as <c>MetadataReference.CreateFromFile</c> always did,
+    /// with the same exception types and messages: <see cref="FileNotFoundException"/> for a missing
+    /// file or parent directory, and <see cref="IOException"/> for an unreadable file or a directory
+    /// path. A missing file's entry is dropped.
+    /// </para>
+    /// <para>
+    /// Replacing an assembly the process has already loaded changes what scripts compile against
+    /// but not the code that runs, and is not a supported way to update a provider (as for
+    /// platform files above).
+    /// </para>
     /// </remarks>
     internal static Microsoft.CodeAnalysis.MetadataReference GetReference(string path) =>
         PlatformPaths.Contains(path)
             ? PlatformReferences.GetOrAdd(path, static p => Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(p))
-            : Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path);
+            : GetExternalReference(path);
+
+    /// <summary>The number of cached non-platform references: at most one per path.</summary>
+    internal static int ExternalReferenceCount => ExternalReferences.Count;
+
+    private static Microsoft.CodeAnalysis.MetadataReference GetExternalReference(string path)
+    {
+        try
+        {
+            // Hit: when the path has an entry, hash the file from a stream, so an unchanged
+            // file allocates no large array. A path with no entry skips the hash and reads the
+            // file once, under the gate: a first compile, and every --isolate-compile worker
+            // (each a fresh process), costs one read.
+            byte[]? hash = null;
+            if (ExternalReferences.TryGetValue(path, out var cached))
+            {
+                hash = HashFile(path);
+                if (cached.Hash.AsSpan().SequenceEqual(hash))
+                    return cached.Reference;
+            }
+
+            BeforeExternalBuildForTest?.Invoke(path);
+
+            // One gate for every path: cold misses of different paths are serialised, which is
+            // acceptable because a path misses rarely (on first use and on replacement) and the
+            // work is one read of a provider assembly.
+            lock (ExternalBuildGate)
+            {
+                // A caller that waited here may find another thread already stored the content it
+                // saw on disk. `hash` is exactly that, so no read is needed.
+                if (hash is not null
+                    && ExternalReferences.TryGetValue(path, out var stored)
+                    && stored.Hash.AsSpan().SequenceEqual(hash))
+                    return stored.Reference;
+
+                // Miss: read once, hash those bytes, build from those bytes. The file may have
+                // changed since the streamed hash, so the entry carries the hash of what is built.
+                var bytes = ReadFile(path);
+                var builtHash = SHA256.HashData(bytes);
+                if (ExternalReferences.TryGetValue(path, out var current) && current.Hash.AsSpan().SequenceEqual(builtHash))
+                    return current.Reference;
+
+                var reference = Microsoft.CodeAnalysis.MetadataReference.CreateFromImage(
+                    ImmutableCollectionsMarshal.AsImmutableArray(bytes), filePath: path);
+                ExternalReferences[path] = new ExternalEntry(builtHash, reference);
+                return reference;
+            }
+        }
+        catch (FileNotFoundException)
+        {
+            ExternalReferences.TryRemove(path, out _);
+            throw;
+        }
+    }
+
+    private static byte[] HashFile(string path)
+    {
+        using var stream = OpenForRead(path);
+        return SHA256.HashData(stream);
+    }
+
+    private static byte[] ReadFile(string path)
+    {
+        using var stream = OpenForRead(path);
+        var bytes = new byte[checked((int)stream.Length)];
+        stream.ReadExactly(bytes);
+        return bytes;
+    }
+
+    // Opens the file the way MetadataReference.CreateFromFile does, including its share mode
+    // (FileShare.Read), so a file another process holds open for writing fails as it did, and
+    // reports failures the same way, so callers see the same exception types and messages as
+    // before the cache: a missing parent directory is a FileNotFoundException, other
+    // IOExceptions and ArgumentExceptions pass through, and anything else (for example
+    // UnauthorizedAccessException on an unreadable file or a directory path) is wrapped in an
+    // IOException.
+    private static FileStream OpenForRead(string path)
+    {
+        try
+        {
+            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        }
+        catch (DirectoryNotFoundException e)
+        {
+            throw new FileNotFoundException(e.Message, path, e);
+        }
+        catch (Exception e) when (e is IOException or ArgumentException)
+        {
+            throw;
+        }
+        catch (Exception e)
+        {
+            throw new IOException(e.Message, e);
+        }
+    }
 
     private static Assembly LoadImage(AssemblyLoadContext alc, byte[] image)
     {

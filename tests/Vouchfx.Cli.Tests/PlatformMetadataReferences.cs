@@ -8,13 +8,14 @@ namespace Vouchfx.Cli.Tests;
 /// <see cref="MetadataReference.CreateFromFile(string, MetadataReferenceProperties, DocumentationProvider?)"/>
 /// copies the whole image into unmanaged memory that only a finalizer frees. The platform list is about
 /// 490 files (about 150 MB), so a fresh set per test compile let several GB pile up between gen2 collections
-/// and took the host to the runner's memory limit (ZEB-49). Only files on the trusted-platform-assemblies list
+/// and took the host to the runner's memory limit. Only files on the trusted-platform-assemblies list
 /// are shared: one reference per file for the life of the process, because these are the files the runtime
 /// itself loads for this process (the shared framework and the host's deps.json assemblies); replacing one under
 /// a running process is unsupported, and whoever can write them already controls the process. Every other path, such as an assembly a test emits into its own directory, gets a
-/// fresh reference, because a test may rewrite that file at the same path. This is the same rule as the
-/// product's <c>RoslynScriptCompiler.GetReference</c>, duplicated here because test projects must not reach
-/// into product internals for it.
+/// fresh reference, because a test may rewrite that file at the same path. The platform rule is the same
+/// as the product's <c>RoslynScriptCompiler.GetReference</c>, duplicated here because test projects must not
+/// reach into product internals for it. The product also caches other paths by file content; this helper
+/// deliberately does not: kept simple, as test fixtures are tiny and short-lived.
 /// </remarks>
 internal static class PlatformMetadataReferences
 {

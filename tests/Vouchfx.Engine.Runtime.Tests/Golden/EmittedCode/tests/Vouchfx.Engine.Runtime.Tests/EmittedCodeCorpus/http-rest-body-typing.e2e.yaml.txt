@@ -2,9 +2,9 @@ vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Runtime.Tests/EmittedCodeCorpus/http-rest-body-typing.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
-steps: 6
+steps: 7
 
-@@@@ step 1 of 6
+@@@@ step 1 of 7
 id: typed-scalars
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
@@ -67,7 +67,7 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         __stepBudgetGoverned_typed_scalars);
 }
 
-@@@@ step 2 of 6
+@@@@ step 2 of 7
 id: collections-anchors-merge
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
@@ -134,7 +134,7 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         __stepBudgetGoverned_collections_anchors_merge);
 }
 
-@@@@ step 3 of 6
+@@@@ step 3 of 7
 id: aliased-headers-and-json-assertions
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
@@ -237,7 +237,7 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         __stepBudgetGoverned_aliased_headers_and_json_assertions);
 }
 
-@@@@ step 4 of 6
+@@@@ step 4 of 7
 id: sequence-body
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
@@ -296,7 +296,7 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         __stepBudgetGoverned_sequence_body);
 }
 
-@@@@ step 5 of 6
+@@@@ step 5 of 7
 id: string-body
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
@@ -355,7 +355,7 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         __stepBudgetGoverned_string_body);
 }
 
-@@@@ step 6 of 6
+@@@@ step 6 of 7
 id: zeb-67-body-rules
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
@@ -412,6 +412,65 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
         new string[] { },
         __stepCt_zeb_67_body_rules,
         __stepBudgetGoverned_zeb_67_body_rules);
+}
+
+@@@@ step 7 of 7
+id: non-finite-and-unreadable-tags
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 7 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/non-finite",
+  "Headers": null,
+  "Body": "{\"plainNaN\":\"NaN\",\"plainInfinity\":\"Infinity\",\"negativeInfinity\":\"-Infinity\",\"outOfRange\":\"1e400\",\"tagStrNaN\":\"NaN\",\"tagIntOctal\":15}",
+  "Expect": null,
+  "BodyRefusal": null
+}
+@@@@ step 7 host-resources
+[]
+@@@@ step 7 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 7 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 7 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::non_finite_and_unreadable_tags",
+        "__capture_status::non_finite_and_unreadable_tags",
+        "svc::app",
+        "app",
+        "POST",
+        "/non-finite",
+        "{\u0022plainNaN\u0022:\u0022NaN\u0022,\u0022plainInfinity\u0022:\u0022Infinity\u0022,\u0022negativeInfinity\u0022:\u0022-Infinity\u0022,\u0022outOfRange\u0022:\u00221e400\u0022,\u0022tagStrNaN\u0022:\u0022NaN\u0022,\u0022tagIntOctal\u0022:15}",
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_non_finite_and_unreadable_tags,
+        __stepBudgetGoverned_non_finite_and_unreadable_tags);
 }
 @@@@ assembled-script
 using System;
@@ -680,5 +739,47 @@ var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var 
         "zeb-67-body-rules",
         Vars.TryGetValue("__outcome::zeb_67_body_rules", out var __sco_zeb_67_body_rules) ? __sco_zeb_67_body_rules as Vouchfx.Engine.Abstractions.StepOutcome : null,
         Vars.TryGetValue("__capture_status::zeb_67_body_rules", out var __scs_zeb_67_body_rules) ? __scs_zeb_67_body_rules as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_non_finite_and_unreadable_tags = __vouchfxRunCt;
+    _ = __stepCt_non_finite_and_unreadable_tags;
+    bool __stepBudgetGoverned_non_finite_and_unreadable_tags = false;
+    _ = __stepBudgetGoverned_non_finite_and_unreadable_tags;
+    StepEvents?.OnStepStarted("non-finite-and-unreadable-tags");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::non_finite_and_unreadable_tags",
+        "__capture_status::non_finite_and_unreadable_tags",
+        "svc::app",
+        "app",
+        "POST",
+        "/non-finite",
+        "{\u0022plainNaN\u0022:\u0022NaN\u0022,\u0022plainInfinity\u0022:\u0022Infinity\u0022,\u0022negativeInfinity\u0022:\u0022-Infinity\u0022,\u0022outOfRange\u0022:\u00221e400\u0022,\u0022tagStrNaN\u0022:\u0022NaN\u0022,\u0022tagIntOctal\u0022:15}",
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_non_finite_and_unreadable_tags,
+        __stepBudgetGoverned_non_finite_and_unreadable_tags);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::non_finite_and_unreadable_tags");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "non-finite-and-unreadable-tags",
+        Vars.TryGetValue("__outcome::non_finite_and_unreadable_tags", out var __sco_non_finite_and_unreadable_tags) ? __sco_non_finite_and_unreadable_tags as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::non_finite_and_unreadable_tags", out var __scs_non_finite_and_unreadable_tags) ? __scs_non_finite_and_unreadable_tags as string : null);
 }
 @@@@ end

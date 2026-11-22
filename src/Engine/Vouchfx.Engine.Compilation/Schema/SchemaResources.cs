@@ -228,6 +228,9 @@ internal static class SchemaResources
             .WithNodeTypeResolver(new YamlScalarTypeResolver())
             .WithNodeDeserializer(new DecimalIntegerNodeDeserializer(),
                 where => where.Before<ScalarNodeDeserializer>())
+            .WithNodeDeserializer(
+                scalar => new TextFallbackScalarDeserializer(scalar),
+                where => where.InsteadOf<ScalarNodeDeserializer>())
             .Build();
 
         var graph = deserializer.Deserialize<object?>(yamlText);
@@ -626,14 +629,36 @@ internal static class SchemaResources
     // ── YamlScalarTypeResolver — infers integer and float types ──────────────
 
     /// <summary>
-    /// A YamlDotNet node-type resolver that recognises plain (untagged) scalar
-    /// values that represent integers or floating-point numbers and returns their
-    /// CLR type (<see cref="long"/> or <see cref="double"/>) instead of the
-    /// default <see cref="string"/>.  This preserves the JSON Schema <c>type:
-    /// integer</c> / <c>type: number</c> constraints during YAML→JSON conversion.
+    /// A YamlDotNet node-type resolver that decides the CLR type of a plain scalar from
+    /// its text, and of a tagged plain scalar from its text alone (a <c>!!str</c> tag
+    /// excepted): <see cref="long"/>,
+    /// <see cref="double"/> or <see cref="bool"/> for an integer, a number or a boolean,
+    /// instead of the default <see cref="string"/>.  This preserves the JSON Schema
+    /// <c>type: integer</c> / <c>type: number</c> constraints during YAML→JSON conversion.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A plain, untagged value is typed as a number only when it is a <em>finite</em>
+    /// one: <c>NaN</c>, <c>Infinity</c> and <c>1e400</c> stay text, as JSON has no such
+    /// number and YamlDotNet's own scalar parse would otherwise throw, refusing the whole
+    /// suite with an unlocated "Failed to parse YAML".  A <c>!!str</c> tag gives a string,
+    /// except on a null spelling (<c>~</c>, <c>null</c>, empty), which YamlDotNet reads as
+    /// null whatever the tag says and which stays null.
+    /// </para>
+    /// <para>
+    /// Every other tagged plain scalar keeps the type this resolver always gave it from
+    /// its text.  A tagged scalar (plain, quoted or block) whose conversion YamlDotNet then
+    /// refuses (<c>!!int 0o17</c>, <c>!!float NaN</c>, <c>!!int "abc"</c>) is handled by
+    /// <see cref="TextFallbackScalarDeserializer"/>, which gives the text written instead
+    /// of throwing.  Only the <c>http.rest</c> structured-body conversion reads the tag
+    /// again, and it refuses a tag it cannot honour with the step and line; every other
+    /// binder takes the scalar's text as written and does not interpret the tag.
+    /// </para>
+    /// </remarks>
     private sealed class YamlScalarTypeResolver : INodeTypeResolver
     {
+        private const string StringTag = "tag:yaml.org,2002:str";
+
         bool INodeTypeResolver.Resolve(
             NodeEvent? nodeEvent,
             ref Type currentType)
@@ -643,37 +668,127 @@ internal static class SchemaResources
                 && currentType == typeof(object))
             {
                 var value = scalar.Value;
+                Type? type;
 
-                // Prefer long for integer-shaped values (covers status codes,
-                // port numbers, counts, etc.).
-                if (long.TryParse(value, System.Globalization.NumberStyles.Integer,
-                        System.Globalization.CultureInfo.InvariantCulture, out _))
+                if (scalar.Tag.IsEmpty)
                 {
-                    currentType = typeof(long);
-                    return true;
+                    type = PlainType(value);
+                }
+                else if (scalar.Tag.Value == StringTag)
+                {
+                    type = typeof(string);
+                }
+                else
+                {
+                    // The type this resolver has always chosen for a tagged scalar: from
+                    // the text alone, with no finiteness test (the tag is not consulted).
+                    type = TaggedType(value);
                 }
 
-                // Fall back to double for floating-point values.
-                if (double.TryParse(value, System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out _))
+                if (type is not null)
                 {
-                    currentType = typeof(double);
-                    return true;
-                }
-
-                // Recognise plain true/false (case-insensitive) as CLR bool so
-                // that the JSON Schema validator receives a JSON boolean literal
-                // (true/false, unquoted) rather than the string "true"/"false".
-                // Only strict true/false — YAML 1.1 aliases (yes/no/on/off) are
-                // deliberately excluded to avoid coercing unrelated string fields.
-                if (bool.TryParse(value, out _))
-                {
-                    currentType = typeof(bool);
+                    currentType = type;
                     return true;
                 }
             }
 
             return false;
+        }
+
+        private static Type? PlainType(string value)
+        {
+            // Prefer long for integer-shaped values (covers status codes, port numbers,
+            // counts, etc.), then finite doubles.
+            if (IsLong(value))
+            {
+                return typeof(long);
+            }
+
+            if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+                && double.IsFinite(parsed))
+            {
+                return typeof(double);
+            }
+
+            // Recognise plain true/false (case-insensitive) as CLR bool so that the JSON
+            // Schema validator receives a JSON boolean literal (true/false, unquoted)
+            // rather than the string "true"/"false".  Only strict true/false: YAML 1.1
+            // aliases (yes/no/on/off) are deliberately excluded to avoid coercing
+            // unrelated string fields.
+            return bool.TryParse(value, out _) ? typeof(bool) : null;
+        }
+
+        private static Type? TaggedType(string value)
+        {
+            if (IsLong(value))
+            {
+                return typeof(long);
+            }
+
+            if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            {
+                return typeof(double);
+            }
+
+            return bool.TryParse(value, out _) ? typeof(bool) : null;
+        }
+
+        private static bool IsLong(string value) =>
+            long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out _);
+    }
+
+    // ── TextFallbackScalarDeserializer — a tagged scalar YamlDotNet cannot read ─
+
+    /// <summary>
+    /// Wraps YamlDotNet's own scalar deserialiser, so a tagged scalar is read exactly as it
+    /// always was, and gives the text written where that conversion refuses it (a tag its
+    /// text cannot satisfy: <c>!!int 0o17</c>, <c>!!int "abc"</c>, <c>!!float NaN</c>,
+    /// <c>!!bool maybe</c>).  There is no second configuration to keep in step: the
+    /// wrapped instance is the one the production deserialiser built.  The wrapped call
+    /// first consumes the scalar, which makes the parser scan the token that follows, and
+    /// only then converts.  Only the exception types a scalar conversion raises are caught,
+    /// and only once the parser has moved past this scalar; a failure while scanning the
+    /// next token leaves the parser on this scalar and is rethrown, so malformed text after
+    /// a tagged value is still refused.  An untagged scalar, and every other kind of node,
+    /// is never touched.
+    /// </summary>
+    private sealed class TextFallbackScalarDeserializer : INodeDeserializer
+    {
+        private readonly INodeDeserializer _scalar;
+
+        public TextFallbackScalarDeserializer(INodeDeserializer scalar) => _scalar = scalar;
+
+        public bool Deserialize(
+            IParser reader,
+            Type expectedType,
+            Func<IParser, Type, object?> nestedObjectDeserializer,
+            out object? value,
+            ObjectDeserializer rootDeserializer)
+        {
+            if (!reader.Accept<Scalar>(out var scalar) || scalar.Tag.IsEmpty)
+            {
+                return _scalar.Deserialize(reader, expectedType, nestedObjectDeserializer, out value, rootDeserializer);
+            }
+
+            try
+            {
+                return _scalar.Deserialize(reader, expectedType, nestedObjectDeserializer, out value, rootDeserializer);
+            }
+            catch (Exception ex) when ((ex is FormatException
+                    or OverflowException
+                    or IndexOutOfRangeException
+                    or ArgumentException
+                    or InvalidCastException)
+                && !ReferenceEquals(reader.Current, scalar))
+            {
+                // The scalar deserialiser consumes its event, which scans the next token,
+                // before it converts. The parser sets Current only once that scan succeeds,
+                // so Current still being this scalar means the scan threw, and the failure
+                // belongs to the text that follows: it is rethrown. Current having moved
+                // means the conversion threw, and the parser is already past this scalar.
+                value = scalar.Value;
+                return true;
+            }
         }
     }
 }

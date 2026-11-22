@@ -15,10 +15,12 @@ published. Pushing a version tag alone does not start the pipeline. Manual
    `## [<version>] — <date>` and add a fresh, empty `## [Unreleased]` heading
    above it, so the file keeps exactly one `## [Unreleased]` heading
    (`scripts/check_site.py` enforces this). Do this in the reviewed commit
-   before tagging. Check that the `VouchfxEngineVersion` fallback in
-   `Directory.Build.props` is at least `<version>`: the
-   `SourceCapabilityStamp_IsAtLeastTheNewestChangelogVersion` test fails when the
-   newest versioned heading is higher than the fallback.
+   before tagging. Set the `VouchfxEngineVersion` fallback in
+   `Directory.Build.props` to `<version>` in the same commit: the
+   `SourceCapabilityStamp_MatchesTheNewestChangelogVersion` test fails when the
+   newest versioned heading and the fallback differ. If a version heading is
+   withdrawn before it is published, lower the fallback to the newest
+   remaining versioned heading in that commit too.
 2. Navigate to the GitHub Releases page for this repository.
 3. Click **Draft a new release**.
 4. Create a new tag in the format `v<semver>` (e.g. `v1.2.3`) at the reviewed
@@ -48,8 +50,8 @@ after publication:
   section 5.7 and the `NuGetAuditSuppress` comment in `Directory.Build.props`. Check that the
   `scripts/check_distribution.py` and `Vouchfx.Dcp.targets` comments still match the pinned Aspire.
 - Update texts that say "once published": `SECURITY.md` and `docs/getting-started.md` (the
-  `SslCa` advice for 1.2.1) and the vouchfx-mcp paragraph in `docs/getting-started.md` (until an MCP
-  release pins the new Core, the MCP rejects it, because its engine pin is an exact match).
+  `SslCa` advice for 1.2.1). Re-read the vouchfx-mcp paragraph in `docs/getting-started.md`: it
+  states the exact-pin rule and names no version, so it needs an edit only if that rule changes.
 - Confirm `move-floating-tag.yml` moved the floating `v1` tag, and that `docs/ci-integration.md` still
   describes the tags truthfully.
 - In `vouchfx-mcp`, bump `ENGINE_PIN` and run `scripts/sync-vendored.ps1 -Update`; `docs/recipes.md`,
