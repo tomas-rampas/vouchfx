@@ -163,7 +163,9 @@ updates:
       # DateOnly/TimeOnly through non-generic reads, which would change db-assert.postgres
       # comparisons, and validates the TLS chain against the provided root CA only. Held
       # pending a dedicated upgrade with date/time and TLS-chain regression tests
-      # (see PR #662).
+      # (see PR #662). The Docker-backed pins (real-server rendering and the TLS matrix) run only
+      # in the daily Docker lane, so a driver-upgrade branch must run that lane by manual
+      # dispatch before it is merged.
       - dependency-name: "Npgsql"
         update-types: ["version-update:semver-major"]
       # System.Text.Json versions with the .NET release. Its major stays held although the
