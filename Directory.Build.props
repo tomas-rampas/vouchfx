@@ -5,9 +5,12 @@
          not, and the SDK's later 1.0.0-0.local package identity must not become this
          stamp.
          Provider admission compares it with MinEngineVersion, so the fallback has to
-         stay at or above the newest version heading in CHANGELOG.md (the release being
+         equal the newest version heading in CHANGELOG.md (the release being
          prepared, or the latest published one). A stale fallback refuses providers the
-         source can run. Hosts that build the step catalogue with
+         source can run, and one ahead of the changelog admits providers against a
+         version the engine is not;
+         HostProviderAdmissionTests.SourceCapabilityStamp_MatchesTheNewestChangelogVersion
+         fails on either. Hosts that build the step catalogue with
          StepKindRegistry.BuildAndFreeze without the admission callback, such as the
          ledger sample's custom runner, never consult this stamp, so it does not affect
          them. -->

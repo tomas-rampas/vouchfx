@@ -46,7 +46,7 @@ public sealed class RoslynScriptCompilerTests
     }
 
     // -------------------------------------------------------------------------
-    // ZEB-49: repeated compiles must not leak a load context or re-read platform files.
+    // Repeated compiles must not leak a load context or re-read platform files.
     // -------------------------------------------------------------------------
 
     /// <summary>
@@ -74,27 +74,51 @@ public sealed class RoslynScriptCompilerTests
 
     /// <summary>
     /// A trusted-platform assembly yields the same reference instance on every call, so the
-    /// platform set is read once per process. Any other path yields a fresh reference every
-    /// call, including after the file is rewritten with the same length and its last-write
-    /// time put back (the stale case a length and timestamp check would miss), and a deleted
-    /// file throws <see cref="FileNotFoundException"/> as <c>CreateFromFile</c> always did.
+    /// platform set is read once per process, and is not counted among the external entries.
     /// </summary>
     [Fact]
-    public void GetReference_SharesPlatformFilesAndReadsEveryOtherPathAfresh()
+    public void GetReference_PlatformFile_ReturnsSameInstance()
     {
-        // Platform path: shared.
         var platformPath = typeof(object).Assembly.Location;
         Assert.Contains(platformPath,
             ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator));
+
+        var before = RoslynScriptCompiler.ExternalReferenceCount;
         Assert.Same(
             RoslynScriptCompiler.GetReference(platformPath),
             RoslynScriptCompiler.GetReference(platformPath));
+        Assert.Equal(before, RoslynScriptCompiler.ExternalReferenceCount);
+    }
 
-        var directory = Path.Combine(Path.GetTempPath(), "vouchfx-getreference-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(directory);
-        try
+    /// <summary>
+    /// A file outside the platform list that has not changed yields the same reference
+    /// instance, so repeated compiles do not create a new metadata image per compile.
+    /// </summary>
+    [Fact]
+    public void GetReference_UnchangedExternalFile_ReturnsSameInstance()
+    {
+        WithTempDirectory(directory =>
         {
-            // Non-platform path: fresh, and it reflects a same-size rewrite with a restored timestamp.
+            var path = Path.Combine(directory, "Subject.dll");
+            EmitTinyAssembly(path, "Alpha");
+
+            var first = RoslynScriptCompiler.GetReference(path);
+
+            Assert.Same(first, RoslynScriptCompiler.GetReference(path));
+            Assert.Same(first, RoslynScriptCompiler.GetReference(path));
+            Assert.Equal("Alpha", TypeNamesOf(first));
+        });
+    }
+
+    /// <summary>
+    /// A file rewritten with the same length and its last-write time put back (the stale case
+    /// a length and timestamp key would miss) yields a fresh reference built from the new bytes.
+    /// </summary>
+    [Fact]
+    public void GetReference_ExternalFileRewrittenSameSizeAndRestoredTimestamp_ReturnsFreshInstance()
+    {
+        WithTempDirectory(directory =>
+        {
             var path = Path.Combine(directory, "Subject.dll");
             EmitTinyAssembly(path, "Alpha");
             var stamp = File.GetLastWriteTimeUtc(path);
@@ -109,13 +133,275 @@ public sealed class RoslynScriptCompilerTests
             Assert.Equal(stamp, File.GetLastWriteTimeUtc(path));
 
             var second = RoslynScriptCompiler.GetReference(path);
+
             Assert.NotSame(first, second);
             Assert.Equal("Bravo", TypeNamesOf(second));
-            Assert.NotSame(second, RoslynScriptCompiler.GetReference(path));
+            Assert.Same(second, RoslynScriptCompiler.GetReference(path));
+        });
+    }
 
-            // Deleted file: the failure surfaces from CreateFromFile, never a cached reference.
+    /// <summary>
+    /// Replacing a file several times keeps one entry for its path: the old reference is
+    /// dropped, not accumulated.
+    /// </summary>
+    [Fact]
+    public void GetReference_ExternalFileReplacedSeveralTimes_KeepsOneEntryPerPath()
+    {
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "Subject.dll");
+            var other = Path.Combine(directory, "Other.dll");
+            var before = RoslynScriptCompiler.ExternalReferenceCount;
+            EmitTinyAssembly(other, "Zulu");
+            RoslynScriptCompiler.GetReference(other);
+
+            foreach (var name in ReplacementSequence)
+            {
+                EmitTinyAssembly(path, name);
+                Assert.Equal(name, TypeNamesOf(RoslynScriptCompiler.GetReference(path)));
+            }
+
+            Assert.Equal(before + 2, RoslynScriptCompiler.ExternalReferenceCount);
+        });
+    }
+
+    /// <summary>
+    /// A deleted file throws <see cref="FileNotFoundException"/> as <c>CreateFromFile</c>
+    /// always did, and its entry is dropped rather than served.
+    /// </summary>
+    [Fact]
+    public void GetReference_DeletedExternalFile_ThrowsFileNotFoundAndDropsEntry()
+    {
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "Subject.dll");
+            var before = RoslynScriptCompiler.ExternalReferenceCount;
+            EmitTinyAssembly(path, "Alpha");
+            RoslynScriptCompiler.GetReference(path);
+            Assert.Equal(before + 1, RoslynScriptCompiler.ExternalReferenceCount);
+
             File.Delete(path);
+
             Assert.Throws<FileNotFoundException>(() => RoslynScriptCompiler.GetReference(path));
+            Assert.Equal(before, RoslynScriptCompiler.ExternalReferenceCount);
+        });
+    }
+
+    /// <summary>
+    /// A missing parent directory throws <see cref="FileNotFoundException"/> with the message
+    /// <c>CreateFromFile</c> gives, not <see cref="DirectoryNotFoundException"/>.
+    /// </summary>
+    [Fact]
+    public void GetReference_MissingParentDirectory_ThrowsFileNotFoundLikeCreateFromFile()
+    {
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "no-such-directory", "Subject.dll");
+            var before = RoslynScriptCompiler.ExternalReferenceCount;
+
+            var actual = Assert.Throws<FileNotFoundException>(() => RoslynScriptCompiler.GetReference(path));
+            var expected = Assert.Throws<FileNotFoundException>(() => MetadataReference.CreateFromFile(path));
+
+            Assert.Equal(expected.Message, actual.Message);
+            Assert.Equal(expected.FileName, actual.FileName);
+            Assert.Equal(expected.InnerException?.GetType(), actual.InnerException?.GetType());
+            Assert.Equal(before, RoslynScriptCompiler.ExternalReferenceCount);
+        });
+    }
+
+    /// <summary>
+    /// A directory passed as the path throws <see cref="IOException"/> (not
+    /// <see cref="UnauthorizedAccessException"/>) with the message <c>CreateFromFile</c> gives.
+    /// </summary>
+    [Fact]
+    public void GetReference_DirectoryAsPath_ThrowsIOExceptionLikeCreateFromFile()
+    {
+        WithTempDirectory(directory =>
+        {
+            var actual = Assert.Throws<IOException>(() => RoslynScriptCompiler.GetReference(directory));
+            var expected = Assert.Throws<IOException>(() => MetadataReference.CreateFromFile(directory));
+
+            Assert.Equal(expected.GetType(), actual.GetType());
+            Assert.Equal(expected.Message, actual.Message);
+        });
+    }
+
+    /// <summary>
+    /// A file the process may not read throws <see cref="IOException"/> (not
+    /// <see cref="UnauthorizedAccessException"/>) with the message <c>CreateFromFile</c> gives.
+    /// </summary>
+    [Fact]
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    public void GetReference_UnreadableFile_ThrowsIOExceptionLikeCreateFromFile()
+    {
+        if (OperatingSystem.IsWindows() || Environment.UserName == "root")
+            return; // Unix permission bits only; root ignores them.
+
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "Subject.dll");
+            File.WriteAllBytes(path, new byte[] { 1, 2, 3 });
+            File.SetUnixFileMode(path, UnixFileMode.None);
+            try
+            {
+                var actual = Assert.Throws<IOException>(() => RoslynScriptCompiler.GetReference(path));
+                var expected = Assert.Throws<IOException>(() => MetadataReference.CreateFromFile(path));
+
+                Assert.Equal(expected.GetType(), actual.GetType());
+                Assert.Equal(expected.Message, actual.Message);
+            }
+            finally
+            {
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+        });
+    }
+
+    /// <summary>
+    /// When the file changes between the streamed hash and the read under the lock, the returned
+    /// reference and the stored hash both belong to the version read under the lock: the next
+    /// call, which hashes that same version, is a hit and returns the same instance.
+    /// </summary>
+    [Fact]
+    public void GetReference_FileRewrittenBetweenHashAndRead_PairsHashWithTheImageBuilt()
+    {
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "Subject.dll");
+            EmitTinyAssembly(path, "Alpha");
+            RoslynScriptCompiler.GetReference(path);
+            EmitTinyAssembly(path, "Bravo");
+            var delta = Path.Combine(directory, "Delta.dll");
+            EmitTinyAssembly(delta, "Delta");
+            var deltaImage = File.ReadAllBytes(delta);
+
+            RoslynScriptCompiler.BeforeExternalBuildForTest = p =>
+            {
+                if (p == path)
+                    File.WriteAllBytes(path, deltaImage);
+            };
+            MetadataReference built;
+            try
+            {
+                built = RoslynScriptCompiler.GetReference(path);
+            }
+            finally
+            {
+                RoslynScriptCompiler.BeforeExternalBuildForTest = null;
+            }
+
+            Assert.Equal("Delta", TypeNamesOf(built));
+            Assert.Same(built, RoslynScriptCompiler.GetReference(path));
+        });
+    }
+
+    /// <summary>
+    /// When another caller stores the entry for the very content a first-time caller then reads
+    /// under the lock, the first-time caller returns that entry instead of building a duplicate.
+    /// </summary>
+    [Fact]
+    public void GetReference_EntryStoredWhileFirstCallerWaits_ReturnsTheStoredInstance()
+    {
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "Subject.dll");
+            EmitTinyAssembly(path, "Alpha");
+
+            MetadataReference? inner = null;
+            RoslynScriptCompiler.BeforeExternalBuildForTest = p =>
+            {
+                RoslynScriptCompiler.BeforeExternalBuildForTest = null;
+                inner = RoslynScriptCompiler.GetReference(p);
+            };
+            MetadataReference outer;
+            try
+            {
+                outer = RoslynScriptCompiler.GetReference(path);
+            }
+            finally
+            {
+                RoslynScriptCompiler.BeforeExternalBuildForTest = null;
+            }
+
+            Assert.NotNull(inner);
+            Assert.Same(inner, outer);
+            Assert.Same(outer, RoslynScriptCompiler.GetReference(path));
+        });
+    }
+
+    /// <summary>
+    /// Concurrent callers on one path, while the file is rewritten, always get a reference
+    /// whose image matches a version that was on disk, the path keeps one entry, and afterwards
+    /// the cached reference is the version now on disk.
+    /// </summary>
+    [Fact]
+    public void GetReference_ConcurrentCallersAndRewrites_NeverMixImagesAndKeepOneEntry()
+    {
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "Subject.dll");
+            var before = RoslynScriptCompiler.ExternalReferenceCount;
+            var versions = Versions;
+            var images = versions.ToDictionary(v => v, v =>
+            {
+                EmitTinyAssembly(path, v);
+                return File.ReadAllBytes(path);
+            });
+            File.WriteAllBytes(path, images["Alpha"]);
+
+            var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
+            Parallel.For(0, 64, new ParallelOptions { MaxDegreeOfParallelism = 8 }, i =>
+            {
+                try
+                {
+                    if (i % 8 == 0)
+                    {
+                        // Writers swap whole files atomically so readers see a complete version.
+                        var temp = Path.Combine(directory, $"swap{i}.tmp");
+                        File.WriteAllBytes(temp, images[versions[i / 8 % versions.Length]]);
+                        File.Move(temp, path, overwrite: true);
+                    }
+                    else
+                    {
+                        Assert.Contains(TypeNamesOf(RoslynScriptCompiler.GetReference(path)), versions);
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // A rename racing an open is a file-system matter, not a cache matter.
+                }
+                catch (Exception ex)
+                {
+                    failures.Add(ex.ToString());
+                }
+            });
+
+            Assert.Empty(failures);
+            Assert.Equal(before + 1, RoslynScriptCompiler.ExternalReferenceCount);
+
+            // Whatever interleaving happened, the entry must pair the image with the file's
+            // content: a reference for the version now on disk, and a hit on the next call.
+            var onDisk = File.ReadAllBytes(path);
+            var current = images.Single(kv => kv.Value.AsSpan().SequenceEqual(onDisk)).Key;
+            var reference = RoslynScriptCompiler.GetReference(path);
+            Assert.Equal(current, TypeNamesOf(reference));
+            Assert.Same(reference, RoslynScriptCompiler.GetReference(path));
+
+            File.WriteAllBytes(path, images["Alpha"]);
+            Assert.Equal("Alpha", TypeNamesOf(RoslynScriptCompiler.GetReference(path)));
+        });
+    }
+
+    private static readonly string[] ReplacementSequence = { "Alpha", "Bravo", "Delta", "Echoo", "Alpha" };
+    private static readonly string[] Versions = { "Alpha", "Bravo", "Delta" };
+
+    private static void WithTempDirectory(Action<string> body)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "vouchfx-getreference-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            body(directory);
         }
         finally
         {
