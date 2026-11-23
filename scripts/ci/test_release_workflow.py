@@ -61,7 +61,8 @@ PUBLISH_RELEASE_STEPS = [
      {**GH_STATE_ENV, "DRAFT_ID": "${{ steps.state.outputs.draft_id }}"}),
     ("NuGet login (OIDC → short-lived API key)", {"name", "id", "uses", "with"}, None),
     ("Rehearsal — delete the draft release", {"name", "if", "env", "run"},
-     {**GH_ENV, "CREATED": "${{ steps.create.outputs.created }}"}),
+     {**GH_ENV, "CREATED": "${{ steps.create.outputs.created }}",
+      "ATTEMPTED": "${{ steps.create.outputs.attempted }}"}),
     ("Publish nupkg to NuGet.org — Trusted Publishing", {"name", "if", "env", "run"},
      {"NUGET_API_KEY": "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"}),
     ("Publish the draft release", {"name", "if", "env", "run"}, GH_STATE_ENV),
@@ -111,6 +112,10 @@ PUBLISH_RELEASE_GH_FORMS = {
     "gh api repos/${GH_REPO}/releases/tags/${TAG} --jq .draft",
     "gh release create $TAG --draft --target $GITHUB_SHA --title $TAG --notes-file $notes --generate-notes "
     "${prerelease[@]}",
+    # `gh_forms` reads an unquoted comma as a word of its own: the field list is
+    # `databaseId,isDraft,targetCommitish` in the workflow.
+    "gh release view $TAG --json databaseId , isDraft , targetCommitish --jq "
+    "[(.databaseId | tostring), (.isDraft | tostring), .targetCommitish] | @tsv",
     "gh release upload $TAG ${files[@]} --clobber",
     "gh release edit $TAG --draft=false --target $GITHUB_SHA ${latest[@]}",
 }
@@ -457,7 +462,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         # `continue-on-error`, an `env` or a neighbour without failing this test.
         job = self.jobs["publish-release"]
         self.assertEqual({"name", "runs-on", "needs", "if", "environment", "permissions", "env", "steps"}, set(job))
-        self.assertEqual({"MODE", "VERSION", "TAG"}, set(job["env"]))
+        self.assertEqual({"MODE", "VERSION", "TAG", "RELEASE_READ_ATTEMPTS", "RELEASE_READ_DELAY_SECONDS"},
+                         set(job["env"]))
         steps = job["steps"]
         self.assertEqual([name for name, _, _ in PUBLISH_RELEASE_STEPS], [s.get("name") for s in steps])
         for (name, keys, env), step in zip(PUBLISH_RELEASE_STEPS, steps):
@@ -474,6 +480,29 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual("nuget-login", by_name["NuGet login (OIDC → short-lived API key)"]["id"])
         self.assertEqual("signing-material/",
                          by_name["Download signing material (cosign bundles, GPG signatures)"]["with"]["path"])
+
+    def test_release_reads_after_a_write_try_again_within_the_job_bounds(self):
+        # GitHub's list of releases lags behind a write, so the three steps that read
+        # straight after one poll, with the bounds the job sets once.
+        job = self.jobs["publish-release"]
+        self.assertEqual({"RELEASE_READ_ATTEMPTS": "12", "RELEASE_READ_DELAY_SECONDS": "5"},
+                         {k: v for k, v in job["env"].items() if k.startswith("RELEASE_READ_")})
+        by_name = {s["name"]: s for s in job["steps"]}
+        for name in (CREATE_STEP, CLEANUP_STEP, VERIFY_STEP):
+            with self.subTest(step=name):
+                # The comments name both variables, so only the code lines count. That
+                # the loops follow the bound is proved by the behaviour tests that set
+                # `attempts=3`.
+                code = "\n".join(line for line in by_name[name]["run"].splitlines()
+                                 if not line.lstrip().startswith("#"))
+                for variable in ("RELEASE_READ_ATTEMPTS", "RELEASE_READ_DELAY_SECONDS"):
+                    self.assertIn(variable, code)
+                    self.assertIn(f"${{{variable}:-}}", code, "the bounds are checked first")
+        # `sleep` is used for nothing else in the job, and always with the delay.
+        sleeps = [line.strip() for s in job["steps"] for line in s.get("run", "").splitlines()
+                  if re.search(r"\bsleep\b", line)]
+        self.assertGreaterEqual(len(sleeps), 5, sleeps)
+        self.assertEqual({'sleep "$RELEASE_READ_DELAY_SECONDS"'}, set(sleeps))
 
     def test_publish_release_step_conditions_and_order(self):
         steps = self.jobs["publish-release"]["steps"]
@@ -594,6 +623,10 @@ echo "git $*" >> "$FIXTURE_DIR/calls"
 # unreadable remote (`late-ls-fails`): the state of the remote changed since the first look.
 n=$(( $(cat "$FIXTURE_DIR/ls-count" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$FIXTURE_DIR/ls-count"
+# A test may script one listing by its number: unreadable (`ls-override-fail-N`) or
+# showing other tags (`ls-override-N`). This models a remote that shows a change late.
+[[ -f "$FIXTURE_DIR/ls-override-fail-$n" ]] && exit 128
+[[ -f "$FIXTURE_DIR/ls-override-$n" ]] && { cat "$FIXTURE_DIR/ls-override-$n"; exit 0; }
 if [[ "$n" -ge 2 ]]; then
   [[ -f "$FIXTURE_DIR/late-ls-fails" ]] && exit 128
   [[ -f "$FIXTURE_DIR/late-tags" ]] && { cat "$FIXTURE_DIR/late-tags"; exit 0; }
@@ -663,6 +696,11 @@ ID_FILTERS = {
     "[.tag_name, (.draft | tostring), .target_commitish] | @tsv":
         lambda r: [tsv(r["tag_name"], json.dumps(r["draft"]), r["target_commitish"])],
 }
+# The one filter the workflow uses with `gh release view`.
+VIEW_FILTERS = {
+    "[(.databaseId | tostring), (.isDraft | tostring), .targetCommitish] | @tsv":
+        lambda a: tsv(str(a["id"]), json.dumps(a["draft"]), a["target"]),
+}
 # The two endpoints GitHub serves for a tag; a draft is not returned by it.
 TAG_FILTERS = {".draft": lambda r: [json.dumps(r["draft"])], ".assets[].name": lambda r: r["assets"]}
 
@@ -697,6 +735,15 @@ if args[:2] == ["api", "--paginate"]:
     if after.exists() and count > int(after.read_text(encoding="utf-8")):
         sys.exit(1)
     shown = [r for r in releases if not ((d / "list-hides-drafts").exists() and r["draft"])]
+    # `list-overrides.json` scripts single lists by their number (the first list is 1):
+    # "fail", or the releases that list shows. This models a list that lags behind a
+    # write, or still shows a release just deleted.
+    if (d / "list-overrides.json").exists():
+        scripted = json.loads((d / "list-overrides.json").read_text(encoding="utf-8")).get(str(count))
+        if scripted == "fail":
+            sys.exit(1)
+        if scripted is not None:
+            shown = scripted
     for line in FILTERS[args[4]](shown):
         print(line)
 elif args[:2] == ["api", "-X"] and len(args) == 4 and args[2] == "DELETE":
@@ -726,6 +773,13 @@ elif len(args) == 4 and args[0] == "api" and args[1].startswith(repo + "releases
         unexpected(97)
     if (d / "tag-endpoint-fails").exists():
         sys.exit(1)
+    # `tag-endpoint-fails-until` holds N: the first N reads of this endpoint give a 404.
+    tag_reads_path = d / "tag-endpoint-reads"
+    tag_reads = int(tag_reads_path.read_text(encoding="utf-8")) + 1 if tag_reads_path.exists() else 1
+    tag_reads_path.write_text(str(tag_reads), encoding="utf-8")
+    if (d / "tag-endpoint-fails-until").exists() and tag_reads <= int(
+            (d / "tag-endpoint-fails-until").read_text(encoding="utf-8")):
+        sys.exit(1)
     tag = args[1][len(repo + "releases/tags/"):]
     visible = [r for r in releases if r["tag_name"] == tag
                and (r["draft"] is False or (d / "tags-endpoint-shows-drafts").exists())]
@@ -733,6 +787,38 @@ elif len(args) == 4 and args[0] == "api" and args[1].startswith(repo + "releases
         sys.exit(1)
     for line in TAG_FILTERS[args[3]](visible[0]):
         print(line)
+elif args[:2] == ["release", "view"]:
+    # The tool's own lookup of a release by its tag. The real tool looks up a
+    # published release and a draft for the tag at the same time and returns the
+    # first lookup that succeeds. The fixtures answer from their own releases (a
+    # draft first), and the tests set the answer explicitly where it matters, with
+    # these controls: `view-fails` (never found), `view-fails-first` holding N (the
+    # first N calls fail, as a lookup that does not yet find a young draft), and
+    # `view-answer.json` ({"id", "draft", "target"}: what the tool is made to
+    # report instead, as another release; an optional "first" N limits that to the
+    # first N calls, as a lookup that lags and then catches up).
+    if len(args) != 7 or args[3:6] != ["--json", "databaseId,isDraft,targetCommitish", "--jq"]:
+        unexpected(96)
+    if args[6] not in VIEW_FILTERS:
+        unexpected(97)
+    if (d / "view-fails").exists():
+        sys.exit(1)
+    view_calls_path = d / "view-calls"
+    view_calls = int(view_calls_path.read_text(encoding="utf-8")) + 1 if view_calls_path.exists() else 1
+    view_calls_path.write_text(str(view_calls), encoding="utf-8")
+    if (d / "view-fails-first").exists():
+        if view_calls <= int((d / "view-fails-first").read_text(encoding="utf-8")):
+            sys.exit(1)
+    found = sorted([r for r in releases if r["tag_name"] == args[2]], key=lambda r: not r["draft"])
+    if not found:
+        sys.exit(1)
+    answer = dict(id=found[0]["id"], draft=found[0]["draft"], target=found[0]["target_commitish"])
+    if (d / "view-answer.json").exists():
+        scripted = json.loads((d / "view-answer.json").read_text(encoding="utf-8"))
+        first = scripted.pop("first", None)
+        if first is None or view_calls <= first:
+            answer.update(scripted)
+    print(VIEW_FILTERS[args[6]](answer))
 elif args[:2] == ["release", "create"]:
     if (d / "create-fails").exists():
         sys.exit(1)
@@ -753,6 +839,10 @@ elif args[:2] == ["release", "create"]:
     if (d / "create-adds-draft").exists():
         releases.append(dict(releases[-1], id=releases[-1]["id"] + 1))
     save()
+    # `create-stores-then-fails`: GitHub stored the draft, and the call still failed
+    # (an error or a timeout on the response).
+    if (d / "create-stores-then-fails").exists():
+        sys.exit(1)
 elif args[:2] == ["release", "upload"]:
     if (d / "upload-fails").exists():
         sys.exit(1)
@@ -806,7 +896,8 @@ class Fixture:
 
     def __init__(self, scratch, tags=(), releases=(), nuget=(), markers=(), changelog="1.5.0", props="1.5.0",
                  late_tags=None, changelog_text=None, list_fails_after=None, late_releases=None,
-                 create_target=None):
+                 create_target=None, list_overrides=None, ls_overrides=None, tag_endpoint_fails_until=None,
+                 view_fails_first=None, view_answer=None):
         self.root = Path(scratch)
         self.dir = self.root / "fixture"
         self.bin = self.dir / "bin"
@@ -829,6 +920,22 @@ class Fixture:
             (self.dir / marker).write_text("", encoding="utf-8")
         if create_target is not None:
             (self.dir / "create-target").write_text(create_target, encoding="utf-8")
+        if list_overrides is not None:
+            (self.dir / "list-overrides.json").write_text(
+                json.dumps({str(n): shown for n, shown in list_overrides.items()}), encoding="utf-8")
+        for n, shown in (ls_overrides or {}).items():
+            # `None` makes that listing fail; otherwise it shows these (name, sha) tags.
+            if shown is None:
+                (self.dir / f"ls-override-fail-{n}").write_text("", encoding="utf-8")
+            else:
+                (self.dir / f"ls-override-{n}").write_text(
+                    "".join(f"{sha}\trefs/tags/{name}\n" for name, sha in shown), encoding="utf-8", newline="\n")
+        if view_fails_first is not None:
+            (self.dir / "view-fails-first").write_text(str(view_fails_first), encoding="utf-8")
+        if view_answer is not None:
+            (self.dir / "view-answer.json").write_text(json.dumps(view_answer), encoding="utf-8")
+        if tag_endpoint_fails_until is not None:
+            (self.dir / "tag-endpoint-fails-until").write_text(str(tag_endpoint_fails_until), encoding="utf-8")
         if list_fails_after is not None:
             (self.dir / "list-fails-after").write_text(str(list_fails_after), encoding="utf-8")
         self.work = self.root / "work"
@@ -1111,7 +1218,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
         cls.job = workflow(ROOT / ".github/workflows/release.yml")["jobs"]["publish-release"]
 
     def run_job(self, mode="publish", version="1.5.0", login_fails=False, signing_mode=None, no_files=False,
-                duplicate_asset=False, **fixture):
+                duplicate_asset=False, attempts=None, delay=None, step_env=None, **fixture):
         # `no_files` prepares no release files at all; `duplicate_asset` adds a second
         # file named like the first, in another directory.
         scratch = tempfile.TemporaryDirectory()
@@ -1128,7 +1235,17 @@ class PublishReleaseScriptTests(unittest.TestCase):
         (f.work / "signing-material/signing-mode").write_text((signing_mode or mode) + "\n", encoding="utf-8")
         if mode == "publish" and not no_files:
             (f.work / f"signing-material/nuget/vouchfx.{version}.nupkg.cosign.bundle").write_text("x", encoding="utf-8")
-        base = f.env(MODE=mode, VERSION=version, TAG=f"v{version}")
+        # The job's own bounds, except that the tests never wait between attempts.
+        # `attempts` and `delay` replace the bounds for a test that counts attempts or
+        # tries values that are not usable (a string, used as given). `step_env` maps
+        # a step name to environment values that replace the job's for that step only.
+        read_env = {k: v for k, v in self.job["env"].items() if k.startswith("RELEASE_READ_")}
+        read_env.update(RELEASE_READ_DELAY_SECONDS="0")
+        if attempts is not None:
+            read_env.update(RELEASE_READ_ATTEMPTS=str(attempts))
+        if delay is not None:
+            read_env.update(RELEASE_READ_DELAY_SECONDS=str(delay))
+        base = f.env(MODE=mode, VERSION=version, TAG=f"v{version}", **read_env)
         outputs = {"state": {}, "create": {}}
         failed, ran, log = False, [], ""
         for step in self.job["steps"]:
@@ -1156,8 +1273,10 @@ class PublishReleaseScriptTests(unittest.TestCase):
                      "${{ steps.state.outputs.state }}": outputs["state"].get("state", ""),
                      "${{ steps.state.outputs.draft_id }}": outputs["state"].get("draft_id", ""),
                      "${{ steps.create.outputs.created }}": outputs["create"].get("created", ""),
+                     "${{ steps.create.outputs.attempted }}": outputs["create"].get("attempted", ""),
                      "${{ steps.nuget-login.outputs.NUGET_API_KEY }}": "fixture-key"}
             env = dict(base, **{k: table[v] for k, v in step.get("env", {}).items()})
+            env.update((step_env or {}).get(step["name"], {}))
             code, output, step_outputs = f.run(step["run"], env)
             log += f"--- {step['name']} (exit {code})\n{output}"
             if "id" in step:
@@ -1466,16 +1585,18 @@ class PublishReleaseScriptTests(unittest.TestCase):
                 self.assertTrue(result["failed"])
                 self.assertIn(f"--- {CLEANUP_STEP} (exit 1)", result["log"])
                 self.assertIn(text, result["log"])
-                # Classify, read-back, and the clean-up's two lists.
-                self.assertEqual(4, result["calls"].count("gh api --paginate"), result["calls"])
+                # Classify, read-back, the clean-up's first list, and the lists after the
+                # deletion, which are tried again for every attempt.
+                self.assertEqual(3 + 12, result["calls"].count("gh api --paginate"), result["calls"])
 
     def test_rehearsal_clean_up_fails_when_its_own_draft_is_not_listed(self):
         result = self.run_job(mode="rehearse", version=REHEARSAL, markers=["list-hides-drafts"])
         self.assertTrue(result["failed"])
         self.assertIn(f"::error::This job created a rehearsal draft for 'v{REHEARSAL}', but the list of releases "
                       "does not show it. Look for the draft by hand and delete it.", result["log"])
-        # When the draft step made no draft, an empty list is the expected answer.
-        result = self.run_job(mode="rehearse", version=REHEARSAL, markers=["create-fails"])
+        # When the draft step stopped before it started the creation, an empty list
+        # is the expected answer.
+        result = self.run_job(mode="rehearse", version=REHEARSAL, no_files=True)
         self.assertTrue(result["failed"])
         self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
         self.assertIn(f"No rehearsal draft for v{REHEARSAL} to delete.", result["log"])
@@ -1622,6 +1743,566 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertIn("-X DELETE repos/tomas-rampas/vouchfx/releases/42", result["calls"])
         self.assertNotIn("gh release upload", result["calls"])
         self.assertNotIn("dotnet", result["calls"])
+
+    # GitHub's list of releases can lag behind a write. The fixtures model that by
+    # scripting single lists by their number (`list_overrides`): the classification
+    # is list 1, so the read-back after the create starts at list 2. The delay between
+    # attempts is 0 in these tests; the attempts are the job's own (12).
+
+    def list_calls(self, result, start="gh release create ", stop=None):
+        """Lists of the releases made from the first call that starts with `start`."""
+        calls = result["calls"]
+        begin = calls.find(start)
+        self.assertNotEqual(-1, begin, calls)
+        end = calls.find(stop, begin) if stop else len(calls)
+        return calls[begin:end if end != -1 else len(calls)].count("gh api --paginate")
+
+    def assertNewDraftNotListed(self, result, attempts=12):
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual(CREATE_STEP, result["ran"][-1])
+        self.assertIn(f"::error::The list of releases did not show the new draft for v1.5.0 after {attempts} "
+                      "attempts. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode the "
+                      "draft may exist: wait a few minutes, check that the Releases page lists one draft for "
+                      "v1.5.0, then \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the "
+                      "clean-up step.", result["log"])
+        self.assertNotIn("The list of releases shows the new draft for", result["log"])
+        for absent in ("gh release upload", "gh release edit", "dotnet"):
+            self.assertNotIn(absent, result["calls"])
+
+    def test_read_back_that_sees_the_draft_at_once_lists_once(self):
+        result = self.run_job()
+        self.assertFalse(result["failed"], result["log"])
+        self.assertEqual(1, self.list_calls(result, stop="gh release upload"), result["calls"])
+        self.assertIn("gh release upload v1.5.0", result["calls"])
+        self.assertIn("The list of releases shows the new draft for v1.5.0 on attempt 1 of 12.", result["log"])
+
+    VIEW = "gh release view v1.5.0 --json databaseId,isDraft,targetCommitish --jq "
+    UPLOAD = "gh release upload v1.5.0 "
+
+    def test_upload_runs_once_after_the_tool_finds_the_draft_that_was_read_back(self):
+        result = self.run_job()
+        self.assertFalse(result["failed"], result["log"])
+        self.assertEqual(1, result["calls"].count(self.VIEW), result["calls"])
+        self.assertEqual(1, result["calls"].count(self.UPLOAD), result["calls"])
+        self.calls_in_order(result, "gh release create v1.5.0 ", self.VIEW, self.UPLOAD)
+        self.assertEqual(1, result["log"].count("Done."), result["log"])
+        self.assertIn("The release tool finds the draft for v1.5.0 on attempt 1 of 12.", result["log"])
+        # The tool is asked at the second attempt when it fails at the first, and so on.
+        result = self.run_job(view_fails_first=2)
+        self.assertFalse(result["failed"], result["log"])
+        self.assertIn("The release tool finds the draft for v1.5.0 on attempt 3 of 12.", result["log"])
+        self.assertEqual(3, result["calls"].count(self.VIEW), result["calls"])
+        self.assertEqual(1, result["calls"].count(self.UPLOAD), result["calls"])
+        self.assertEqual(1, result["log"].count("Done."), result["log"])
+
+    def test_upload_waits_for_the_tool_within_the_job_bounds_and_gives_up_without_uploading(self):
+        message = ("::error::The tool did not find the draft for v1.5.0 after {} attempts, although the list of "
+                   "releases shows it. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode "
+                   "the draft is left in place: wait a few minutes, check that the Releases page lists one draft "
+                   "for v1.5.0, then \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the "
+                   "clean-up step.")
+        for attempts in (12, 3):
+            with self.subTest(attempts=attempts):
+                kwargs = {} if attempts == 12 else {"attempts": attempts}
+                result = self.run_job(markers=["view-fails"], **kwargs)
+                self.assertTrue(result["failed"], result["log"])
+                self.assertEqual(CREATE_STEP, result["ran"][-1])
+                self.assertEqual(attempts, result["calls"].count(self.VIEW), result["calls"])
+                self.assertIn(message.format(attempts), result["log"])
+                self.assertNotIn("The release tool finds the draft for", result["log"])
+                self.assertNotIn(self.UPLOAD, result["calls"])
+                self.assertNotIn("Done.", result["log"])
+                for absent in ("gh release edit", "dotnet"):
+                    self.assertNotIn(absent, result["calls"])
+        # A rehearsal deletes the draft in its clean-up step.
+        result = self.run_job(mode="rehearse", version=REHEARSAL, markers=["view-fails"])
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
+        self.assertEqual([], result["releases"])
+
+    def test_upload_is_refused_when_the_tool_finds_another_release_than_the_one_read_back(self):
+        found = "::error::The release the tool finds for v1.5.0 is not the draft this run created and read back. "
+        for label, answer, text in (
+                ("another id", {"id": 999},
+                 f"It found (id, draft flag, target) '999 true {RUN_SHA}' but expected '101 true {RUN_SHA}'."),
+                ("not a draft", {"draft": False},
+                 f"It found (id, draft flag, target) '101 false {RUN_SHA}' but expected '101 true {RUN_SHA}'."),
+                ("another target", {"target": OTHER},
+                 f"It found (id, draft flag, target) '101 true {OTHER}' but expected '101 true {RUN_SHA}'.")):
+            with self.subTest(case=label):
+                result = self.run_job(view_answer=answer)
+                self.assertTrue(result["failed"], result["log"])
+                self.assertEqual(CREATE_STEP, result["ran"][-1])
+                self.assertIn(found + text + " Nothing was uploaded and nothing was pushed to NuGet.org.",
+                              result["log"])
+                self.assertEqual(1, result["calls"].count(self.VIEW), result["calls"])
+                self.assertNotIn(self.UPLOAD, result["calls"])
+                for absent in ("gh release edit", "dotnet"):
+                    self.assertNotIn(absent, result["calls"])
+
+    def test_the_tool_answering_with_the_deleted_draft_is_lag_and_any_other_mismatch_is_not(self):
+        # The earlier draft (42) was deleted and a new one (101) was made and read back.
+        # The tool's lookup can lag like the list does and still answer with the deleted
+        # one. That release is gone, so it counts as an attempt and nothing is uploaded to it.
+        old = release("v1.5.0", True, rid=42)
+        fixture = dict(releases=[old], nuget=["vouchfx 1.5.0"])
+        result = self.run_job(**fixture)
+        self.assertFalse(result["failed"], result["log"])
+        self.assertEqual(1, result["calls"].count(self.VIEW), result["calls"])
+        # Two answers with the deleted id, then the new draft: three calls, one upload.
+        result = self.run_job(view_answer={"id": 42, "first": 2}, **fixture)
+        self.assertFalse(result["failed"], result["log"])
+        self.assertEqual(3, result["calls"].count(self.VIEW), result["calls"])
+        self.assertEqual(1, result["calls"].count(self.UPLOAD), result["calls"])
+        self.assertEqual(1, result["log"].count("Done."), result["log"])
+        # The deleted id on every call: the attempts run out, and nothing is uploaded.
+        message = ("::error::The tool did not find the draft for v1.5.0 after {} attempts, although the list of "
+                   "releases shows it.")
+        for attempts in (12, 3):
+            with self.subTest(attempts=attempts):
+                kwargs = {} if attempts == 12 else {"attempts": attempts}
+                result = self.run_job(view_answer={"id": 42}, **fixture, **kwargs)
+                self.assertTrue(result["failed"], result["log"])
+                self.assertEqual(CREATE_STEP, result["ran"][-1])
+                self.assertEqual(attempts, result["calls"].count(self.VIEW), result["calls"])
+                self.assertIn(message.format(attempts), result["log"])
+                self.assertNotIn("is not the draft this run created", result["log"])
+                self.assertNotIn(self.UPLOAD, result["calls"])
+                for absent in ("gh release edit", "dotnet"):
+                    self.assertNotIn(absent, result["calls"])
+        # Any other id is still refused at once.
+        result = self.run_job(view_answer={"id": 999, "first": 2}, **fixture)
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual(1, result["calls"].count(self.VIEW), result["calls"])
+        self.assertIn(f"but expected '101 true {RUN_SHA}'.", result["log"])
+        self.assertNotIn(self.UPLOAD, result["calls"])
+        # Without an earlier draft (state `none`) no id is left out: the tool answering
+        # with some other id is refused at once, and so is the id the deleted draft would have had.
+        for answer_id in (42, 999):
+            with self.subTest(state="none", answer_id=answer_id):
+                result = self.run_job(view_answer={"id": answer_id})
+                self.assertTrue(result["failed"], result["log"])
+                self.assertEqual(1, result["calls"].count(self.VIEW), result["calls"])
+                self.assertIn(f"::error::The release the tool finds for v1.5.0 is not the draft this run created "
+                              f"and read back. It found (id, draft flag, target) '{answer_id} true {RUN_SHA}' but "
+                              f"expected '101 true {RUN_SHA}'.", result["log"])
+                self.assertNotIn(self.UPLOAD, result["calls"])
+
+    def test_a_failed_upload_is_not_tried_again_and_stops_the_job_before_anything_is_pushed(self):
+        result = self.run_job(markers=["upload-fails"])
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual(CREATE_STEP, result["ran"][-1])
+        self.assertEqual(1, result["calls"].count(self.UPLOAD), result["calls"])
+        self.assertIn("::error::The upload to the draft for v1.5.0 failed. Nothing was pushed to NuGet.org. In "
+                      "publish mode the draft is left in place: \"Re-run failed jobs\" replaces it. A rehearsal "
+                      "deletes its draft in the clean-up step.", result["log"])
+        self.assertNotIn("Done.", result["log"])
+        for absent in ("gh release edit", "dotnet"):
+            self.assertNotIn(absent, result["calls"])
+        # The same with other bounds: the count does not follow them.
+        result = self.run_job(markers=["upload-fails"], attempts=3)
+        self.assertEqual(1, result["calls"].count(self.UPLOAD), result["calls"])
+
+    def test_read_back_waits_for_a_list_that_lags_behind_the_create(self):
+        # The list shows nothing for the tag on its first two reads after the create.
+        result = self.run_job(list_overrides={2: [], 3: []})
+        self.assertFalse(result["failed"], result["log"])
+        self.assertEqual(3, self.list_calls(result, stop="gh release upload"), result["calls"])
+        self.assertIn("gh release upload v1.5.0", result["calls"])
+        self.assertIn("The list of releases shows the new draft for v1.5.0 on attempt 3 of 12.", result["log"])
+        self.assertIs(False, result["releases"][0]["draft"])
+        # A failed read is tried again too.
+        result = self.run_job(list_overrides={2: "fail", 3: []})
+        self.assertFalse(result["failed"], result["log"])
+        self.assertEqual(3, self.list_calls(result, stop="gh release upload"), result["calls"])
+
+    def test_read_back_gives_up_after_the_attempts_when_the_draft_never_shows(self):
+        result = self.run_job(markers=["list-hides-drafts"])
+        self.assertNewDraftNotListed(result)
+        self.assertEqual(12, self.list_calls(result), result["calls"])
+        self.assertEqual("true", result["outputs"]["create"].get("created"))
+        # The same bounds, when the job's attempts differ.
+        result = self.run_job(markers=["list-hides-drafts"], attempts=3)
+        self.assertNewDraftNotListed(result, attempts=3)
+        self.assertEqual(3, self.list_calls(result), result["calls"])
+
+    def test_read_back_that_cannot_read_the_list_on_any_attempt_says_so(self):
+        result = self.run_job(list_fails_after=1)
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn("::error::Could not read the releases back after creating the draft for v1.5.0.", result["log"])
+        self.assertEqual(12, self.list_calls(result), result["calls"])
+        self.assertNotIn("gh release upload", result["calls"])
+
+    def test_read_back_never_takes_the_deleted_earlier_draft_for_the_new_one(self):
+        old = release("v1.5.0", True, rid=42)
+        fixture = dict(releases=[old], nuget=["vouchfx 1.5.0"])
+        # The lagging list still shows the deleted draft alone, then only the new one.
+        result = self.run_job(list_overrides={2: [old]}, **fixture)
+        self.assertFalse(result["failed"], result["log"])
+        self.assertEqual(2, self.list_calls(result, stop="gh release upload"), result["calls"])
+        [published] = result["releases"]
+        self.assertNotEqual(42, published["id"])
+        self.assertEqual(run_assets(), published["assets"])
+        # Shown beside the new draft, the deleted one is not counted as a second entry.
+        new = release("v1.5.0", True, rid=101)
+        result = self.run_job(list_overrides={2: [old, new]}, **fixture)
+        self.assertFalse(result["failed"], result["log"])
+        self.assertEqual(1, self.list_calls(result, stop="gh release upload"), result["calls"])
+        # Alone, on every attempt, it is never accepted.
+        result = self.run_job(list_overrides={n: [old] for n in range(2, 14)}, **fixture)
+        self.assertNewDraftNotListed(result)
+        self.assertEqual(12, self.list_calls(result), result["calls"])
+        self.assertNotIn("entries found for the tag", result["log"])
+
+    def test_read_back_with_two_entries_fails_at_once(self):
+        first, second = release("v1.5.0", True, rid=101), release("v1.5.0", True, rid=102)
+        result = self.run_job(list_overrides={2: [first, second]})
+        self.assertReadBackRefused(result, "2, draft flag '', target ''")
+        self.assertEqual(1, self.list_calls(result), result["calls"])
+        # Neither is the deleted draft, so the exclusion does not hide either of them.
+        old = release("v1.5.0", True, rid=42)
+        result = self.run_job(releases=[old], nuget=["vouchfx 1.5.0"], list_overrides={2: [first, second]})
+        self.assertReadBackRefused(result, "2, draft flag '', target ''")
+        self.assertEqual(1, self.list_calls(result), result["calls"])
+
+    def test_read_back_with_a_wrong_target_or_draft_flag_fails_at_once(self):
+        for label, fixture, found in (
+                ("wrong target", {"create_target": "main"}, "1, draft flag 'true', target 'main'"),
+                ("not a draft", {"markers": ["create-not-draft"]}, f"1, draft flag 'false', target '{RUN_SHA}'")):
+            with self.subTest(case=label):
+                result = self.run_job(**fixture)
+                self.assertReadBackRefused(result, found)
+                self.assertEqual(1, self.list_calls(result), result["calls"])
+
+    def test_rehearsal_clean_up_waits_for_a_list_that_lags_behind_the_create(self):
+        # Lists: 1 classify, 2 read-back, then the clean-up's. It sees no draft twice.
+        result = self.run_job(mode="rehearse", version=REHEARSAL, list_overrides={3: [], 4: []})
+        self.assertFalse(result["failed"], result["log"])
+        self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
+        self.assertEqual([], result["releases"])
+        self.assertEqual(1, result["calls"].count("gh api -X DELETE"))
+        # Classify, read-back, three lists to find the draft, one after the deletion.
+        self.assertEqual(6, result["calls"].count("gh api --paginate"), result["calls"])
+        self.assertIn(f"The list of releases shows a rehearsal draft for v{REHEARSAL} on attempt 3 of 12.",
+                      result["log"])
+
+    def test_rehearsal_clean_up_fails_after_the_attempts_when_its_draft_never_shows(self):
+        result = self.run_job(mode="rehearse", version=REHEARSAL, list_overrides={n: [] for n in range(3, 15)})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn(f"--- {CLEANUP_STEP} (exit 1)", result["log"])
+        self.assertIn(f"::error::This job created a rehearsal draft for 'v{REHEARSAL}', but the list of releases "
+                      "does not show it. Look for the draft by hand and delete it.", result["log"])
+        self.assertEqual(2 + 12, result["calls"].count("gh api --paginate"), result["calls"])
+        self.assertNotIn("-X DELETE", result["calls"])
+        self.assertNotIn("The list of releases shows a rehearsal draft for", result["log"])
+
+    def test_rehearsal_clean_up_reads_once_when_no_creation_was_started(self):
+        result = self.run_job(mode="rehearse", version=REHEARSAL, no_files=True)
+        self.assertNotIn("attempted", result["outputs"]["create"])
+        self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
+        self.assertIn(f"No rehearsal draft for v{REHEARSAL} to delete.", result["log"])
+        self.assertNotIn("::warning::", result["log"])
+        # The classification and the clean-up.
+        self.assertEqual(2, result["calls"].count("gh api --paginate"), result["calls"])
+
+    def test_a_stop_after_the_duplicate_name_check_and_before_the_create_call_does_not_report_attempted(self):
+        # The earlier draft cannot be read back for the delete, which stops the step
+        # before the create call. Only a step that reached the create call reports it.
+        old = release("v1.5.0", True, rid=42)
+        result = self.run_job(releases=[old], nuget=["vouchfx 1.5.0"], markers=["release-read-fails"])
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual(CREATE_STEP, result["ran"][-1])
+        self.assertIn("could not be read, or is no longer the draft", result["log"])
+        self.assertNotIn("attempted", result["outputs"]["create"])
+        self.assertNotIn("gh release create", result["calls"])
+        self.assertNotIn("-X DELETE", result["calls"])
+
+    def test_create_that_fails_inside_the_create_call_reports_attempted_and_not_created(self):
+        result = self.run_job(mode="rehearse", version=REHEARSAL, markers=["create-fails"])
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual("true", result["outputs"]["create"].get("attempted"))
+        self.assertNotIn("created", result["outputs"]["create"])
+        self.assertIn(f"gh release create v{REHEARSAL} ", result["calls"])
+        self.assertNotIn("gh release upload", result["calls"])
+
+    def test_rehearsal_clean_up_warns_when_a_failed_creation_shows_no_draft(self):
+        warning = (f"::warning::This job started the creation of a rehearsal draft for 'v{REHEARSAL}' and the "
+                   f"creation failed. The list of releases shows no draft for 'v{REHEARSAL}' after 12 attempts. "
+                   f"Check the Releases page by hand for a draft for 'v{REHEARSAL}' and delete it if there is one.")
+        result = self.run_job(mode="rehearse", version=REHEARSAL, markers=["create-fails"])
+        self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
+        self.assertIn(warning, result["log"])
+        self.assertNotIn("No rehearsal draft for", result["log"])
+        self.assertNotIn("-X DELETE", result["calls"])
+        # The classification and twelve reads in the clean-up.
+        self.assertEqual(1 + 12, result["calls"].count("gh api --paginate"), result["calls"])
+        # The bound follows the job's attempts.
+        result = self.run_job(mode="rehearse", version=REHEARSAL, markers=["create-fails"], attempts=3)
+        self.assertIn(warning.replace("after 12 attempts", "after 3 attempts"), result["log"])
+        self.assertEqual(1 + 3, result["calls"].count("gh api --paginate"), result["calls"])
+
+    def test_rehearsal_clean_up_deletes_a_draft_that_a_failed_creation_left(self):
+        # GitHub stored the draft and the call still failed. The classification is list
+        # 1; the clean-up's first list (2) shows nothing, the second shows the draft.
+        result = self.run_job(mode="rehearse", version=REHEARSAL, markers=["create-stores-then-fails"],
+                              list_overrides={2: []})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual("true", result["outputs"]["create"].get("attempted"))
+        self.assertNotIn("created", result["outputs"]["create"])
+        self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
+        self.assertEqual(1, result["calls"].count("gh api -X DELETE"), result["calls"])
+        self.assertIn(f"Deleted the rehearsal draft 101 for v{REHEARSAL}.", result["log"])
+        self.assertEqual([], result["releases"])
+        self.assertNotIn("::warning::", result["log"])
+        # Classify, two lists to find the draft, one after the deletion.
+        self.assertEqual(4, result["calls"].count("gh api --paginate"), result["calls"])
+
+    def test_rehearsal_clean_up_waits_for_the_list_to_drop_the_deleted_draft(self):
+        draft = release(f"v{REHEARSAL}", True, rid=101)
+        # Without lag, both reads succeed on their first attempt.
+        result = self.run_job(mode="rehearse", version=REHEARSAL)
+        self.assertFalse(result["failed"], result["log"])
+        self.assertIn(f"The list of releases shows a rehearsal draft for v{REHEARSAL} on attempt 1 of 12.",
+                      result["log"])
+        self.assertIn(f"The list of releases shows nothing for v{REHEARSAL} on attempt 1 of 12 after the deletion.",
+                      result["log"])
+        # Lists: 1 classify, 2 read-back, 3 the clean-up's first (the draft is deleted
+        # after it), then the list still shows the draft once.
+        result = self.run_job(mode="rehearse", version=REHEARSAL, list_overrides={4: [draft]})
+        self.assertFalse(result["failed"], result["log"])
+        self.assertIn(f"The list of releases shows nothing for v{REHEARSAL} on attempt 2 of 12 after the deletion.",
+                      result["log"])
+        self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
+        self.assertEqual(5, result["calls"].count("gh api --paginate"), result["calls"])
+        self.assertEqual([], result["releases"])
+        # It still shows the draft on every attempt.
+        result = self.run_job(mode="rehearse", version=REHEARSAL, list_overrides={n: [draft] for n in range(4, 16)})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn(f"::error::A release or draft for 'v{REHEARSAL}' remains after the deletion. Delete it by hand.",
+                      result["log"])
+        self.assertNotIn(f"The list of releases shows nothing for v{REHEARSAL}", result["log"])
+        self.assertEqual(3 + 12, result["calls"].count("gh api --paginate"), result["calls"])
+        # The last read fails.
+        result = self.run_job(mode="rehearse", version=REHEARSAL,
+                              list_overrides={**{n: [draft] for n in range(4, 15)}, 15: "fail"})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn("::error::Could not read the releases after the deletion; check by hand that no draft for "
+                      f"'v{REHEARSAL}' remains.", result["log"])
+        self.assertEqual(3 + 12, result["calls"].count("gh api --paginate"), result["calls"])
+
+    def test_verification_waits_for_a_release_that_is_not_yet_readable(self):
+        tag_read = "gh api repos/tomas-rampas/vouchfx/releases/tags/v1.5.0 --jq .draft\n"
+        result = self.run_job(tag_endpoint_fails_until=1)
+        self.assertFalse(result["failed"], result["log"])
+        self.assertEqual(2, result["calls"].count(tag_read), result["calls"])
+        self.assertIn("Verified: v1.5.0 is at", result["log"])
+        self.assertIn("The tag and the published Release for v1.5.0 were read on attempt 2 of 12.", result["log"])
+        # Without lag, the first attempt is enough.
+        result = self.run_job()
+        self.assertFalse(result["failed"], result["log"])
+        self.assertIn("The tag and the published Release for v1.5.0 were read on attempt 1 of 12.", result["log"])
+        # Never published: it gives up after the attempts, with the existing error.
+        result = self.run_job(markers=["edit-keeps-draft"])
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual(VERIFY_STEP, result["ran"][-1])
+        self.assertIn("::error::The Release v1.5.0 is not published.", result["log"])
+        self.assertNotIn("The tag and the published Release for", result["log"])
+        self.assertEqual(12, result["calls"].count(tag_read), result["calls"])
+
+    def test_verification_waits_for_a_tag_that_is_not_yet_listed(self):
+        # The tags are listed to classify and just before the publication; the
+        # verification is the third listing.
+        listing = "git ls-remote --tags origin\n"
+        for label, late in (("absent", []), ("unreadable", None)):
+            with self.subTest(case=label):
+                result = self.run_job(ls_overrides={3: late})
+                self.assertFalse(result["failed"], result["log"])
+                self.assertEqual(4, result["calls"].count(listing), result["calls"])
+        result = self.run_job(ls_overrides={n: [] for n in range(3, 15)})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual(VERIFY_STEP, result["ran"][-1])
+        self.assertIn("::error::Tag 'v1.5.0' was not found after 12 reads. Publishing the Release should have "
+                      f"created it at this run's commit {RUN_SHA}.", result["log"])
+        self.assertNotIn("The tag and the published Release for", result["log"])
+        self.assertEqual(2 + 12, result["calls"].count(listing), result["calls"])
+        result = self.run_job(ls_overrides={n: None for n in range(3, 15)})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn("::error::Could not read the remote tags.", result["log"])
+        self.assertEqual(2 + 12, result["calls"].count(listing), result["calls"])
+
+    def test_verification_fails_at_once_for_a_tag_at_another_commit(self):
+        result = self.run_job(ls_overrides={3: [("v1.5.0", OTHER)]})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual(VERIFY_STEP, result["ran"][-1])
+        self.assertIn(f"::error::Tag 'v1.5.0' resolves to '{OTHER}', not to this run's commit {RUN_SHA}.",
+                      result["log"])
+        self.assertEqual(3, result["calls"].count("git ls-remote --tags origin\n"), result["calls"])
+        self.assertNotIn("releases/tags/", result["calls"])
+
+    # Bounds that are not usable. The attempts must be a whole number from 1 to 99 and
+    # the delay one from 0 to 99; anything else (a bash arithmetic error inside a
+    # `for ((...))` loop does not stop the script) must not turn a loop into no loop.
+    # Three digits are refused too: on bash 5.2 a loop that counts up to 9223372036854775808
+    # makes no iteration at all, because the value wraps around.
+    BAD_BOUNDS = ([{"attempts": value} for value in ("0", "", "-1", "1e3", "abc", "100", "9223372036854775808")]
+                  + [{"delay": value} for value in ("-1", "abc", "", "100")])
+
+    @staticmethod
+    def bounds_text(bounds):
+        return (f"RELEASE_READ_ATTEMPTS is '{bounds.get('attempts', '12')}' (a whole number from 1 to 99 is "
+                f"needed) and RELEASE_READ_DELAY_SECONDS is '{bounds.get('delay', '0')}' (a whole number from 0 to "
+                "99 is needed).")
+
+    def assertNoCallsOf(self, result, *prefixes, allowed=0):
+        lines = result["calls"].splitlines()
+        for prefix in prefixes:
+            self.assertEqual(allowed, len([line for line in lines if line.startswith(prefix)]), result["calls"])
+
+    def test_create_step_with_bounds_that_are_not_usable_fails_before_any_call(self):
+        for bounds in self.BAD_BOUNDS:
+            with self.subTest(bounds=bounds):
+                result = self.run_job(**bounds)
+                self.assertTrue(result["failed"], result["log"])
+                self.assertEqual(CREATE_STEP, result["ran"][-1])
+                self.assertIn(f"--- {CREATE_STEP} (exit 1)", result["log"])
+                self.assertIn("::error::The read bounds are not usable: " + self.bounds_text(bounds)
+                              + " Nothing was read, created, uploaded or verified by this step.", result["log"])
+                # Only the classification's list and tag listing: this step made no call.
+                self.assertNoCallsOf(result, "gh ", "git ", allowed=1)
+                self.assertNotIn("gh release", result["calls"])
+                self.assertNotIn("dotnet", result["calls"])
+                self.assertEqual({}, result["outputs"]["create"])
+        # With an earlier draft (state `draft`) the check still comes first: that draft
+        # is neither read again nor deleted.
+        result = self.run_job(releases=[release("v1.5.0", True, rid=42)], nuget=["vouchfx 1.5.0"], attempts="0")
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual(CREATE_STEP, result["ran"][-1])
+        self.assertIn(" Nothing was read, created, uploaded or verified by this step.", result["log"])
+        self.assertNotIn("releases/42", result["calls"])
+        self.assertNotIn("-X DELETE", result["calls"])
+        self.assertNotIn("gh release", result["calls"])
+        self.assertEqual({}, result["outputs"]["create"])
+
+    def test_verify_step_with_bounds_that_are_not_usable_fails_before_any_call(self):
+        for bounds in self.BAD_BOUNDS:
+            with self.subTest(bounds=bounds):
+                step_env = {VERIFY_STEP: {"RELEASE_READ_" + ("ATTEMPTS" if "attempts" in bounds else "DELAY_SECONDS"):
+                                          next(iter(bounds.values()))}}
+                result = self.run_job(step_env=step_env)
+                self.assertTrue(result["failed"], result["log"])
+                self.assertEqual(VERIFY_STEP, result["ran"][-1])
+                self.assertIn(f"--- {VERIFY_STEP} (exit 1)", result["log"])
+                self.assertIn("::error::The read bounds are not usable: " + self.bounds_text(bounds)
+                              + " Nothing was read, created, uploaded or verified by this step.", result["log"])
+                self.assertNotIn("Verified:", result["log"])
+                # The classification and the publication step read the tags; this step did not.
+                self.assertEqual(2, result["calls"].count("git ls-remote --tags origin\n"), result["calls"])
+                self.assertNotIn("releases/tags/", result["calls"])
+
+    def test_verification_cannot_report_success_when_the_loop_makes_no_attempt(self):
+        # The same script without the bounds check, so that the loop's own start value
+        # is what is tried: with no attempt, nothing is verified.
+        run = next(s for s in self.job["steps"] if s["name"] == VERIFY_STEP)["run"]
+        check_end = run.index("\nfi\n") + len("\nfi\n")  # the end of the bounds check
+        script = "set -euo pipefail\n" + run[check_end:]
+        self.assertIn("\nproblem=", script)
+        for attempts in ("0", "", "-1", "1e3"):
+            with self.subTest(attempts=attempts):
+                scratch = tempfile.TemporaryDirectory()
+                self.addCleanup(scratch.cleanup)
+                f = Fixture(scratch.name, tags=[("v1.5.0", RUN_SHA)], releases=[release("v1.5.0", False)])
+                env = f.env(MODE="publish", VERSION="1.5.0", TAG="v1.5.0", GH_REPO=REPOSITORY,
+                            RELEASE_READ_ATTEMPTS=attempts, RELEASE_READ_DELAY_SECONDS="0")
+                code, output, _ = f.run(script, env)
+                self.assertEqual(1, code, output)
+                self.assertNotIn("Verified:", output)
+                self.assertIn("::error::Nothing was checked: no attempt read the tag and the Release for v1.5.0.",
+                              output)
+                self.assertEqual("", f.calls)
+
+    def test_rehearsal_clean_up_with_bounds_that_are_not_usable_warns_and_still_deletes_the_draft(self):
+        for bounds in self.BAD_BOUNDS:
+            with self.subTest(bounds=bounds):
+                step_env = {CLEANUP_STEP: {"RELEASE_READ_" + ("ATTEMPTS" if "attempts" in bounds else "DELAY_SECONDS"):
+                                           next(iter(bounds.values()))}}
+                result = self.run_job(mode="rehearse", version=REHEARSAL, step_env=step_env)
+                self.assertFalse(result["failed"], result["log"])
+                self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
+                self.assertIn("::warning::The read bounds are not usable: " + self.bounds_text(bounds)
+                              + " This step makes one attempt and waits for nothing.", result["log"])
+                self.assertEqual(1, result["calls"].count("gh api -X DELETE"), result["calls"])
+                self.assertEqual([], result["releases"])
+                # Classify and read-back, then one read for the draft and one after the deletion.
+                self.assertEqual(4, result["calls"].count("gh api --paginate"), result["calls"])
+
+    def test_rehearsal_clean_up_with_bounds_that_are_not_usable_reads_once_and_still_fails_closed(self):
+        # One attempt, and the list does not show the draft this job created.
+        step_env = {CLEANUP_STEP: {"RELEASE_READ_ATTEMPTS": "0"}}
+        result = self.run_job(mode="rehearse", version=REHEARSAL, step_env=step_env, list_overrides={3: []})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn("::warning::The read bounds are not usable", result["log"])
+        self.assertIn("::error::This job created a rehearsal draft", result["log"])
+        self.assertEqual(3, result["calls"].count("gh api --paginate"), result["calls"])
+
+    def test_rehearsal_clean_up_reads_follow_the_job_bound(self):
+        draft = release(f"v{REHEARSAL}", True, rid=101)
+        # The draft never shows: three reads after the classification and the read-back.
+        result = self.run_job(mode="rehearse", version=REHEARSAL, attempts=3,
+                              list_overrides={n: [] for n in range(3, 20)})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn("::error::This job created a rehearsal draft", result["log"])
+        self.assertEqual(2 + 3, result["calls"].count("gh api --paginate"), result["calls"])
+        # The deleted draft stays listed: three reads after the one that found it.
+        result = self.run_job(mode="rehearse", version=REHEARSAL, attempts=3,
+                              list_overrides={n: [draft] for n in range(4, 20)})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn("remains after the deletion", result["log"])
+        self.assertEqual(3 + 3, result["calls"].count("gh api --paginate"), result["calls"])
+
+    def test_verification_reads_follow_the_job_bound(self):
+        listing = "git ls-remote --tags origin\n"
+        result = self.run_job(attempts=3, ls_overrides={n: [] for n in range(3, 20)})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual(VERIFY_STEP, result["ran"][-1])
+        self.assertEqual(2 + 3, result["calls"].count(listing), result["calls"])
+        result = self.run_job(attempts=3, markers=["edit-keeps-draft"])
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual(3, result["calls"].count("gh api repos/tomas-rampas/vouchfx/releases/tags/v1.5.0 --jq .draft\n"),
+                         result["calls"])
+
+    def test_read_back_message_follows_the_last_attempt_when_earlier_ones_differ(self):
+        could_not = "::error::Could not read the releases back after creating the draft for v1.5.0."
+        not_shown = "::error::The list of releases did not show the new draft for v1.5.0 after 12 attempts."
+        # Eleven lists show nothing for the tag, the twelfth fails.
+        result = self.run_job(list_overrides={**{n: [] for n in range(2, 13)}, 13: "fail"})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn(could_not, result["log"])
+        self.assertNotIn(not_shown, result["log"])
+        self.assertEqual(12, self.list_calls(result), result["calls"])
+        # Eleven lists fail, the twelfth succeeds with nothing for the tag.
+        result = self.run_job(list_overrides={**{n: "fail" for n in range(2, 13)}, 13: []})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn(not_shown, result["log"])
+        self.assertNotIn(could_not, result["log"])
+        self.assertEqual(12, self.list_calls(result), result["calls"])
+
+    def test_clean_up_message_follows_the_last_attempt_when_earlier_ones_differ(self):
+        could_not = f"::error::Could not read the releases; delete the rehearsal draft for 'v{REHEARSAL}' by hand."
+        not_shown = (f"::error::This job created a rehearsal draft for 'v{REHEARSAL}', but the list of releases "
+                     "does not show it. Look for the draft by hand and delete it.")
+        # Lists 1 and 2 are the classification and the read-back; the clean-up's are 3 to 14.
+        result = self.run_job(mode="rehearse", version=REHEARSAL,
+                              list_overrides={**{n: [] for n in range(3, 14)}, 14: "fail"})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn(could_not, result["log"])
+        self.assertNotIn(not_shown, result["log"])
+        self.assertEqual(2 + 12, result["calls"].count("gh api --paginate"), result["calls"])
+        result = self.run_job(mode="rehearse", version=REHEARSAL,
+                              list_overrides={**{n: "fail" for n in range(3, 14)}, 14: []})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn(not_shown, result["log"])
+        self.assertNotIn(could_not, result["log"])
+        self.assertEqual(2 + 12, result["calls"].count("gh api --paginate"), result["calls"])
 
     def test_two_release_files_with_one_name_are_refused_before_the_draft(self):
         result = self.run_job(duplicate_asset=True)
