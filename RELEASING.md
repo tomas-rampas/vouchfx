@@ -306,19 +306,26 @@ Four rules apply to every case:
     expected to happen: it means that someone made a draft for the tag during
     the run, or that an assumption about GitHub is wrong. Look at the drafts
     for the tag on the Releases page and do not re-run until you understand
-    it.
+    it. Two drafts can also both come from this run: one from an earlier
+    attempt whose draft the list never showed (the next failure), and one from
+    the re-run. In that case delete one of the two by hand, so that exactly
+    one remains, and use **Re-run failed jobs**.
   - The list never shows the draft. The message begins `The list of releases
-    did not show the new draft for v<version>`. In `publish` mode the draft
-    may exist: **Re-run failed jobs** replaces it. A rehearsal deletes its
-    draft in the clean-up step. Nothing was uploaded.
+    did not show the new draft for v<version>`. Nothing was uploaded. In
+    `publish` mode the draft may exist. Wait a few minutes, check that the
+    Releases page lists exactly one draft for the tag, and then use **Re-run
+    failed jobs**, which replaces it. A rehearsal deletes its draft in the
+    clean-up step.
   - The list cannot be read on the last attempt. The message begins `Could not
     read the releases back after creating the draft for`. Nothing was
     uploaded. A draft may exist, so look at the drafts for the tag on the
     Releases page. **Re-run failed jobs** replaces a draft that is there.
   - The release tool never finds the draft. The message begins `The tool did
     not find the draft for v<version>`. Nothing was uploaded. In `publish`
-    mode the draft is left in place: **Re-run failed jobs** replaces it. A
-    rehearsal deletes its draft in the clean-up step.
+    mode the draft is left in place. Wait a few minutes, check that the
+    Releases page lists exactly one draft for the tag, and then use **Re-run
+    failed jobs**, which replaces it. A rehearsal deletes its draft in the
+    clean-up step.
   - The release tool finds another release for the tag. The message begins
     `The release the tool finds for v<version> is not the draft this run
     created and read back`, and says what it found. Nothing was uploaded. Like
@@ -378,7 +385,14 @@ The cases:
    classification then finds a
    published Release, and the run is expected to continue (see case 8). If it
    fails the same way again, look at the Releases page before you re-run once
-   more.
+   more. After the same wait the step can also end with `Tag 'v<version>' was
+   not found after 12 reads.` or with `Could not read the remote tags.` In
+   both the publication step has already run. Wait a few minutes, check on
+   GitHub that the tag exists and points at the tested commit, and then use
+   **Re-run failed jobs**. If the tag still does not exist, the classification
+   stops with `A published Release for 'v<version>' exists but its tag cannot
+   be found.` Do not re-run again, and move nothing by hand, before you know
+   why the Release has no tag.
 7. **No draft and no Release, but a package of the version is on NuGet.org.** In
    `publish` mode the classification fails with a message that the package is
    already on NuGet.org and that no draft or Release exists for the tag. Before
@@ -611,9 +625,13 @@ version of the form `1.5.0-validate.1`, was green. The first `rehearse` run, on
 `main`, reached the publishing job and failed in the read-back of the new
 draft: GitHub's list of releases lags behind a write, and it showed no draft
 about a second after the draft was made. The clean-up step then found the draft
-and deleted it. The job now waits for the list for up to about a minute. The
-upload and the NuGet login have not run, and `publish` mode has not run. The
-contract tests
+and deleted it, and the list showed nothing for the tag on the first read after
+the deletion. The job now waits for the list for up to about a minute. The
+upload and the NuGet login have not run, and `publish` mode has not run. A
+check by hand with a maintainer's token, not the job's token, showed the same
+lag (nothing listed 1.4 seconds after the creation, the draft listed 4 seconds
+after it), the full commit as the draft's target, the release tool finding the
+draft by its tag with the same id, and an upload by tag. The contract tests
 (`scripts/ci/test_release_workflow.py`) check the workflow file and run its step
 scripts with fixture commands; they cannot show the points below. Work through
 them in order, and correct this document where a run shows something different.
@@ -645,6 +663,8 @@ The first `rehearse` run, on `main`, must show:
   before and after the policy on NuGet.org gains the environment (see
   [NuGet.org publish](#nugetorg-publish-trusted-publishing)).
 - [x] The rehearsal draft is deleted, also after a failed step.
+- [ ] How many reads each wait needed. The log of each wait says
+  `on attempt N of 12`; note the highest N here.
 - [ ] Whether the inputs, the approval and the earlier attempt's artefacts
   carry over on **Re-run failed jobs**.
 

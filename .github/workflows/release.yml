@@ -2049,13 +2049,14 @@ jobs:
               exit 1
             fi
             readback_done=true
+            echo "The list of releases shows the new draft for $TAG on attempt $attempt of $RELEASE_READ_ATTEMPTS."
             break
           done
           if [[ "$readback_done" != "true" ]]; then
             if [[ "$readback_listed" != "true" ]]; then
               echo "::error::Could not read the releases back after creating the draft for $TAG. Nothing was uploaded and nothing was pushed to NuGet.org."
             else
-              echo "::error::The list of releases did not show the new draft for $TAG after $RELEASE_READ_ATTEMPTS attempts. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode the draft may exist: \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the next step."
+              echo "::error::The list of releases did not show the new draft for $TAG after $RELEASE_READ_ATTEMPTS attempts. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode the draft may exist: wait a few minutes, check that the Releases page lists one draft for $TAG, then \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the clean-up step."
             fi
             exit 1
           fi
@@ -2088,15 +2089,16 @@ jobs:
               exit 1
             fi
             view_done=true
+            echo "The release tool finds the draft for $TAG on attempt $attempt of $RELEASE_READ_ATTEMPTS."
             break
           done
           if [[ "$view_done" != "true" ]]; then
-            echo "::error::The tool did not find the draft for $TAG after $RELEASE_READ_ATTEMPTS attempts, although the list of releases shows it. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode the draft is left in place: \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the next step."
+            echo "::error::The tool did not find the draft for $TAG after $RELEASE_READ_ATTEMPTS attempts, although the list of releases shows it. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode the draft is left in place: wait a few minutes, check that the Releases page lists one draft for $TAG, then \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the clean-up step."
             exit 1
           fi
           echo "Uploading ${#files[@]} files to the draft $TAG..."
           if ! gh release upload "$TAG" "${files[@]}" --clobber; then
-            echo "::error::The upload to the draft for $TAG failed. Nothing was pushed to NuGet.org. In publish mode the draft is left in place: \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the next step."
+            echo "::error::The upload to the draft for $TAG failed. Nothing was pushed to NuGet.org. In publish mode the draft is left in place: \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the clean-up step."
             exit 1
           fi
           echo "Done."
@@ -2171,6 +2173,7 @@ jobs:
             fi
             ids="$(awk -F'\t' -v tag="$TAG" '$1 == tag && $2 == "true" { print $3 }' <<<"$releases")"
             if [[ -n "$ids" ]]; then
+              echo "The list of releases shows a rehearsal draft for $TAG on attempt $attempt of $reads."
               break
             fi
           done
@@ -2209,6 +2212,7 @@ jobs:
             listed=true
             if ! awk -F'\t' -v tag="$TAG" '$1 == tag { found = 1 } END { exit !found }' <<<"$releases"; then
               clean=true
+              echo "The list of releases shows nothing for $TAG on attempt $attempt of $RELEASE_READ_ATTEMPTS after the deletion."
               break
             fi
           done
@@ -2365,6 +2369,7 @@ jobs:
               continue
             fi
             problem=""
+            echo "The tag and the published Release for $TAG were read on attempt $attempt of $RELEASE_READ_ATTEMPTS."
             break
           done
           case "$problem" in
@@ -2378,7 +2383,7 @@ jobs:
               exit 1
               ;;
             tag-absent)
-              echo "::error::Tag '$TAG' resolves to '', not to this run's commit $GITHUB_SHA."
+              echo "::error::Tag '$TAG' was not found after $RELEASE_READ_ATTEMPTS reads. Publishing the Release should have created it at this run's commit $GITHUB_SHA."
               exit 1
               ;;
             *)

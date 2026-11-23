@@ -1762,8 +1762,10 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertEqual(CREATE_STEP, result["ran"][-1])
         self.assertIn(f"::error::The list of releases did not show the new draft for v1.5.0 after {attempts} "
                       "attempts. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode the "
-                      "draft may exist: \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the "
-                      "next step.", result["log"])
+                      "draft may exist: wait a few minutes, check that the Releases page lists one draft for "
+                      "v1.5.0, then \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the "
+                      "clean-up step.", result["log"])
+        self.assertNotIn("The list of releases shows the new draft for", result["log"])
         for absent in ("gh release upload", "gh release edit", "dotnet"):
             self.assertNotIn(absent, result["calls"])
 
@@ -1772,6 +1774,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertFalse(result["failed"], result["log"])
         self.assertEqual(1, self.list_calls(result, stop="gh release upload"), result["calls"])
         self.assertIn("gh release upload v1.5.0", result["calls"])
+        self.assertIn("The list of releases shows the new draft for v1.5.0 on attempt 1 of 12.", result["log"])
 
     VIEW = "gh release view v1.5.0 --json databaseId,isDraft,targetCommitish --jq "
     UPLOAD = "gh release upload v1.5.0 "
@@ -1783,9 +1786,11 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertEqual(1, result["calls"].count(self.UPLOAD), result["calls"])
         self.calls_in_order(result, "gh release create v1.5.0 ", self.VIEW, self.UPLOAD)
         self.assertEqual(1, result["log"].count("Done."), result["log"])
+        self.assertIn("The release tool finds the draft for v1.5.0 on attempt 1 of 12.", result["log"])
         # The tool is asked at the second attempt when it fails at the first, and so on.
         result = self.run_job(view_fails_first=2)
         self.assertFalse(result["failed"], result["log"])
+        self.assertIn("The release tool finds the draft for v1.5.0 on attempt 3 of 12.", result["log"])
         self.assertEqual(3, result["calls"].count(self.VIEW), result["calls"])
         self.assertEqual(1, result["calls"].count(self.UPLOAD), result["calls"])
         self.assertEqual(1, result["log"].count("Done."), result["log"])
@@ -1793,8 +1798,9 @@ class PublishReleaseScriptTests(unittest.TestCase):
     def test_upload_waits_for_the_tool_within_the_job_bounds_and_gives_up_without_uploading(self):
         message = ("::error::The tool did not find the draft for v1.5.0 after {} attempts, although the list of "
                    "releases shows it. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode "
-                   "the draft is left in place: \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft "
-                   "in the next step.")
+                   "the draft is left in place: wait a few minutes, check that the Releases page lists one draft "
+                   "for v1.5.0, then \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the "
+                   "clean-up step.")
         for attempts in (12, 3):
             with self.subTest(attempts=attempts):
                 kwargs = {} if attempts == 12 else {"attempts": attempts}
@@ -1803,11 +1809,12 @@ class PublishReleaseScriptTests(unittest.TestCase):
                 self.assertEqual(CREATE_STEP, result["ran"][-1])
                 self.assertEqual(attempts, result["calls"].count(self.VIEW), result["calls"])
                 self.assertIn(message.format(attempts), result["log"])
+                self.assertNotIn("The release tool finds the draft for", result["log"])
                 self.assertNotIn(self.UPLOAD, result["calls"])
                 self.assertNotIn("Done.", result["log"])
                 for absent in ("gh release edit", "dotnet"):
                     self.assertNotIn(absent, result["calls"])
-        # A rehearsal deletes the draft in its next step.
+        # A rehearsal deletes the draft in its clean-up step.
         result = self.run_job(mode="rehearse", version=REHEARSAL, markers=["view-fails"])
         self.assertTrue(result["failed"], result["log"])
         self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
@@ -1888,7 +1895,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertEqual(1, result["calls"].count(self.UPLOAD), result["calls"])
         self.assertIn("::error::The upload to the draft for v1.5.0 failed. Nothing was pushed to NuGet.org. In "
                       "publish mode the draft is left in place: \"Re-run failed jobs\" replaces it. A rehearsal "
-                      "deletes its draft in the next step.", result["log"])
+                      "deletes its draft in the clean-up step.", result["log"])
         self.assertNotIn("Done.", result["log"])
         for absent in ("gh release edit", "dotnet"):
             self.assertNotIn(absent, result["calls"])
@@ -1902,6 +1909,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertFalse(result["failed"], result["log"])
         self.assertEqual(3, self.list_calls(result, stop="gh release upload"), result["calls"])
         self.assertIn("gh release upload v1.5.0", result["calls"])
+        self.assertIn("The list of releases shows the new draft for v1.5.0 on attempt 3 of 12.", result["log"])
         self.assertIs(False, result["releases"][0]["draft"])
         # A failed read is tried again too.
         result = self.run_job(list_overrides={2: "fail", 3: []})
@@ -1975,6 +1983,8 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertEqual(1, result["calls"].count("gh api -X DELETE"))
         # Classify, read-back, three lists to find the draft, one after the deletion.
         self.assertEqual(6, result["calls"].count("gh api --paginate"), result["calls"])
+        self.assertIn(f"The list of releases shows a rehearsal draft for v{REHEARSAL} on attempt 3 of 12.",
+                      result["log"])
 
     def test_rehearsal_clean_up_fails_after_the_attempts_when_its_draft_never_shows(self):
         result = self.run_job(mode="rehearse", version=REHEARSAL, list_overrides={n: [] for n in range(3, 15)})
@@ -1984,6 +1994,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
                       "does not show it. Look for the draft by hand and delete it.", result["log"])
         self.assertEqual(2 + 12, result["calls"].count("gh api --paginate"), result["calls"])
         self.assertNotIn("-X DELETE", result["calls"])
+        self.assertNotIn("The list of releases shows a rehearsal draft for", result["log"])
 
     def test_rehearsal_clean_up_reads_once_when_no_creation_was_started(self):
         result = self.run_job(mode="rehearse", version=REHEARSAL, no_files=True)
@@ -2048,10 +2059,19 @@ class PublishReleaseScriptTests(unittest.TestCase):
 
     def test_rehearsal_clean_up_waits_for_the_list_to_drop_the_deleted_draft(self):
         draft = release(f"v{REHEARSAL}", True, rid=101)
+        # Without lag, both reads succeed on their first attempt.
+        result = self.run_job(mode="rehearse", version=REHEARSAL)
+        self.assertFalse(result["failed"], result["log"])
+        self.assertIn(f"The list of releases shows a rehearsal draft for v{REHEARSAL} on attempt 1 of 12.",
+                      result["log"])
+        self.assertIn(f"The list of releases shows nothing for v{REHEARSAL} on attempt 1 of 12 after the deletion.",
+                      result["log"])
         # Lists: 1 classify, 2 read-back, 3 the clean-up's first (the draft is deleted
         # after it), then the list still shows the draft once.
         result = self.run_job(mode="rehearse", version=REHEARSAL, list_overrides={4: [draft]})
         self.assertFalse(result["failed"], result["log"])
+        self.assertIn(f"The list of releases shows nothing for v{REHEARSAL} on attempt 2 of 12 after the deletion.",
+                      result["log"])
         self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
         self.assertEqual(5, result["calls"].count("gh api --paginate"), result["calls"])
         self.assertEqual([], result["releases"])
@@ -2060,6 +2080,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertTrue(result["failed"], result["log"])
         self.assertIn(f"::error::A release or draft for 'v{REHEARSAL}' remains after the deletion. Delete it by hand.",
                       result["log"])
+        self.assertNotIn(f"The list of releases shows nothing for v{REHEARSAL}", result["log"])
         self.assertEqual(3 + 12, result["calls"].count("gh api --paginate"), result["calls"])
         # The last read fails.
         result = self.run_job(mode="rehearse", version=REHEARSAL,
@@ -2075,11 +2096,17 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertFalse(result["failed"], result["log"])
         self.assertEqual(2, result["calls"].count(tag_read), result["calls"])
         self.assertIn("Verified: v1.5.0 is at", result["log"])
+        self.assertIn("The tag and the published Release for v1.5.0 were read on attempt 2 of 12.", result["log"])
+        # Without lag, the first attempt is enough.
+        result = self.run_job()
+        self.assertFalse(result["failed"], result["log"])
+        self.assertIn("The tag and the published Release for v1.5.0 were read on attempt 1 of 12.", result["log"])
         # Never published: it gives up after the attempts, with the existing error.
         result = self.run_job(markers=["edit-keeps-draft"])
         self.assertTrue(result["failed"], result["log"])
         self.assertEqual(VERIFY_STEP, result["ran"][-1])
         self.assertIn("::error::The Release v1.5.0 is not published.", result["log"])
+        self.assertNotIn("The tag and the published Release for", result["log"])
         self.assertEqual(12, result["calls"].count(tag_read), result["calls"])
 
     def test_verification_waits_for_a_tag_that_is_not_yet_listed(self):
@@ -2094,7 +2121,9 @@ class PublishReleaseScriptTests(unittest.TestCase):
         result = self.run_job(ls_overrides={n: [] for n in range(3, 15)})
         self.assertTrue(result["failed"], result["log"])
         self.assertEqual(VERIFY_STEP, result["ran"][-1])
-        self.assertIn(f"::error::Tag 'v1.5.0' resolves to '', not to this run's commit {RUN_SHA}.", result["log"])
+        self.assertIn("::error::Tag 'v1.5.0' was not found after 12 reads. Publishing the Release should have "
+                      f"created it at this run's commit {RUN_SHA}.", result["log"])
+        self.assertNotIn("The tag and the published Release for", result["log"])
         self.assertEqual(2 + 12, result["calls"].count(listing), result["calls"])
         result = self.run_job(ls_overrides={n: None for n in range(3, 15)})
         self.assertTrue(result["failed"], result["log"])
