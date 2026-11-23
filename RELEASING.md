@@ -252,7 +252,7 @@ as case 3 describes for a run past the 30-day limit. Otherwise the version is
 spent (see case 2). When only a draft exists and nothing was pushed, **Re-run
 all jobs** is not refused, but it builds, attests and signs everything again.
 
-Three rules apply to every case:
+Four rules apply to every case:
 
 - **A re-run uses the original run's commit.** It does not take the current head
   of `main`. It also uses that run's workflow file.
@@ -265,15 +265,8 @@ Three rules apply to every case:
   draft has since been published or now has another tag or target commit, the
   step fails with a message that ends `nothing was deleted`: look at the
   Releases page before you re-run. A change to the draft's notes, title or
-  assets does not stop the deletion. Right after it has made a draft, the step
-  reads it back. If the tag does not have exactly one draft whose target is the
-  tested commit, the step fails with a message that the new draft
-  `did not read back as expected`, says what it found, and uploads and pushes
-  nothing. In a rehearsal the clean-up is expected to delete the draft. In a
-  `publish` run this is not expected to happen: it means that someone made a
-  draft for the tag during the run, or that an assumption about GitHub is wrong.
-  Look at the drafts for the tag on the Releases page and do not re-run until
-  you understand it.
+  assets does not stop the deletion. The step then reads the new draft back
+  (see the last rule below).
 - **Do not delete a draft of a version you still mean to release once any package
   of that version has been pushed.** Check NuGet.org first. If the draft is
   deleted after a partial push, the run is refused (case 7). There is one
@@ -291,6 +284,50 @@ Three rules apply to every case:
   command publishes a Release at once and creates the tag. Check on the Releases
   page that it is the only draft for the tag, and use **Re-run failed jobs**.
   The run is expected to delete that draft and make its own.
+- **A new draft is read back, and the list of releases can lag.** GitHub's list
+  of releases can lag behind a write: in the first rehearsal it showed no draft
+  about a second after the draft was made. So the step
+  `Create the draft release and upload the assets` reads the list back after it
+  makes a draft, up to 12 times, 5 seconds apart (about a minute in all), while
+  the list cannot be read or shows nothing for the tag. An earlier draft that
+  the step deleted itself is left out of the count. The step then asks the
+  release tool for the release of the tag, again up to 12 times, until the tool
+  finds it, and checks that it is the very draft that was read back. Only then
+  does it upload the assets, once. Nothing has been pushed to NuGet.org when
+  any of these failures happens. If the command that creates the draft fails,
+  a draft may still have been stored: look at the drafts for the tag on the
+  Releases page before you re-run. After the draft is created, the step fails
+  in one of six ways:
+  - The list shows more than one entry for the tag, or one entry that is not a
+    draft or not at the tested commit. The message says that the new draft
+    `did not read back as expected` and what it found. This is not lag, so the
+    step fails at once, and it uploads and pushes nothing. In a rehearsal the
+    clean-up is expected to delete the draft. In a `publish` run this is not
+    expected to happen: it means that someone made a draft for the tag during
+    the run, or that an assumption about GitHub is wrong. Look at the drafts
+    for the tag on the Releases page and do not re-run until you understand
+    it.
+  - The list never shows the draft. The message begins `The list of releases
+    did not show the new draft for v<version>`. In `publish` mode the draft
+    may exist: **Re-run failed jobs** replaces it. A rehearsal deletes its
+    draft in the clean-up step. Nothing was uploaded.
+  - The list cannot be read on the last attempt. The message begins `Could not
+    read the releases back after creating the draft for`. Nothing was
+    uploaded. A draft may exist, so look at the drafts for the tag on the
+    Releases page. **Re-run failed jobs** replaces a draft that is there.
+  - The release tool never finds the draft. The message begins `The tool did
+    not find the draft for v<version>`. Nothing was uploaded. In `publish`
+    mode the draft is left in place: **Re-run failed jobs** replaces it. A
+    rehearsal deletes its draft in the clean-up step.
+  - The release tool finds another release for the tag. The message begins
+    `The release the tool finds for v<version> is not the draft this run
+    created and read back`, and says what it found. Nothing was uploaded. Like
+    the first failure this is not lag, so the step fails at once: look at the
+    Releases page and do not re-run until you understand it.
+  - The upload fails. The message begins `The upload to the draft for
+    v<version>`. The upload is not tried again, because its failure may not be
+    lag. In `publish` mode the draft is left in place: **Re-run failed jobs**
+    replaces it. A rehearsal deletes its draft in the clean-up step.
 
 The cases:
 
@@ -325,15 +362,17 @@ The cases:
    and why before you delete or move it. Once the tag is gone, or points at the
    tested commit, **Re-run failed jobs** is expected to publish the draft.
 5. **Verification failed because the tag is elsewhere** (the log says the tag does
-   not point at the tested commit). The Release is already published and the
-   packages are already on NuGet.org. The Marketplace job and the floating-tag
-   move are skipped. Do not move anything by hand before you find out why the tag
-   is where it is.
+   not point at the tested commit; the step fails at once, without waiting). The
+   Release is already published and the packages are already on NuGet.org. The
+   Marketplace job and the floating-tag move are skipped. Do not move anything
+   by hand before you find out why the tag is where it is.
 6. **Verification failed because the Release is not published** (the step
    `Verify the tag and the published release` says `The Release v<version> is
    not published.`, for example when the API answers 404 just after publication).
-   The tag check comes first in that step, so this message means that the tag is
-   at the tested commit. If the log says `is not published` and the tag is at the
+   The step reads the tag and the Release up to 12 times, 5 seconds apart, so it
+   waits up to about a minute for them before it fails. The tag check comes
+   first in each read, so this message means that the tag is at the tested
+   commit. If the log says `is not published` and the tag is at the
    tested commit, wait a few minutes, confirm on the Releases page that the
    Release is shown as published, and then use **Re-run failed jobs**. The
    classification then finds a
@@ -517,14 +556,21 @@ publishing job without releasing anything.
    `CHANGELOG.md` and `Directory.Build.props` check, which is for `publish` only.
 3. After the tests and builds, `publish-release` waits for approval of the
    `release` environment. Approve it.
-4. The job creates a draft Release, uploads the assets to it, runs the NuGet
-   login (the token exchange; no package is pushed) and deletes the draft in the
-   step `Rehearsal — delete the draft release`. That step is written to run also
-   when an earlier step failed or the run was cancelled.
-5. After deleting the draft, the clean-up step lists the releases again. It fails
-   if anything for the tag remains, or if the list cannot be read. It also fails
-   if the draft step reported that this job created a draft but the list of
-   releases does not show one, because the list may lag behind.
+4. The job creates a draft Release and reads the list of releases back until it
+   shows the draft, up to 12 times, 5 seconds apart (the list can lag behind
+   the creation). It waits in the same way until the release tool finds the
+   draft by its tag, then uploads the assets to it once. It runs the NuGet
+   login (the token exchange; no package is pushed) and deletes the draft in
+   the step `Rehearsal — delete the draft release`. That step is written to run
+   also when an earlier step failed or the run was cancelled.
+5. When the draft step reported that it started to create a draft, the clean-up
+   step reads the list, up to 12 times, 5 seconds apart, until it shows a draft
+   for the tag. If none shows, the step fails when the draft was created; when
+   the creation itself failed it warns instead (the job is already red). After
+   deleting the draft, it reads the list again in the same way until nothing
+   for the tag remains. It fails if anything still remains then, or if the list
+   cannot be read on the last read. A published Release for the tag fails the
+   step at once.
 6. A rehearsal makes no tag, no published Release, no package, no attestation and
    no cosign signature.
 
@@ -532,12 +578,20 @@ The clean-up step fails with one of these messages, each of which tells you to
 look for the draft, or to delete it, by hand:
 
 - `Could not read the releases; delete the rehearsal draft for '<tag>' by hand.`
-  (the first list, before any deletion).
+  (the list before any deletion, unreadable on the last read).
 - `This job created a rehearsal draft for '<tag>', but the list of releases does
-  not show it. Look for the draft by hand and delete it.`
+  not show it. Look for the draft by hand and delete it.` (still no draft after
+  the repeated reads).
 - `Could not read the releases after the deletion; check by hand that no draft for
-  '<tag>' remains.`
+  '<tag>' remains.` (unreadable on the last read after the deletion).
 - `A release or draft for '<tag>' remains after the deletion. Delete it by hand.`
+  (still listed after the repeated reads).
+
+When the creation of the draft was started and failed, and the list shows no
+draft for the tag after the repeated reads, the step does not fail. It warns:
+`This job started the creation of a rehearsal draft for '<tag>' and the creation
+failed.` Check the Releases page by hand for a draft for the tag and delete it
+if there is one.
 
 If the step finds a published Release for the tag, it fails with `A published
 Release for '<tag>' exists; a rehearsal never publishes. Investigate.` Do not
@@ -549,37 +603,48 @@ Releases page, or rehearse the next number (for example `1.5.0-rehearsal.2`).
 
 ### First runs: what only GitHub can show
 
-Only the start of this flow has run on GitHub. The first `validate` run, on
-`main`, passed the request check, the TLS lanes, the Docker lane and the builds,
-and failed the packaged-tool smoke test because its version, `0.0.0-test`, was
-below a provider's minimum engine version. Signing and the publishing job have
-not run. The contract tests
+Only part of this flow has run on GitHub. The first `validate` run, on `main`,
+passed the request check, the TLS lanes, the Docker lane and the builds, and
+failed the packaged-tool smoke test because its version, `0.0.0-test`, was below
+a provider's minimum engine version. A second `validate` run on `main`, with a
+version of the form `1.5.0-validate.1`, was green. The first `rehearse` run, on
+`main`, reached the publishing job and failed in the read-back of the new
+draft: GitHub's list of releases lags behind a write, and it showed no draft
+about a second after the draft was made. The clean-up step then found the draft
+and deleted it. The job now waits for the list for up to about a minute. The
+upload and the NuGet login have not run, and `publish` mode has not run. The
+contract tests
 (`scripts/ci/test_release_workflow.py`) check the workflow file and run its step
 scripts with fixture commands; they cannot show the points below. Work through
 them in order, and correct this document where a run shows something different.
 
-A `validate` run, on `main` and from a feature branch, must show:
+A `validate` run, on `main` and from a feature branch, must show the points
+below. The first three have been shown on `main`; the fourth, a run from a
+feature branch, is still to do.
 
-- [ ] The packaged-tool smoke test passes with the version given to the run.
-- [ ] `sign-and-attest` runs and makes no attestation and no signature.
-- [ ] The run is green, and `publish-release`, `publish-marketplace` and
+- [x] The packaged-tool smoke test passes with the version given to the run.
+- [x] `sign-and-attest` runs and makes no attestation and no signature.
+- [x] The run is green, and `publish-release`, `publish-marketplace` and
   `move-floating-tag` show as skipped.
+- [ ] The same three points hold in a run from a feature branch.
 
 The first `rehearse` run, on `main`, must show:
 
-- [ ] The run waits for approval of the `release` environment, and
+- [x] The run waits for approval of the `release` environment, and
   self-approval works.
-- [ ] The job token can list draft releases. The state check and the clean-up
+- [x] The job token can list draft releases. The state check and the clean-up
   depend on it.
-- [ ] Creating the draft with the commit as its target creates no tag.
+- [x] Creating the draft with the commit as its target creates no tag.
 - [ ] The draft is read back as the only draft for the tag, with the full
-  commit as its target (the step fails otherwise).
+  commit as its target, once the list shows it (the step fails otherwise).
+- [ ] The release tool finds the new draft by its tag, with the id that was
+  read back.
 - [ ] Uploading assets to the draft by tag name works, and the asset names are
   unique.
 - [ ] The NuGet token exchange succeeds in the `release` environment, both
   before and after the policy on NuGet.org gains the environment (see
   [NuGet.org publish](#nugetorg-publish-trusted-publishing)).
-- [ ] The rehearsal draft is deleted, also after a deliberately failed step.
+- [x] The rehearsal draft is deleted, also after a failed step.
 - [ ] Whether the inputs, the approval and the earlier attempt's artefacts
   carry over on **Re-run failed jobs**.
 

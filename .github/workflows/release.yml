@@ -1727,6 +1727,15 @@ jobs:
       MODE:    ${{ inputs.mode }}
       VERSION: ${{ needs.prepare.outputs.version }}
       TAG:     ${{ needs.prepare.outputs.tag }}
+      # GitHub's list of releases can lag behind a write by a second or more
+      # (seen in the first rehearsal: the list showed no draft just after the
+      # draft was created). The steps that read the list or the tag straight
+      # after a write try this many times in all, this many seconds apart: about
+      # a minute at most. The steps that use these two values check them first
+      # (a whole number from 1 to 99 and one from 0 to 99). The contract tests
+      # set the delay to 0.
+      RELEASE_READ_ATTEMPTS: "12"
+      RELEASE_READ_DELAY_SECONDS: "5"
 
     steps:
       - name: Checkout the run's commit
@@ -1903,8 +1912,10 @@ jobs:
       # is expected to create the tag at the tested commit. Notes: the
       # CHANGELOG.md section for the version, then GitHub's generated notes
       # (`--notes-file` with `--generate-notes`: the file's text is put in
-      # front of them). `created=true` tells the rehearsal clean-up that this
-      # step made a draft.
+      # front of them). `attempted=true` is written just before the create call:
+      # that call can fail after GitHub stored the draft, so it tells the
+      # rehearsal clean-up that a draft may exist. `created=true` tells it that
+      # this step made a draft.
       - name: Create the draft release and upload the assets
         id: create
         env:
@@ -1914,6 +1925,10 @@ jobs:
           DRAFT_ID: ${{ steps.state.outputs.draft_id }}
         run: |
           set -euo pipefail
+          if [[ ! "${RELEASE_READ_ATTEMPTS:-}" =~ ^[1-9][0-9]?$ || ! "${RELEASE_READ_DELAY_SECONDS:-}" =~ ^[0-9]{1,2}$ ]]; then
+            echo "::error::The read bounds are not usable: RELEASE_READ_ATTEMPTS is '${RELEASE_READ_ATTEMPTS:-}' (a whole number from 1 to 99 is needed) and RELEASE_READ_DELAY_SECONDS is '${RELEASE_READ_DELAY_SECONDS:-}' (a whole number from 0 to 99 is needed). Nothing was read, created, uploaded or verified by this step."
+            exit 1
+          fi
           if [[ "$(cat signing-material/signing-mode)" != "$MODE" ]]; then
             echo "::error::The signing material was made for another mode."
             exit 1
@@ -1985,6 +2000,7 @@ jobs:
               ;;
           esac
 
+          echo "attempted=true" >> "$GITHUB_OUTPUT"
           gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" \
             --notes-file "$notes" --generate-notes "${prerelease[@]}"
           echo "created=true" >> "$GITHUB_OUTPUT"
@@ -1993,24 +2009,96 @@ jobs:
           # classification can compare a draft's target with this run's commit
           # only on a later attempt. This proves the round trip in a rehearsal,
           # before any NuGet push. That GitHub returns the full SHA for a draft
-          # made with a full SHA as its target is expected, not observed.
-          if ! readback="$(gh api --paginate "repos/${GH_REPO}/releases?per_page=100" --jq '.[] | [.tag_name, (.draft | tostring), (.id | tostring), .target_commitish] | @tsv')"; then
-            echo "::error::Could not read the releases back after creating the draft for $TAG. Nothing was uploaded and nothing was pushed to NuGet.org."
+          # made with a full SHA as its target is expected, not observed (the
+          # first rehearsal never got that far). That the list of releases lags
+          # behind the create is observed: it showed no draft just after the
+          # create. So the read is tried again, up to RELEASE_READ_ATTEMPTS
+          # times, while the list fails or shows nothing for the tag. The
+          # earlier draft deleted above (state `draft`) is left out, because a
+          # lagging list can still show it. One entry is judged at once, and so
+          # are several: a wrong target or draft flag is not lag, and the list
+          # does not invent entries.
+          skip_id=""
+          if [[ "$STATE" == "draft" ]]; then
+            skip_id="$DRAFT_ID"
+          fi
+          readback_done=false
+          readback_listed=false
+          for ((attempt = 1; attempt <= RELEASE_READ_ATTEMPTS; attempt++)); do
+            if [[ "$attempt" -gt 1 ]]; then
+              sleep "$RELEASE_READ_DELAY_SECONDS"
+            fi
+            if ! readback="$(gh api --paginate "repos/${GH_REPO}/releases?per_page=100" --jq '.[] | [.tag_name, (.draft | tostring), (.id | tostring), .target_commitish] | @tsv')"; then
+              readback_listed=false
+              continue
+            fi
+            readback_listed=true
+            readback_matches="$(awk -F'\t' -v tag="$TAG" -v skip="$skip_id" '$1 == tag && $3 != skip' <<<"$readback")"
+            readback_count="$(grep -c . <<<"$readback_matches" || true)"
+            if [[ "$readback_count" -eq 0 ]]; then
+              continue
+            fi
+            readback_draft=""
+            readback_id=""
+            readback_target=""
+            if [[ "$readback_count" -eq 1 ]]; then
+              IFS=$'\t' read -r _ readback_draft readback_id readback_target <<<"$readback_matches"
+            fi
+            if [[ "$readback_count" -ne 1 || "$readback_draft" != "true" || "$readback_target" != "$GITHUB_SHA" ]]; then
+              echo "::error::The new draft for $TAG did not read back as expected: entries found for the tag: $readback_count, draft flag '$readback_draft', target '$readback_target'; expected exactly one draft with target $GITHUB_SHA. Nothing was uploaded and nothing was pushed to NuGet.org."
+              exit 1
+            fi
+            readback_done=true
+            break
+          done
+          if [[ "$readback_done" != "true" ]]; then
+            if [[ "$readback_listed" != "true" ]]; then
+              echo "::error::Could not read the releases back after creating the draft for $TAG. Nothing was uploaded and nothing was pushed to NuGet.org."
+            else
+              echo "::error::The list of releases did not show the new draft for $TAG after $RELEASE_READ_ATTEMPTS attempts. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode the draft may exist: \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the next step."
+            fi
             exit 1
           fi
-          readback_matches="$(awk -F'\t' -v tag="$TAG" '$1 == tag' <<<"$readback")"
-          readback_count="$(grep -c . <<<"$readback_matches" || true)"
-          readback_draft=""
-          readback_target=""
-          if [[ "$readback_count" -eq 1 ]]; then
-            IFS=$'\t' read -r _ readback_draft _ readback_target <<<"$readback_matches"
-          fi
-          if [[ "$readback_count" -ne 1 || "$readback_draft" != "true" || "$readback_target" != "$GITHUB_SHA" ]]; then
-            echo "::error::The new draft for $TAG did not read back as expected: entries found for the tag: $readback_count, draft flag '$readback_draft', target '$readback_target'; expected exactly one draft with target $GITHUB_SHA. Nothing was uploaded and nothing was pushed to NuGet.org."
+          # The upload tool looks a draft up by its tag, through its own lookup,
+          # and that lookup may not find a draft a few seconds old. So, within
+          # the same bounds as the read-back, this waits until the tool finds a
+          # release for the tag. It also checks that the tool resolves the tag to
+          # the very draft that was read back (its id, still a draft, at this
+          # run's commit): a different release is not lag, and it fails at once.
+          # The upload then runs once. An upload error is not tried again,
+          # because it may not be lag (an existing asset, a file that is too
+          # large) and a repeat could upload the whole set again.
+          view_done=false
+          for ((attempt = 1; attempt <= RELEASE_READ_ATTEMPTS; attempt++)); do
+            if [[ "$attempt" -gt 1 ]]; then
+              sleep "$RELEASE_READ_DELAY_SECONDS"
+            fi
+            if ! found="$(gh release view "$TAG" --json databaseId,isDraft,targetCommitish --jq '[(.databaseId | tostring), (.isDraft | tostring), .targetCommitish] | @tsv')"; then
+              continue
+            fi
+            # The tool's lookup can lag in the same way as the list and still
+            # answer with the draft this step deleted. That release is gone, so
+            # nothing can be uploaded to it: this counts as an attempt.
+            if [[ -n "$skip_id" && "${found%%$'\t'*}" == "$skip_id" ]]; then
+              continue
+            fi
+            expected="$readback_id"$'\t'"true"$'\t'"$GITHUB_SHA"
+            if [[ "$found" != "$expected" ]]; then
+              echo "::error::The release the tool finds for $TAG is not the draft this run created and read back. It found (id, draft flag, target) '${found//$'\t'/ }' but expected '${expected//$'\t'/ }'. Nothing was uploaded and nothing was pushed to NuGet.org."
+              exit 1
+            fi
+            view_done=true
+            break
+          done
+          if [[ "$view_done" != "true" ]]; then
+            echo "::error::The tool did not find the draft for $TAG after $RELEASE_READ_ATTEMPTS attempts, although the list of releases shows it. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode the draft is left in place: \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the next step."
             exit 1
           fi
           echo "Uploading ${#files[@]} files to the draft $TAG..."
-          gh release upload "$TAG" "${files[@]}" --clobber
+          if ! gh release upload "$TAG" "${files[@]}" --clobber; then
+            echo "::error::The upload to the draft for $TAG failed. Nothing was pushed to NuGet.org. In publish mode the draft is left in place: \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the next step."
+            exit 1
+          fi
           echo "Done."
 
       # Exchange the single-use GitHub OIDC token for a short-lived
@@ -2031,30 +2119,73 @@ jobs:
       # cancelled. It runs only when the classification found nothing for the
       # tag (state `none`), so any draft for the tag was made by this job.
       # It lists the releases again after the deletion and fails if anything
-      # for the tag remains. When the draft step reported that it created a
-      # draft (`created`) but the list shows none, the list may lag behind;
-      # it fails rather than end green.
+      # for the tag remains. When the draft step reported that it started the
+      # creation of a draft (`attempted`; `created` says it finished) but the
+      # list shows none, the list may lag behind: it reads again. If the draft
+      # was created and still does not show, it fails rather than end green. If
+      # the creation was started but did not finish, it ends green with a
+      # warning to check by hand, because GitHub may or may not have stored the
+      # draft. The list can equally still show the draft after its deletion, so
+      # that read is repeated too. This step is the safety net, so bounds that
+      # are not usable do not stop it: it warns and makes one read, with no
+      # delay.
       - name: Rehearsal — delete the draft release
         if: always() && inputs.mode == 'rehearse' && steps.state.outputs.state == 'none'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           CREATED: ${{ steps.create.outputs.created }}
+          ATTEMPTED: ${{ steps.create.outputs.attempted }}
         run: |
           set -euo pipefail
-          if ! releases="$(gh api --paginate "repos/${GH_REPO}/releases?per_page=100" --jq '.[] | [.tag_name, (.draft | tostring), (.id | tostring)] | @tsv')"; then
+          if [[ ! "${RELEASE_READ_ATTEMPTS:-}" =~ ^[1-9][0-9]?$ || ! "${RELEASE_READ_DELAY_SECONDS:-}" =~ ^[0-9]{1,2}$ ]]; then
+            echo "::warning::The read bounds are not usable: RELEASE_READ_ATTEMPTS is '${RELEASE_READ_ATTEMPTS:-}' (a whole number from 1 to 99 is needed) and RELEASE_READ_DELAY_SECONDS is '${RELEASE_READ_DELAY_SECONDS:-}' (a whole number from 0 to 99 is needed). This step makes one attempt and waits for nothing."
+            RELEASE_READ_ATTEMPTS=1
+            RELEASE_READ_DELAY_SECONDS=0
+          fi
+          list_releases() {
+            gh api --paginate "repos/${GH_REPO}/releases?per_page=100" --jq '.[] | [.tag_name, (.draft | tostring), (.id | tostring)] | @tsv'
+          }
+          # One read, as a rule. When the draft step started the creation of a
+          # draft, the list may lag behind that write, so it is read up to
+          # RELEASE_READ_ATTEMPTS times until it shows a draft for the tag; a
+          # failed read is tried again too.
+          reads=1
+          if [[ "$ATTEMPTED" == "true" ]]; then
+            reads="$RELEASE_READ_ATTEMPTS"
+          fi
+          ids=""
+          listed=false
+          for ((attempt = 1; attempt <= reads; attempt++)); do
+            if [[ "$attempt" -gt 1 ]]; then
+              sleep "$RELEASE_READ_DELAY_SECONDS"
+            fi
+            if ! releases="$(list_releases)"; then
+              listed=false
+              continue
+            fi
+            listed=true
+            if awk -F'\t' -v tag="$TAG" '$1 == tag && $2 != "true" { found = 1 } END { exit !found }' <<<"$releases"; then
+              echo "::error::A published Release for '$TAG' exists; a rehearsal never publishes. Investigate."
+              exit 1
+            fi
+            ids="$(awk -F'\t' -v tag="$TAG" '$1 == tag && $2 == "true" { print $3 }' <<<"$releases")"
+            if [[ -n "$ids" ]]; then
+              break
+            fi
+          done
+          if [[ "$listed" != "true" ]]; then
             echo "::error::Could not read the releases; delete the rehearsal draft for '$TAG' by hand."
             exit 1
           fi
-          if awk -F'\t' -v tag="$TAG" '$1 == tag && $2 != "true" { found = 1 } END { exit !found }' <<<"$releases"; then
-            echo "::error::A published Release for '$TAG' exists; a rehearsal never publishes. Investigate."
-            exit 1
-          fi
-          ids="$(awk -F'\t' -v tag="$TAG" '$1 == tag && $2 == "true" { print $3 }' <<<"$releases")"
           if [[ -z "$ids" ]]; then
             if [[ "$CREATED" == "true" ]]; then
               echo "::error::This job created a rehearsal draft for '$TAG', but the list of releases does not show it. Look for the draft by hand and delete it."
               exit 1
+            fi
+            if [[ "$ATTEMPTED" == "true" ]]; then
+              echo "::warning::This job started the creation of a rehearsal draft for '$TAG' and the creation failed. The list of releases shows no draft for '$TAG' after $reads attempts. Check the Releases page by hand for a draft for '$TAG' and delete it if there is one."
+              exit 0
             fi
             echo "No rehearsal draft for $TAG to delete."
             exit 0
@@ -2063,12 +2194,30 @@ jobs:
             gh api -X DELETE "repos/${GH_REPO}/releases/${id}"
             echo "Deleted the rehearsal draft $id for $TAG."
           done
-          if ! releases="$(gh api --paginate "repos/${GH_REPO}/releases?per_page=100" --jq '.[] | [.tag_name, (.draft | tostring), (.id | tostring)] | @tsv')"; then
-            echo "::error::Could not read the releases after the deletion; check by hand that no draft for '$TAG' remains."
-            exit 1
-          fi
-          if awk -F'\t' -v tag="$TAG" '$1 == tag { found = 1 } END { exit !found }' <<<"$releases"; then
-            echo "::error::A release or draft for '$TAG' remains after the deletion. Delete it by hand."
+          # The list can still show the draft just after its deletion, so read it
+          # again, up to RELEASE_READ_ATTEMPTS times, until nothing remains.
+          clean=false
+          listed=false
+          for ((attempt = 1; attempt <= RELEASE_READ_ATTEMPTS; attempt++)); do
+            if [[ "$attempt" -gt 1 ]]; then
+              sleep "$RELEASE_READ_DELAY_SECONDS"
+            fi
+            if ! releases="$(list_releases)"; then
+              listed=false
+              continue
+            fi
+            listed=true
+            if ! awk -F'\t' -v tag="$TAG" '$1 == tag { found = 1 } END { exit !found }' <<<"$releases"; then
+              clean=true
+              break
+            fi
+          done
+          if [[ "$clean" != "true" ]]; then
+            if [[ "$listed" != "true" ]]; then
+              echo "::error::Could not read the releases after the deletion; check by hand that no draft for '$TAG' remains."
+            else
+              echo "::error::A release or draft for '$TAG' remains after the deletion. Delete it by hand."
+            fi
             exit 1
           fi
 
@@ -2180,20 +2329,63 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if ! listing="$(git ls-remote --tags origin)"; then
-            echo "::error::Could not read the remote tags."
+          if [[ ! "${RELEASE_READ_ATTEMPTS:-}" =~ ^[1-9][0-9]?$ || ! "${RELEASE_READ_DELAY_SECONDS:-}" =~ ^[0-9]{1,2}$ ]]; then
+            echo "::error::The read bounds are not usable: RELEASE_READ_ATTEMPTS is '${RELEASE_READ_ATTEMPTS:-}' (a whole number from 1 to 99 is needed) and RELEASE_READ_DELAY_SECONDS is '${RELEASE_READ_DELAY_SECONDS:-}' (a whole number from 0 to 99 is needed). Nothing was read, created, uploaded or verified by this step."
             exit 1
           fi
-          tag_sha="$(awk -F'\t' -v ref="refs/tags/$TAG" '$2 == ref "^{}" { peeled = $1 } $2 == ref { direct = $1 } END { print (peeled != "" ? peeled : direct) }' <<<"$listing")"
-          if [[ "$tag_sha" != "$GITHUB_SHA" ]]; then
-            echo "::error::Tag '$TAG' resolves to '$tag_sha', not to this run's commit $GITHUB_SHA."
-            exit 1
-          fi
-          # This endpoint returns published releases only; a draft gives a 404.
-          if ! draft="$(gh api "repos/${GH_REPO}/releases/tags/${TAG}" --jq '.draft')" || [[ "$draft" != "false" ]]; then
-            echo "::error::The Release $TAG is not published."
-            exit 1
-          fi
+          # This step runs straight after the publication, and the tag and the
+          # Release can show up a little late. So both are read again, up to
+          # RELEASE_READ_ATTEMPTS times, until the tag is at this run's commit and
+          # the Release is published. A tag at another commit is not lag: it
+          # fails at once. After the last attempt the step fails with what was
+          # still wrong. `problem` starts as a failure, so that the step cannot
+          # report success unless an attempt read the tag at this run's commit
+          # and the Release as published.
+          problem="not-checked"
+          for ((attempt = 1; attempt <= RELEASE_READ_ATTEMPTS; attempt++)); do
+            if [[ "$attempt" -gt 1 ]]; then
+              sleep "$RELEASE_READ_DELAY_SECONDS"
+            fi
+            if ! listing="$(git ls-remote --tags origin)"; then
+              problem="tags-unreadable"
+              continue
+            fi
+            tag_sha="$(awk -F'\t' -v ref="refs/tags/$TAG" '$2 == ref "^{}" { peeled = $1 } $2 == ref { direct = $1 } END { print (peeled != "" ? peeled : direct) }' <<<"$listing")"
+            if [[ -n "$tag_sha" && "$tag_sha" != "$GITHUB_SHA" ]]; then
+              echo "::error::Tag '$TAG' resolves to '$tag_sha', not to this run's commit $GITHUB_SHA."
+              exit 1
+            fi
+            if [[ -z "$tag_sha" ]]; then
+              problem="tag-absent"
+              continue
+            fi
+            # This endpoint returns published releases only; a draft gives a 404.
+            if ! draft="$(gh api "repos/${GH_REPO}/releases/tags/${TAG}" --jq '.draft')" || [[ "$draft" != "false" ]]; then
+              problem="not-published"
+              continue
+            fi
+            problem=""
+            break
+          done
+          case "$problem" in
+            "") ;;
+            not-checked)
+              echo "::error::Nothing was checked: no attempt read the tag and the Release for $TAG."
+              exit 1
+              ;;
+            tags-unreadable)
+              echo "::error::Could not read the remote tags."
+              exit 1
+              ;;
+            tag-absent)
+              echo "::error::Tag '$TAG' resolves to '', not to this run's commit $GITHUB_SHA."
+              exit 1
+              ;;
+            *)
+              echo "::error::The Release $TAG is not published."
+              exit 1
+              ;;
+          esac
           echo "Verified: $TAG is at $GITHUB_SHA and its Release is published."
 
   # ===========================================================================
