@@ -254,7 +254,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual("validate", inputs["mode"]["default"])
         self.assertIs(True, inputs["version"]["required"])
         self.assertEqual("string", inputs["version"]["type"])
-        self.assertEqual("0.0.0-test", inputs["version"]["default"])
+        self.assertNotIn("default", inputs["version"])
         self.assertIs(False, inputs["commit"]["required"])
         self.assertEqual(("string", ""), (inputs["commit"]["type"], inputs["commit"]["default"]))
 
@@ -780,7 +780,7 @@ ID_READ_FILTER = "[.tag_name, (.draft | tostring), .target_commitish] | @tsv"
 STALE_DRAFT = ("Release 42 could not be read, or is no longer the draft for v1.5.0 at " + "c" * 40
                + "; nothing was deleted.")
 OTHER = "d" * 40
-REHEARSAL = "0.0.0-rehearsal.1"
+REHEARSAL = "1.5.0-rehearsal.1"
 PACKAGE_IDS = ("vouchfx", "Vouchfx.Sdk", "Vouchfx.Sdk.Testing", "Vouchfx.Engine.Abstractions",
                "Vouchfx.Engine.Authoring", "Vouchfx.Engine.Compilation")
 FIXTURE_CHANGELOG = """# Changelog
@@ -1037,33 +1037,64 @@ class PrepareScriptTests(unittest.TestCase):
                             REHEARSAL, "rehearse")
 
     def test_rehearsal_versions_of_the_reserved_form_are_accepted(self):
-        for version in ("0.0.0-rehearsal.1", "0.0.0-rehearsal.12"):
+        # The form is right for 0.0.0-rehearsal.1; the smoke test, not prepare, is what that version fails.
+        for version in ("1.5.0-rehearsal.1", "1.5.0-rehearsal.12", "1.5.0-rehearsal.0", "10.20.30-rehearsal.1",
+                        "0.0.0-rehearsal.1"):
             with self.subTest(version=version):
                 result = self.check(mode="rehearse", version=version)
                 self.assertAccepted(result, version, "rehearse")
                 self.assertIn("git ls-remote --tags origin\n", result[3])
 
     def test_rehearsal_with_any_other_version_is_refused_before_any_lookup(self):
-        for version in ("1.5.0", "1.5.0-rc.1", "0.0.0-test", "0.0.0-rehearsal", "0.0.0-rehearsal.x",
-                        "0.0.1-rehearsal.1", "0.0.0-rehearsal.1.2", "0.0.0-rehearsal.1-x",
-                        "0.0.0-Rehearsal.1"):
+        for version in ("1.5.0", "1.5.0-rc.1", "0.0.0-test", "1.5.0-rehearsal", "1.5.0-rehearsal.x",
+                        "1.5.0-rehearsal.1.2", "1.5.0-rehearsal.1-x",
+                        "1.5.0-Rehearsal.1", "1.5.0-validate.1",
+                        # Forms that publish accepts: rehearse must refuse each of them, or a
+                        # leftover rehearsal draft could be released.
+                        "1.5.0-x.1.2.3-rehearsal.1", "1.5.0-rehearsal-x.1", "1.5.0-rehearsals.1",
+                        "1.5.0-rehearsal-1"):
             with self.subTest(version=version):
                 result = self.check(mode="rehearse", version=version)
-                self.assertRefused(result, "A rehearsal must use a version of the form 0.0.0-rehearsal.N")
+                self.assertRefused(result, "A rehearsal must use a version of the form X.Y.Z-rehearsal.N")
                 self.assertEqual("", result[3], "no lookup before the rehearsal version is checked")
 
+    def test_rehearsal_number_with_a_leading_zero_is_refused_before_any_lookup(self):
+        # The strict semver check, which runs first in every mode, refuses a leading zero.
+        result = self.check(mode="rehearse", version="1.5.0-rehearsal.01")
+        self.assertRefused(result, "is not MAJOR.MINOR.PATCH")
+        self.assertEqual("", result[3], "no lookup before the version is valid")
+
     def test_publish_refuses_versions_reserved_for_validation_and_rehearsal(self):
-        for version in ("0.0.0-test", "0.0.0-rehearsal.1", "0.0.0-anything"):
+        for version in ("0.0.0-test", "0.0.0-anything", "1.5.0-rehearsal.1", "1.5.0-rehearsal",
+                        "1.5.0-validate.1", "1.5.0-validate"):
             with self.subTest(version=version):
                 result = self.check(mode="publish", version=version, changelog=version, props=version)
-                self.assertRefused(result, "reserved for validation and rehearsal")
+                self.assertRefused(result, "-rehearsal or -validate pre-release, and versions that start with 0.0.0-, "
+                                           "are reserved for rehearsal and validation")
                 self.assertEqual("", result[3], "no lookup before the reserved version is refused")
-        # Only the 0.0.0- prefix is reserved.
-        self.assertAccepted(self.check(version="0.0.1-rc.1", changelog="0.0.1-rc.1", props="0.0.1-rc.1"),
-                            "0.0.1-rc.1")
 
-    def test_validate_keeps_the_default_version(self):
-        self.assertAccepted(self.check(mode="validate", version="0.0.0-test"), "0.0.0-test", "validate")
+    def test_publish_accepts_versions_that_are_not_reserved(self):
+        # Only the first pre-release identifier is reserved.
+        for version in ("1.5.0", "1.5.0-rc.1", "1.5.0-rehearsed.1", "1.5.0-validated", "0.0.1-rc.1",
+                        "1.5.0-rc-rehearsal.1", "1.5.0-rc.rehearsal.1", "1.5.0-rehearsal-1"):
+            with self.subTest(version=version):
+                self.assertAccepted(self.check(version=version, changelog=version, props=version), version)
+
+    def test_no_version_is_accepted_by_both_rehearse_and_publish(self):
+        # The reservation itself: whatever rehearse accepts, publish refuses.
+        for version in ("1.5.0-rehearsal.1", "1.5.0-rehearsal.0", "0.0.0-rehearsal.1", "1.5.0-rehearsal",
+                        "1.5.0-rehearsal-1", "1.5.0-rehearsal-x.1", "1.5.0-rehearsals.1", "1.5.0-Rehearsal.1",
+                        "1.5.0-x.1.2.3-rehearsal.1", "1.5.0-rc.rehearsal.1", "1.5.0-validate.1", "1.5.0-rc.1",
+                        "1.5.0"):
+            with self.subTest(version=version):
+                rehearse = self.check(mode="rehearse", version=version)
+                publish = self.check(mode="publish", version=version, changelog=version, props=version)
+                self.assertFalse(rehearse[0] == 0 and publish[0] == 0, "accepted by both modes")
+
+    def test_validate_accepts_any_semver_including_the_validate_and_rehearsal_forms(self):
+        for version in ("1.5.0-validate.1", "0.0.0-test", "1.5.0-rehearsal.1"):
+            with self.subTest(version=version):
+                self.assertAccepted(self.check(mode="validate", version=version), version, "validate")
 
 
 class PublishReleaseScriptTests(unittest.TestCase):
@@ -1373,11 +1404,11 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertStoppedAtClassify(self.run_job(markers=["gh-fails"]), "Could not read the releases")
 
     def test_rehearse_drafts_uploads_logs_in_and_deletes_the_draft_without_pushing_or_publishing(self):
-        result = self.run_job(mode="rehearse", version="0.0.0-rehearsal.1")
+        result = self.run_job(mode="rehearse", version=REHEARSAL)
         self.assertFalse(result["failed"], result["log"])
-        self.calls_in_order(result, "gh release create v0.0.0-rehearsal.1 --draft --target " + RUN_SHA,
-                            "gh release upload v0.0.0-rehearsal.1", "gh api -X DELETE")
-        self.assertReadBackBetweenCreateAndUpload(result, "v0.0.0-rehearsal.1")
+        self.calls_in_order(result, f"gh release create v{REHEARSAL} --draft --target " + RUN_SHA,
+                            f"gh release upload v{REHEARSAL}", "gh api -X DELETE")
+        self.assertReadBackBetweenCreateAndUpload(result, f"v{REHEARSAL}")
         self.assertIn("NuGet login (OIDC → short-lived API key)", result["ran"])
         for step in (PUSH_STEP, PUBLISH_STEP, VERIFY_STEP):
             self.assertNotIn(step, result["ran"])
@@ -1387,7 +1418,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertEqual("", result["tags"])
 
     def test_rehearse_notes_are_a_placeholder(self):
-        result = self.run_job(mode="rehearse", version="0.0.0-rehearsal.1")
+        result = self.run_job(mode="rehearse", version=REHEARSAL)
         self.assertFalse(result["failed"], result["log"])
         self.assertEqual("Rehearsal draft made by the release workflow. It is deleted when the rehearsal ends "
                          "and is never published.\n", result["bodies"])
@@ -1396,15 +1427,15 @@ class PublishReleaseScriptTests(unittest.TestCase):
         for label, kwargs in (("login fails", {"login_fails": True}),
                               ("upload fails", {"markers": ["upload-fails"]})):
             with self.subTest(case=label):
-                result = self.run_job(mode="rehearse", version="0.0.0-rehearsal.1", **kwargs)
+                result = self.run_job(mode="rehearse", version=REHEARSAL, **kwargs)
                 self.assertTrue(result["failed"])
                 self.assertIn(CLEANUP_STEP, result["ran"])
                 self.assertIn("gh api -X DELETE", result["calls"])
                 self.assertEqual([], result["releases"])
 
     def test_rehearse_refuses_an_existing_draft_and_leaves_it_alone(self):
-        draft = release("v0.0.0-rehearsal.1", True)
-        result = self.run_job(mode="rehearse", version="0.0.0-rehearsal.1", releases=[draft])
+        draft = release(f"v{REHEARSAL}", True)
+        result = self.run_job(mode="rehearse", version=REHEARSAL, releases=[draft])
         self.assertStoppedAtClassify(result, "A rehearsal needs no existing tag, draft or Release")
         self.assertNotIn(CLEANUP_STEP, result["ran"])
         self.assertEqual([draft], result["releases"])

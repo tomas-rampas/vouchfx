@@ -26,7 +26,7 @@ The run takes three inputs:
 | Input | Value |
 |-------|-------|
 | `mode` | `validate` (the default), `rehearse` or `publish`. |
-| `version` | The semver to build, without a leading `v` (for example `1.5.0` or `1.5.0-rc.1`). |
+| `version` | Required; there is no default. The semver to build, without a leading `v` (for example `1.5.0` or `1.5.0-rc.1`). It becomes the engine version of the packaged tool. See the `prepare` checks below for the form each mode needs. |
 | `commit` | The full 40-character SHA of the commit to release. Required by `rehearse` and `publish`. It must equal the commit the run uses, which is the head of `main` when the run starts. |
 
 The three modes:
@@ -54,10 +54,23 @@ request before anything is built. A refusal is an error line in that job's log.
   must be at most 100,000 characters. GitHub's generated notes are appended to
   it, and a Release body is believed, not documented, to be capped at 125,000
   characters.
-- `rehearse` accepts only a version of the form `0.0.0-rehearsal.N` (`N` a
-  number), and `publish` refuses any version that starts with `0.0.0-`. Those
-  versions are reserved for validation and rehearsal, so a rehearsal version can
-  never be released later.
+- `rehearse` accepts only a version of the form `X.Y.Z-rehearsal.N` (`N` a
+  number), for example `1.5.0-rehearsal.1`. `publish` refuses any version with
+  a pre-release whose first identifier is `rehearsal` or `validate` (for example
+  `1.5.0-rehearsal.1` or `1.5.0-validate`), and any version that starts with
+  `0.0.0-`. Those versions are reserved for rehearsal and validation, so a
+  rehearsal version can never be released later.
+- The version becomes the engine version of the packaged tool. The
+  packaged-tool smoke test runs that tool, and the engine refuses to load any
+  provider whose minimum engine version is higher than its own version (by
+  SemVer precedence). So for `validate` and `rehearse` use the next release
+  version as `X.Y.Z` (for example `1.5.0-validate.1` and `1.5.0-rehearsal.1`).
+  A pre-release sorts below its release, so `1.5.0-rehearsal.1` is older than
+  `1.5.0`. If a provider requires the release version itself, use a higher
+  `X.Y.Z`, for example `1.5.1-rehearsal.1`. A version below a provider's
+  minimum, such as `0.0.0-test` or `0.0.0-rehearsal.1`, passes `prepare` and
+  then fails the packaged-tool smoke test, so the run fails. In `rehearse` mode
+  that failure also skips the publishing job.
 
 To release:
 
@@ -472,8 +485,10 @@ creates a tag or a published Release, and neither pushes a package.
 
 1. In the Actions tab, select `Release (signed, provenance)` and click
    **Run workflow**.
-2. Choose the branch to check. Set `mode` to `validate` and `version` to a semver
-   (the default is `0.0.0-test`). Leave `commit` empty.
+2. Choose the branch to check. Set `mode` to `validate` and `version` to the next
+   release version followed by `-validate.N`, for example `1.5.0-validate.1`
+   (there is no default; see the `prepare` checks above for why `0.0.0-test`
+   does not work). Leave `commit` empty.
 3. The run calls the Docker integration lane (it took about 75 minutes in CI; see
    [The Docker integration gate](#the-docker-integration-gate)), builds all
    artifacts (nupkg, per-RID tarballs, SBOM, VSIX, MSI, deb, pkg) and runs the
@@ -491,7 +506,8 @@ does not exercise the publishing job.
 **`rehearse`: also run the publishing job, then clean up.** Use it to prove the
 publishing job without releasing anything.
 
-1. Pick a rehearsal version: `0.0.0-rehearsal.1`, or a higher number if an
+1. Pick a rehearsal version: the next release version followed by
+   `-rehearsal.1` (for example `1.5.0-rehearsal.1`), or a higher number if an
    earlier rehearsal left something behind (see below). `rehearse` accepts no
    other form.
 2. Read the full SHA of the head of `main` (`git fetch origin && git rev-parse
@@ -529,7 +545,7 @@ delete anything before you know why.
 
 The job refuses a rehearsal when a tag, a draft or a Release already exists for
 the version. If a rehearsal draft is left behind, delete it by hand on the
-Releases page, or rehearse the next number (`0.0.0-rehearsal.2`).
+Releases page, or rehearse the next number (for example `1.5.0-rehearsal.2`).
 
 ### First runs: what only GitHub can show
 

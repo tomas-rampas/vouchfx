@@ -26,6 +26,9 @@
 #            publish             `main` only, with `commit` equal to the run's
 #                                commit. The real release.
 #   version  The semver to build, without a leading "v" (e.g. 1.5.0, 1.5.0-rc.1).
+#            It becomes the engine version of the packaged tool. rehearse needs
+#            X.Y.Z-rehearsal.N. publish refuses a pre-release whose first
+#            identifier is `rehearsal` or `validate`, and any 0.0.0- version.
 #   commit   The full SHA of the commit to release; required by rehearse and
 #            publish. It must equal the run's commit (the head of `main` when the
 #            run started), which catches a typo or a `main` that has moved on.
@@ -168,9 +171,8 @@ on:
           - rehearse
           - publish
       version:
-        description: "Semver to build, without a leading v (e.g. 1.5.0 or 1.5.0-rc.1)"
+        description: "Version without the leading v. publish: the release version. rehearse: X.Y.Z-rehearsal.N. validate: any version the smoke tests accept, for example the next release version followed by -validate.1. The version becomes the engine version of the packaged tool, so one below the providers' minimum engine version (such as 0.0.0-test) fails the packaged-tool smoke test."
         required: true
-        default: "0.0.0-test"
         type: string
       commit:
         description: "Full SHA of the commit to release (rehearse and publish): the head of main"
@@ -265,15 +267,22 @@ jobs:
           tag="v$VERSION"
 
           # A rehearsal makes a draft with placeholder notes. If its clean-up
-          # failed, the draft would stay. Only a version that can never be
-          # released may be rehearsed, so a later publish cannot reuse it.
-          if [[ "$MODE" == "rehearse" && ! "$VERSION" =~ ^0\.0\.0-rehearsal\.[0-9]+$ ]]; then
-            echo "::error::A rehearsal must use a version of the form 0.0.0-rehearsal.N, not '$VERSION'."
+          # failed, the draft would stay. Only a version with a -rehearsal.N
+          # pre-release may be rehearsed, and publish refuses that pre-release,
+          # so a later publish cannot reuse the version.
+          if [[ "$MODE" == "rehearse" && ! "$VERSION" =~ ^${number}\.${number}\.${number}-rehearsal\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::A rehearsal must use a version of the form X.Y.Z-rehearsal.N (for example the next release version followed by -rehearsal.1), not '$VERSION'."
             exit 1
           fi
-          if [[ "$MODE" == "publish" && "$VERSION" == 0.0.0-* ]]; then
-            echo "::error::Refusing to publish '$VERSION': versions that start with 0.0.0- are reserved for validation and rehearsal."
-            exit 1
+          # Publish also refuses 0.0.0- versions, the earlier forms for
+          # validation and rehearsal. They are also below every provider's
+          # minimum engine version, so the smoke tests would fail them.
+          if [[ "$MODE" == "publish" ]]; then
+            pre="${VERSION#*-}"
+            if [[ "$VERSION" == 0.0.0-* || ( "$VERSION" == *-* && "$pre" =~ ^(rehearsal|validate)(\.|$) ) ]]; then
+              echo "::error::Refusing to publish '$VERSION': versions with a -rehearsal or -validate pre-release, and versions that start with 0.0.0-, are reserved for rehearsal and validation."
+              exit 1
+            fi
           fi
 
           if [[ "$MODE" != "validate" ]]; then

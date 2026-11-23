@@ -70,7 +70,8 @@ rehearsal draft may use a status-check function. No step may make a tag with `gi
 The tests also run the actual step scripts of `prepare` and `publish-release` under
 Bash, with fixture `git`, `gh`, `python3` and `dotnet` commands, for each mode. They
 cover the refusal of a malformed version, a rehearsal version that is not of the
-form `0.0.0-rehearsal.N`, a `0.0.0-` version in `publish` mode, a wrong ref, a commit that is not the run's
+form `X.Y.Z-rehearsal.N`, a reserved version in `publish` mode (a pre-release whose
+first identifier is `rehearsal` or `validate`, or a `0.0.0-` version), a wrong ref, a commit that is not the run's
 commit, another repository, an existing tag or published Release, a version already
 on NuGet and an unprepared changelog, and the order and result of the draft, the
 upload, the NuGet push, the publication and the check of the tag. They also cover
