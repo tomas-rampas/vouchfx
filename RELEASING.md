@@ -233,7 +233,10 @@ Use **Re-run failed jobs**, not **Re-run all jobs**. **Re-run all jobs** runs
 `prepare` again, which refuses the version once its tag or a package of it
 exists. A re-run is expected to start from the latest attempt, so after that
 refusal **Re-run failed jobs** only runs `prepare` again and is refused too: the
-version is then spent. When only a draft exists and nothing was pushed, **Re-run
+run can no longer finish the publication. If the Release is already published,
+or every package is on NuGet.org and the draft holds every asset, finish by hand
+as case 3 describes for a run past the 30-day limit. Otherwise the version is
+spent (see case 2). When only a draft exists and nothing was pushed, **Re-run
 all jobs** is not refused, but it builds, attests and signs everything again.
 
 Three rules apply to every case:
@@ -254,21 +257,27 @@ Three rules apply to every case:
   tested commit, the step fails with a message that the new draft
   `did not read back as expected`, says what it found, and uploads and pushes
   nothing. In a rehearsal the clean-up is expected to delete the draft. In a
-  `publish` run this is not expected to happen: it means that an assumption
-  about GitHub is wrong, so look at the drafts for the tag on the Releases page
-  and do not re-run until you understand it.
+  `publish` run this is not expected to happen: it means that someone made a
+  draft for the tag during the run, or that an assumption about GitHub is wrong.
+  Look at the drafts for the tag on the Releases page and do not re-run until
+  you understand it.
 - **Do not delete a draft of a version you still mean to release once any package
   of that version has been pushed.** Check NuGet.org first. If the draft is
   deleted after a partial push, the run is refused (case 7). There is one
   exception, because the step `Create the draft release and upload the assets`
   deletes an earlier draft itself before it makes the new one. If that step
   failed after its log line `Deleted the earlier draft …` and before a new draft
-  exists, the packages on NuGet.org came from this run and the version is not
-  spent. Make a draft by hand at the tested commit
-  (`gh release create v<version> --draft --target <full SHA of the tested commit> --title v<version> --notes "Replaced by the release run."`),
-  check on the Releases page that it is the only draft for the tag, and use
-  **Re-run failed jobs**. The run is expected to delete that draft and make its
-  own.
+  exists, the packages on NuGet.org are expected to come from an earlier attempt
+  of this run, and the version is not spent. Confirm that the log of
+  `Publish nupkg to NuGet.org — Trusted Publishing` in an earlier attempt of
+  this run pushed each package of the version that NuGet.org lists. If one came
+  from another run, treat the version as spent. Otherwise make a draft by hand
+  at the tested commit
+  (`gh release create v<version> --repo tomas-rampas/vouchfx --draft --target <full SHA of the tested commit> --title v<version> --notes "Replaced by the release run."`).
+  The full SHA is the run's `commit` input. Keep `--draft`: without it the
+  command publishes a Release at once and creates the tag. Check on the Releases
+  page that it is the only draft for the tag, and use **Re-run failed jobs**.
+  The run is expected to delete that draft and make its own.
 
 The cases:
 
@@ -321,8 +330,9 @@ The cases:
 7. **No draft and no Release, but a package of the version is on NuGet.org.** In
    `publish` mode the classification fails with a message that the package is
    already on NuGet.org and that no draft or Release exists for the tag. Before
-   you treat the version as spent, read the log of the last attempt of
-   `Create the draft release and upload the assets`. If it deleted the earlier
+   you treat the version as spent, read the log of
+   `Create the draft release and upload the assets` in the most recent attempt
+   in which that step ran (the attempt before the refused one). If it deleted the earlier
    draft and then failed, follow the third rule above: the version is not spent.
    Otherwise an earlier run pushed the package and its draft was deleted since.
    The version is then spent: release a new version (see case 2 for the release
@@ -548,7 +558,8 @@ The first `rehearse` run, on `main`, must show:
   before and after the policy on NuGet.org gains the environment (see
   [NuGet.org publish](#nugetorg-publish-trusted-publishing)).
 - [ ] The rehearsal draft is deleted, also after a deliberately failed step.
-- [ ] Whether the inputs and the approval carry over on **Re-run failed jobs**.
+- [ ] Whether the inputs, the approval and the earlier attempt's artefacts
+  carry over on **Re-run failed jobs**.
 
 The first real release (ideally a pre-release) must show the items below. A
 pre-release needs its own version heading in `CHANGELOG.md` and its own

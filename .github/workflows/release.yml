@@ -1808,8 +1808,7 @@ jobs:
           # draft was deleted after a partial push, or that a re-run deleted
           # its own draft and failed before making a new one. Publishing now
           # could pair another commit's packages with this commit's Release.
-          # Only exit 3
-          # means absent; any other failure stops the run.
+          # Only exit 3 means absent; any other failure stops the run.
           if [[ "$MODE" == "publish" && "$state" == "none" ]]; then
             for package in vouchfx Vouchfx.Sdk Vouchfx.Sdk.Testing Vouchfx.Engine.Abstractions Vouchfx.Engine.Authoring Vouchfx.Engine.Compilation; do
               rc=0

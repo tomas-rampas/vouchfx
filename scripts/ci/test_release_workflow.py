@@ -747,6 +747,9 @@ elif args[:2] == ["release", "create"]:
                      "body": Path(flag("--notes-file")).read_text(encoding="utf-8"), "assets": []})
     with open(d / "bodies", "a", encoding="utf-8") as bodies:
         bodies.write(releases[-1]["body"])
+    # `create-not-draft`: the release reads back as published (someone published it).
+    if (d / "create-not-draft").exists():
+        releases[-1]["draft"] = False
     if (d / "create-adds-draft").exists():
         releases.append(dict(releases[-1], id=releases[-1]["id"] + 1))
     save()
@@ -1555,6 +1558,10 @@ class PublishReleaseScriptTests(unittest.TestCase):
                 self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
                 self.assertIn("gh api -X DELETE", result["calls"])
                 self.assertEqual([], result["releases"])
+
+    def test_new_draft_that_reads_back_as_no_draft_stops_before_the_upload(self):
+        result = self.run_job(markers=["create-not-draft"])
+        self.assertReadBackRefused(result, "1, draft flag 'false', target '" + "c" * 40 + "'")
 
     def test_a_second_draft_at_the_read_back_stops_before_the_upload(self):
         result = self.run_job(markers=["create-adds-draft"])
