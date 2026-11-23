@@ -189,7 +189,7 @@ source "$1"
         unit_command = shlex.split(unit_steps[0]["run"])
         for value in ["-m:1", "--no-build", "requires!=docker", "--collect:XPlat Code Coverage"]:
             self.assertIn(value, unit_command)
-        # ZEB-49: a hung test must name itself, and a stuck job is bounded at 40 minutes.
+        # A hung test must name itself, and a stuck job is bounded at 40 minutes.
         self.assertEqual("10m", unit_command[unit_command.index("--blame-hang-timeout") + 1])
         self.assertEqual("none", unit_command[unit_command.index("--blame-hang-dump-type") + 1])
         self.assertIn("--blame-hang", unit_command)
@@ -499,7 +499,7 @@ class DockerIntegrationReusableWorkflowTests(unittest.TestCase):
 
     def test_no_callee_condition_depends_on_the_event_or_ref(self):
         # The lane has callers on different events (schedule and manual dispatch in build.yml;
-        # the published release and manual dispatch in release.yml) and must run the same
+        # manual dispatch in three modes in release.yml) and must run the same
         # steps for each: a condition that reads the run's context would skip steps for one
         # caller while the lane still reported success.
         conditions = [("job", self.lane["if"])] if "if" in self.lane else []

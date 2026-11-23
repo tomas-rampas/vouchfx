@@ -4,11 +4,47 @@
 # SLSA build provenance (actions/attest-build-provenance),
 # self-contained per-OS executables + installer skeletons.
 #
-# Triggers
-# --------
-#   release: [published]   A GitHub Release is published (UI or API).
-#   workflow_dispatch     Validate a candidate without publishing.
-# Tag pushes, branch pushes and pull requests never start this workflow.
+# Trigger
+# -------
+# Manual dispatch only (`workflow_dispatch`). No GitHub Release, tag push,
+# branch push or pull request starts this workflow. No tag, Release, package,
+# attestation or cosign signature is made before the run's tests and builds
+# have passed. The build jobs still sign or notarise the installers where those
+# secrets are configured, and the run artefacts are visible as in any run.
+# Inputs:
+#   mode     validate (default)  Any ref. Tests and builds everything. Publishes,
+#                                attests and cosign-signs nothing, creates no
+#                                Release, draft or tag, and never asks for the
+#                                `release` environment.
+#            rehearse            `main` only, with `commit` equal to the run's
+#                                commit. As validate, then `publish-release`
+#                                asks for the `release` environment, creates a
+#                                draft Release, uploads the assets to it, runs
+#                                the NuGet token exchange, and deletes the draft.
+#                                It pushes nothing, publishes nothing and makes
+#                                no tag, attestation or cosign signature.
+#            publish             `main` only, with `commit` equal to the run's
+#                                commit. The real release.
+#   version  The semver to build, without a leading "v" (e.g. 1.5.0, 1.5.0-rc.1).
+#   commit   The full SHA of the commit to release; required by rehearse and
+#            publish. It must equal the run's commit (the head of `main` when the
+#            run started), which catches a typo or a `main` that has moved on.
+# The first job, `prepare`, refuses a request that breaks these rules. In
+# publish mode it also requires the newest CHANGELOG.md heading and the
+# VouchfxEngineVersion fallback in Directory.Build.props to equal `version`,
+# and the CHANGELOG.md section for `version` to be usable as release notes
+# (present, not empty, at most 100,000 characters).
+#
+# Order of publication (publish mode)
+# -----------------------------------
+# `publish-release` creates a draft Release whose target is the run's full
+# commit SHA, uploads the assets to it, pushes the packages to NuGet.org, and
+# only then publishes the draft, which is expected to create the lightweight
+# tag v<version> at that commit. It then checks that the tag resolves to the
+# run's commit. NuGet
+# goes before publication of the Release because it is the step most likely to
+# fail, and a draft is not public. `publish-marketplace` and `move-floating-tag`
+# follow. Nothing in this run pushes a tag with git.
 #
 # Release gate
 # ------------
@@ -16,18 +52,26 @@
 # (`publish-release`, and so `publish-marketplace`) wait for the Docker
 # integration lane (the `docker-integration` job) to pass on this run's commit.
 # So does the move of the floating tags (`move-floating-tag`, the last job).
+# `sign-and-attest` also waits for both smoke-test jobs. Attestations and
+# signatures are made before the `release` environment approval: the approval
+# protects the draft Release and the NuGet push, not the signing identity.
 # The build jobs are not gated: build-msi, build-deb and build-pkg still sign or
 # notarise at build time, where those secrets are configured, whatever the
-# lane's result. With the lane, a run is expected to take about 80 minutes. The
-# comment on that job lists what is and is not withheld.
+# lane's result. With the lane, a run is expected to take about 80 minutes, plus
+# the wait for approval of the `release` environment. The comment on that job
+# lists what is and is not withheld.
 #
 # Keyless signing and publishing model — no long-lived private key or API key stored as a secret
 # --------------------------------------------------------------------------------------------------
+# Attestation and cosign signing run in publish mode only: an attestation or a
+# Rekor entry is a permanent public record, and one made in another mode would
+# verify as if it came from a release. They are made before the `release`
+# environment approval (see `sign-and-attest`).
 #   1. SLSA provenance (actions/attest-build-provenance, SHA-pinned below)
 #      GitHub OIDC token → signed attestation stored with the repo.
 #      Verify:  gh attestation verify <file> --repo tomas-rampas/vouchfx
 #
-#   2. cosign keyless (sigstore/cosign-installer@v3)
+#   2. cosign keyless (sigstore/cosign-installer, SHA-pinned below)
 #      GitHub OIDC token → Fulcio short-lived cert → Rekor transparency log.
 #      Verify:  cosign verify-blob <file> \
 #                 --bundle <file>.cosign.bundle \
@@ -35,13 +79,33 @@
 #                   '^https://github\.com/tomas-rampas/vouchfx/\.github/workflows/release\.yml@.*' \
 #                 --certificate-oidc-issuer https://token.actions.githubusercontent.com
 #
+#   What these two checks prove: the `gh` command shows only that some
+#   workflow run in this repository attested the file, on any ref; the
+#   `cosign` command shows that some run of release.yml in this repository
+#   signed it, on any branch or tag and from any trigger. Older manual runs of
+#   release.yml on main also made attestations (not cosign signatures), with
+#   the same workflow, ref and trigger as a release made by this flow. For a
+#   release made by this flow, also pin the commit the tag points at. A pass
+#   still accepts a publish run at that commit that failed after signing:
+#      gh attestation verify <file> --repo tomas-rampas/vouchfx \
+#        --signer-workflow github.com/tomas-rampas/vouchfx/.github/workflows/release.yml \
+#        --source-ref refs/heads/main --source-digest <full commit SHA of the tag>
+#      cosign verify-blob <file> --bundle <file>.cosign.bundle \
+#        --certificate-identity https://github.com/tomas-rampas/vouchfx/.github/workflows/release.yml@refs/heads/main \
+#        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#        --certificate-github-workflow-trigger workflow_dispatch \
+#        --certificate-github-workflow-sha <full commit SHA of the tag>
+#
 #   3. NuGet Trusted Publishing (NuGet/login, SHA-pinned)
 #      single-use GitHub OIDC token → nuget.org token exchange → short-lived
 #      API key (valid ~1 hour, reusable within that window, minted
 #      immediately before push).
 #      Gated by a Trusted Publishing policy on nuget.org (Package Owner
 #      "Tomas.R"): Repository tomas-rampas/vouchfx, Workflow File
-#      release.yml, no Environment. No NUGET_API_KEY secret is stored.
+#      release.yml; RELEASING.md records its Environment setting. The job
+#      that exchanges the token runs in the `release` environment. No
+#      NUGET_API_KEY secret is stored. Rehearse mode runs the exchange and
+#      pushes nothing.
 #
 #      Publishes six packages per release, all built into artifacts/nuget/:
 #        - vouchfx                       (CLI global tool — primary distribution)
@@ -52,20 +116,23 @@
 #        - Vouchfx.Engine.Compilation   (DocumentValidator, RoslynScriptCompiler)
 #      A bounded NuGet index lookup skips versions already public before
 #      upload; --skip-duplicate handles races. Published packages are IMMUTABLE. A bad artifact is never
-#      fixed by re-running or re-tagging the same version: ship a new patch
+#      fixed by re-running or re-releasing the same version: ship a new patch
 #      version instead.
 #      PRE-FLIGHT before the first release that publishes the five new SDK
 #      package IDs: confirm on nuget.org that the Trusted Publishing policy
 #      permits first-time creation of new IDs from this repo/workflow, and
 #      that no third party has registered or prefix-reserved the IDs. A 403
-#      on one ID publishes nothing for that ID; fix the policy and re-run the
-#      SAME tag — --skip-duplicate completes the missing pushes. A new patch
-#      version is only needed if a genuinely broken artifact already shipped.
+#      on one ID publishes nothing for that ID, and the Release stays a draft;
+#      fix the policy and use "Re-run failed jobs" on the same run — the
+#      presence check and --skip-duplicate complete the missing pushes. A new
+#      dispatch of the same version is refused by `prepare` once any package
+#      of it is on NuGet.org. A new patch version is only needed if a
+#      genuinely broken artifact already shipped.
 #
 # Secret-gated optional steps (SKIPPED, not failed, when secret is absent)
 # -------------------------------------------------------------------------
 #   Authenticode (Windows)  CODESIGN_PFX_BASE64 + CODESIGN_PFX_PASSWORD
-#   GPG signing (nupkg)     GPG_SIGNING_KEY + GPG_PASSPHRASE
+#   GPG signing (nupkg)     GPG_SIGNING_KEY + GPG_PASSPHRASE (publish mode only)
 #   Apple notarisation      APPLE_ID + APPLE_TEAM_ID + APPLE_APP_SPECIFIC_PASSWORD
 #   VS Code Marketplace     VSCE_PAT (publisher "vouchfx" — see #121; until the
 #                           secret exists the extension ships only as the .vsix
@@ -88,26 +155,41 @@
 name: Release (signed, provenance)
 
 on:
-  release:
-    types: [published]
-  # workflow_dispatch lets maintainers smoke-test the build/publish/harvest
-  # jobs without cutting a real tag.  Release upload and NuGet push are
-  # ALWAYS skipped on dispatch runs (see "Smoke-test" comments throughout).
+  # The only trigger. The header describes the three modes.
   workflow_dispatch:
     inputs:
+      mode:
+        description: "validate: test and build only. rehearse: also draft, upload and delete (main only). publish: release (main only)."
+        required: true
+        default: validate
+        type: choice
+        options:
+          - validate
+          - rehearse
+          - publish
       version:
-        description: "Semver string to build, e.g. 0.0.0-test (no release upload)"
+        description: "Semver to build, without a leading v (e.g. 1.5.0 or 1.5.0-rc.1)"
         required: true
         default: "0.0.0-test"
+        type: string
+      commit:
+        description: "Full SHA of the commit to release (rehearse and publish): the head of main"
+        required: false
+        default: ""
         type: string
 
 # Minimum workflow-level permissions; each job declares its own overrides.
 permissions:
   contents: read
 
-# One release per ref; never cancel a signing job mid-flight.
+# Rehearse and publish runs on refs/heads/main share one group, so two of them
+# never run at once. Every other run (validate, or a rehearse or publish
+# dispatch from another ref, which `prepare` refuses) has a group of its own,
+# so it cannot take the place of a pending release run. Never cancel a run
+# mid-flight. GitHub keeps at most one pending run per group: a third rehearse
+# or publish dispatch on main is expected to replace the one still waiting.
 concurrency:
-  group: release-${{ github.ref }}
+  group: ${{ (inputs.mode == 'rehearse' || inputs.mode == 'publish') && github.ref == 'refs/heads/main' && 'release-publish' || format('release-run-{0}', github.run_id) }}
   cancel-in-progress: false
 
 env:
@@ -116,8 +198,152 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
 
 jobs:
+  # ===========================================================================
+  # prepare
+  # Checks the dispatch request before anything is built, and is the single
+  # source of the version and tag for every later job. In every mode: `version`
+  # is strict semver (MAJOR.MINOR.PATCH, optional pre-release led by "-" whose
+  # numeric parts have no leading zero, no "+build", no "."-led suffix). In
+  # rehearse and publish: the run is on refs/heads/main of tomas-rampas/vouchfx,
+  # `commit` is the run's own commit, and the tag, a published Release and
+  # every NuGet package ID of this version are all absent. In publish:
+  # CHANGELOG.md and Directory.Build.props are prepared for the version, and
+  # the CHANGELOG.md section for it can be used as release notes. It reads with
+  # the job token only; no secrets, no environment.
+  # ===========================================================================
+  prepare:
+    name: Check the release request
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    outputs:
+      version: ${{ steps.request.outputs.version }}
+      tag: ${{ steps.request.outputs.tag }}
+      mode: ${{ steps.request.outputs.mode }}
+
+    steps:
+      - name: Checkout (release metadata and helper scripts)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Test the release helper scripts
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/tests -p test_release_metadata.py -v
+          python3 -m unittest discover -s scripts/tests -p test_check_nuget_presence.py -v
+
+      # SECURITY: the dispatch inputs are passed through env: and used only as
+      # quoted shell variables, never interpolated into run: via ${{ }}.
+      - name: Check the version, ref, commit and what already exists
+        id: request
+        env:
+          MODE: ${{ inputs.mode }}
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ inputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in
+            validate|rehearse|publish) ;;
+            *) echo "::error::Unknown mode '$MODE'."; exit 1 ;;
+          esac
+
+          # Strict semver: MAJOR.MINOR.PATCH and an optional pre-release that
+          # begins with "-". A numeric pre-release part has no leading zero
+          # (1.2.3-01 is refused). No "+build" and no "."-led suffix (1.2.3.rc.1
+          # would otherwise be released as a GA version).
+          number='(0|[1-9][0-9]*)'
+          part='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          semver="^${number}\.${number}\.${number}(-${part}(\.${part})*)?$"
+          if [[ ! "$VERSION" =~ $semver ]]; then
+            echo "::error::Refusing to release: version '$VERSION' is not MAJOR.MINOR.PATCH with an optional '-' pre-release."
+            exit 1
+          fi
+          tag="v$VERSION"
+
+          # A rehearsal makes a draft with placeholder notes. If its clean-up
+          # failed, the draft would stay. Only a version that can never be
+          # released may be rehearsed, so a later publish cannot reuse it.
+          if [[ "$MODE" == "rehearse" && ! "$VERSION" =~ ^0\.0\.0-rehearsal\.[0-9]+$ ]]; then
+            echo "::error::A rehearsal must use a version of the form 0.0.0-rehearsal.N, not '$VERSION'."
+            exit 1
+          fi
+          if [[ "$MODE" == "publish" && "$VERSION" == 0.0.0-* ]]; then
+            echo "::error::Refusing to publish '$VERSION': versions that start with 0.0.0- are reserved for validation and rehearsal."
+            exit 1
+          fi
+
+          if [[ "$MODE" != "validate" ]]; then
+            if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+              echo "::error::Mode '$MODE' runs only on refs/heads/main; this run is on '$GITHUB_REF'."
+              exit 1
+            fi
+            if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ || "$COMMIT" != "$GITHUB_SHA" ]]; then
+              echo "::error::Input commit '$COMMIT' must be the full SHA of this run's commit, $GITHUB_SHA (the head of main when the run started)."
+              exit 1
+            fi
+            if [[ "$GITHUB_REPOSITORY" != "tomas-rampas/vouchfx" ]]; then
+              echo "::error::Mode '$MODE' runs only in tomas-rampas/vouchfx, not '$GITHUB_REPOSITORY'."
+              exit 1
+            fi
+
+            if ! listing="$(git ls-remote --tags origin)"; then
+              echo "::error::Could not read the remote tags."
+              exit 1
+            fi
+            if awk -F'\t' -v ref="refs/tags/$tag" '$2 == ref || $2 == ref "^{}" { found = 1 } END { exit !found }' <<<"$listing"; then
+              echo "::error::Tag '$tag' already exists. A version is released once."
+              exit 1
+            fi
+
+            if ! published="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[] | select(.draft == false) | .tag_name')"; then
+              echo "::error::Could not read the releases."
+              exit 1
+            fi
+            if grep -Fxq -- "$tag" <<<"$published"; then
+              echo "::error::A published Release for '$tag' already exists."
+              exit 1
+            fi
+
+            for id in vouchfx Vouchfx.Sdk Vouchfx.Sdk.Testing Vouchfx.Engine.Abstractions Vouchfx.Engine.Authoring Vouchfx.Engine.Compilation; do
+              rc=0
+              python3 scripts/check_nuget_presence.py --id "$id" --version "$VERSION" || rc=$?
+              if [[ "$rc" -eq 0 ]]; then
+                echo "::error::$id $VERSION is already on NuGet.org. A version is released once."
+                exit 1
+              elif [[ "$rc" -ne 3 ]]; then
+                echo "::error::Could not check $id $VERSION on NuGet.org."
+                exit 1
+              fi
+            done
+          fi
+
+          if [[ "$MODE" == "publish" ]]; then
+            if ! python3 scripts/release_metadata.py check --changelog CHANGELOG.md --props Directory.Build.props --version "$VERSION"; then
+              echo "::error::Merge the release pull request for $VERSION first: the newest CHANGELOG.md heading and the VouchfxEngineVersion fallback must both be $VERSION."
+              exit 1
+            fi
+            # The same extraction `publish-release` uses for the Release notes,
+            # so a missing, empty or too long section fails here, not at the end.
+            if ! python3 scripts/release_metadata.py notes --changelog CHANGELOG.md --version "$VERSION" > /dev/null; then
+              echo "::error::The CHANGELOG.md section for $VERSION cannot be used as the Release notes: it must exist once, not be empty, and be at most 100,000 characters."
+              exit 1
+            fi
+          fi
+
+          {
+            echo "version=$VERSION"
+            echo "tag=$tag"
+            echo "mode=$MODE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release request: mode=$MODE version=$VERSION tag=$tag commit=$GITHUB_SHA"
+
   tls-transport:
     name: TLS transport
+    needs: prepare
     uses: ./.github/workflows/tls-transport-acceptance.yml
     with:
       reviewed_sha: ${{ github.sha }}
@@ -125,14 +351,16 @@ jobs:
   # ===========================================================================
   # docker-integration — release gate
   # The Docker / Aspire integration lane must pass on this run's commit before
-  # anything is attested, cosign-signed or published. It has no `needs`, so it
-  # starts with the run, beside the builds. It passed in about 75 minutes in CI,
-  # so a release run is expected to take about 80 minutes.
+  # anything is attested, cosign-signed or published. It needs only `prepare`,
+  # so it starts beside the TLS transport lane, before the builds. It passed
+  # in about 75 minutes in CI, so a release run is expected to take about 80
+  # minutes.
   #
   # WITHHELD when the lane is red, cancelled, timed out or skipped (the two jobs
-  # below list it in `needs`, so they and everything after them are skipped):
-  # build-provenance attestations, cosign signatures, the NuGet package GPG
-  # signature, release assets, the NuGet pushes and the Marketplace extension.
+  # `sign-and-attest` and `publish-release` list it in `needs`, so they and
+  # everything after them are skipped): build-provenance attestations, cosign
+  # signatures, the NuGet package GPG signature, the draft and the GitHub
+  # Release, the tag, the NuGet pushes and the Marketplace extension.
   #
   # ALSO WITHHELD: the floating tags (v1-alpha, v1-rc, v1). The last job,
   # `move-floating-tag`, calls move-floating-tag.yml and lists `publish-release`
@@ -141,29 +369,26 @@ jobs:
   # floating tags where they were. That is the expected behaviour on GitHub; the
   # contract tests check the job's `needs`, `if`, `permissions` and `with`, not a
   # live run.
-  # LIMIT: for a `release` event GitHub runs the workflow files of the tagged
-  # commit. The release tags made before this change, from v1.0.0-alpha.6 on,
-  # carry the old move-floating-tag.yml, which moves the floating tag on
-  # `release: published` with no gate and no guard. A release created or
-  # re-published for one of those tags, or tagged on a commit that does not
-  # contain this change, therefore still moves the tag at once. Nothing in this
-  # file can prevent that.
+  # LIMIT: a GitHub Release made by hand for a tag made before this change still
+  # starts that tag's own release.yml and move-floating-tag.yml, which listened
+  # on `release: published` (for a `release` event GitHub runs the workflow
+  # files of the tagged commit). Nothing in this file can prevent that.
   #
-  # NOT WITHHELD: the GitHub Release itself (tag and notes) is already public
-  # when this workflow starts, and the build jobs are deliberately not gated.
+  # NOT WITHHELD: the run artefacts. The build jobs are deliberately not gated.
   # Whatever the lane result, the installers are still built and, where those
   # secrets are configured, signed with the project's keys (Authenticode, the
   # .deb GPG signature) or, for the .pkg, submitted to Apple for notarisation. They
   # stay downloadable as run artefacts (msi-installer, deb-package, pkg-installer,
   # 30 days) by anyone who can see this run, which for this public repository
   # is anyone signed in to GitHub. The other build outputs (nuget-package,
-  # publish-archives, sbom, vsix) are run artefacts in the same way, with no
-  # attestation or cosign signature.
+  # publish-archives, sbom, vsix, signing-material) are run artefacts in the
+  # same way, with no attestation or cosign signature. Apart from them, a red
+  # run leaves nothing public: no tag, no Release, no package, no extension.
   #
   # A flaky lane is expected to be recoverable with "Re-run failed jobs" on this
   # run (not yet exercised on a release run); there is no bypass input, variable
-  # or label. The workflow_dispatch preflight runs the lane too (no `if` here),
-  # so a candidate is checked before it is released.
+  # or label. Validate and rehearse runs call the lane too (no `if` here), so a
+  # candidate is checked before it is released.
   #
   # Calling it is safe because the called workflow has exactly one job and that
   # job has no `if`: a reusable-workflow call whose inner jobs are all skipped
@@ -171,6 +396,7 @@ jobs:
   # ===========================================================================
   docker-integration:
     name: Docker integration
+    needs: prepare
     permissions:
       contents: read
     uses: ./.github/workflows/docker-integration.yml
@@ -184,14 +410,16 @@ jobs:
   # ===========================================================================
   build-dotnet:
     name: Build .NET artifacts (nupkg, per-RID publish, SBOM)
-    needs: tls-transport
+    needs: [prepare, tls-transport]
     runs-on: ubuntu-latest
     permissions:
       contents: read
 
+    # Passed through from `prepare`, which checked them, so the later jobs that
+    # read build-dotnet's outputs get the same values.
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag:     ${{ steps.version.outputs.tag }}
+      version: ${{ needs.prepare.outputs.version }}
+      tag:     ${{ needs.prepare.outputs.tag }}
 
     steps:
       - name: Checkout (full history for version embedding)
@@ -232,45 +460,12 @@ jobs:
       - name: Build (Release, 0-warning gate)
         run: dotnet build vouchfx.sln -c Release --no-restore
 
-      # Extract semver from the triggering ref.
-      # release event:         github.event.release.tag_name → "v1.2.3"
-      # workflow_dispatch:     inputs.version                → "0.0.0-test"
-      - name: Determine release version
-        id: version
-        # SECURITY: attacker-influenceable context values (tag name, dispatch
-        # input) are passed through the env: map and referenced only as quoted
-        # shell variables — never interpolated directly inside run: via ${{ }}.
-        env:
-          EV_TAG:   ${{ github.event.release.tag_name }}
-          EV_INPUT: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
-            tag="$EV_TAG"
-          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            tag="v$EV_INPUT"
-          else
-            echo "::error::Unsupported release event: $GITHUB_EVENT_NAME" >&2
-            exit 1
-          fi
-          version="${tag#v}"   # strip leading "v" for dotnet -p:Version
-          # Fail-closed: reject anything that is not a clean semver before it
-          # reaches $GITHUB_OUTPUT and gets spliced into downstream run: shells.
-          # Pattern: MAJOR.MINOR.PATCH with an optional pre-release/build suffix
-          # composed of alphanumerics, hyphens, and dots (e.g. 1.2.3-rc.1).
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Refusing to release: version '$version' is not a valid semver"
-            exit 1
-          fi
-          echo "tag=$tag"         >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Releasing: tag=$tag  version=$version (event: $GITHUB_EVENT_NAME)"
-
+      # The version comes from `prepare`, which validated it as strict semver.
       # Pack the dotnet global tool nupkg (primary distribution).
       # PackAsTool=true and IsPublishable=true are set in the csproj.
       - name: Pack nupkg (global tool — primary distribution)
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           dotnet pack src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
             -c Release \
@@ -279,7 +474,7 @@ jobs:
 
       - name: Validate complete tool payload and conservative NuGet size ceiling
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           python -m unittest discover -s scripts/tests -p test_package_compression.py -v
           python -m unittest discover -s scripts/tests -p test_check_distribution.py -v
@@ -299,7 +494,7 @@ jobs:
       # keeps the loop readable and matches the emitted <dependency> graph.
       - name: Pack nupkg (SDK closure — Vouchfx.Sdk, Vouchfx.Sdk.Testing, Vouchfx.Engine.*)
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           for csproj in \
@@ -320,7 +515,7 @@ jobs:
       # Planning remains a separately audited packable library, outside this closure.
       - name: Validate SDK XML publication boundary and CLI XML exclusions
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           python -m unittest discover -s scripts/tests -p test_check_sdk_xml.py -v
@@ -331,7 +526,7 @@ jobs:
       # Each publish carries its own RID-specific DCP tools tree beside the CLI.
       - name: Publish self-contained (linux-x64)
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
             -c Release -r linux-x64 --self-contained \
@@ -340,7 +535,7 @@ jobs:
 
       - name: Publish self-contained (win-x64)
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
             -c Release -r win-x64 --self-contained \
@@ -349,7 +544,7 @@ jobs:
 
       - name: Publish self-contained (osx-x64)
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
             -c Release -r osx-x64 --self-contained \
@@ -358,7 +553,7 @@ jobs:
 
       - name: Publish self-contained (osx-arm64)
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
             -c Release -r osx-arm64 --self-contained \
@@ -368,7 +563,7 @@ jobs:
       # Archive each publish directory into a distributable tarball.
       - name: Archive publish outputs (tar.gz per RID)
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           v="$VERSION"
@@ -388,7 +583,7 @@ jobs:
       # CycloneDX SBOM — install, run, uninstall (no residual global tool).
       - name: Generate SBOM (CycloneDX JSON, spec 1.7)
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           dotnet tool install --global CycloneDX --allow-roll-forward
@@ -765,15 +960,18 @@ jobs:
 
   # ===========================================================================
   # publish-marketplace (#121)
-  # No build or version bump occurs here. Require both smoke gates, signing, and
-  # completed GitHub/NuGet publication before publishing the verified VSIX.
+  # Publish mode only. No build or version bump occurs here. Require both smoke
+  # gates, signing, and completed GitHub/NuGet publication (`publish-release`
+  # has published the Release and checked that its tag is at this run's commit)
+  # before publishing the verified VSIX. The checkout is the run's commit, the
+  # same commit the tag points at.
   # A failed/skipped dependency skips this job; do not add always() to its guard.
   # ===========================================================================
   publish-marketplace:
     name: Publish verified VSIX to VS Code Marketplace
     runs-on: ubuntu-latest
     needs: [build-dotnet, build-vsix, sign-and-attest, smoke-test-packaged-tool, smoke-test-distribution-platforms, publish-release]
-    if: github.event_name != 'workflow_dispatch' && github.repository == 'tomas-rampas/vouchfx'
+    if: inputs.mode == 'publish' && github.repository == 'tomas-rampas/vouchfx'
     permissions:
       contents: read
 
@@ -784,6 +982,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Download the built and attested .vsix
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -831,15 +1032,24 @@ jobs:
 
   # ===========================================================================
   # sign-and-attest
-  # Applies SLSA build provenance + cosign keyless signing to every artifact,
-  # and optionally GPG-signs the nupkg.
+  # In publish mode: applies SLSA build provenance + cosign keyless signing to
+  # every artifact, and optionally GPG-signs the nupkg. In validate and rehearse
+  # modes the job still runs (it downloads every artefact, so a missing one
+  # fails it), but each attestation and signing step is skipped: an attestation
+  # or a Rekor entry is a permanent public record, and a test artefact must not
+  # get one. Its `signing-material` artefact always exists and records the mode.
+  # The job has no `environment`: in publish mode the attestations and
+  # signatures are made before the `release` environment approval of
+  # `publish-release`. That approval protects the draft Release and the NuGet
+  # push, not the signing identity. This order is deliberate.
   # ===========================================================================
   sign-and-attest:
     name: Attest (SLSA provenance) and sign (cosign keyless, GPG)
     runs-on: ubuntu-latest
-    # docker-integration is the release gate: no attestation or signature is made
-    # for a commit whose Docker lane has not passed.
-    needs: [docker-integration, build-dotnet, build-vsix, build-msi, build-deb, build-pkg]
+    # docker-integration is the release gate, and both smoke tests must pass
+    # too: no attestation or signature is made for a commit whose Docker lane
+    # or packaged-tool smoke tests have not passed.
+    needs: [docker-integration, build-dotnet, build-vsix, build-msi, build-deb, build-pkg, smoke-test-packaged-tool, smoke-test-distribution-platforms]
 
     permissions:
       id-token: write      # mint GitHub OIDC token for Fulcio + cosign
@@ -848,6 +1058,7 @@ jobs:
 
     env:
       VERSION: ${{ needs.build-dotnet.outputs.version }}
+      MODE: ${{ inputs.mode }}
       HAS_GPG: ${{ secrets.GPG_SIGNING_KEY != '' }}
 
     steps:
@@ -893,9 +1104,10 @@ jobs:
           name: pkg-installer
           path: artifacts/installers/
 
-      # SLSA provenance attestations — one per artifact group.
+      # SLSA provenance attestations — one per artifact group, publish mode only.
       # Verification: gh attestation verify <file> --repo tomas-rampas/vouchfx
       - name: Attest nupkg (SLSA build provenance)
+        if: inputs.mode == 'publish'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
@@ -903,21 +1115,25 @@ jobs:
             artifacts/nuget/*.snupkg
 
       - name: Attest publish archives (SLSA build provenance)
+        if: inputs.mode == 'publish'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: artifacts/vouchfx-*.tar.gz
 
       - name: Attest SBOM (SLSA build provenance)
+        if: inputs.mode == 'publish'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: artifacts/sbom/*.bom.json
 
       - name: Attest .vsix (SLSA build provenance)
+        if: inputs.mode == 'publish'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: artifacts/vsix/*.vsix
 
       - name: Attest installers (SLSA build provenance)
+        if: inputs.mode == 'publish'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: artifacts/installers/*
@@ -925,16 +1141,14 @@ jobs:
       # cosign keyless signing — produces a self-contained .cosign.bundle
       # (signature + Fulcio cert chain + Rekor inclusion proof) per artifact.
       # Pinned to a full commit SHA for supply-chain integrity.
-      # workflow_dispatch smoke-test runs are excluded: signing a throwaway
-      # 0.0.0-test artifact mints a real, permanent Rekor transparency-log
-      # entry — noisy and misleading.  All other steps in this job are
-      # unaffected by this gate.
+      # Publish mode only: signing a test artifact mints a real, permanent Rekor
+      # transparency-log entry that verifies as if it came from a release.
       - name: Install cosign
-        if: github.event_name != 'workflow_dispatch'
+        if: inputs.mode == 'publish'
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       - name: Sign artifacts (cosign keyless)
-        if: github.event_name != 'workflow_dispatch'
+        if: inputs.mode == 'publish'
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
@@ -961,11 +1175,11 @@ jobs:
             fi
           done
 
-      # GPG signing for the nupkg — SECRET-GATED.
+      # GPG signing for the nupkg — SECRET-GATED, publish mode only.
       # Required secrets: GPG_SIGNING_KEY (base64-encoded armoured private key)
       #                   GPG_PASSPHRASE
       - name: Sign nupkg (GPG) — secret-gated
-        if: ${{ env.HAS_GPG == 'true' }}
+        if: ${{ inputs.mode == 'publish' && env.HAS_GPG == 'true' }}
         env:
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
           GPG_PASSPHRASE:  ${{ secrets.GPG_PASSPHRASE }}
@@ -979,14 +1193,49 @@ jobs:
             echo "  -> ${nupkg}.asc"
           done
 
+      # The signing-material artefact has a known shape in every mode, so the
+      # publishing job never has to tolerate a missing one. In publish mode each
+      # artifact must have its cosign bundle; in the other modes there must be no
+      # cosign bundle and no nupkg signature. The mode is recorded beside them.
+      - name: Check the signing material for this mode
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          subjects=(artifacts/nuget/*.nupkg artifacts/nuget/*.snupkg artifacts/vouchfx-*.tar.gz
+                    artifacts/sbom/*.bom.json artifacts/vsix/*.vsix artifacts/installers/*.msi
+                    artifacts/installers/*.deb artifacts/installers/*.pkg)
+          if [[ "${#subjects[@]}" -eq 0 ]]; then
+            echo "::error::No artifacts were downloaded."
+            exit 1
+          fi
+          if [[ "$MODE" == "publish" ]]; then
+            for f in "${subjects[@]}"; do
+              if [[ ! -s "${f}.cosign.bundle" ]]; then
+                echo "::error::$f has no cosign bundle."
+                exit 1
+              fi
+            done
+          else
+            unexpected="$(find artifacts -type f \( -name '*.cosign.bundle' -o -path 'artifacts/nuget/*.asc' \) -print)"
+            if [[ -n "$unexpected" ]]; then
+              echo "::error::Mode '$MODE' must not sign; found: $unexpected"
+              exit 1
+            fi
+          fi
+          printf '%s\n' "$MODE" > artifacts/signing-mode
+          echo "Signing material checked for mode $MODE (${#subjects[@]} artifacts)."
+
+      # Only the nupkg signatures made here: the .deb signature reaches the
+      # Release through the deb-package artefact, and a second copy would clash.
       - name: Upload cosign bundles + GPG signatures
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signing-material
           path: |
+            artifacts/signing-mode
             artifacts/**/*.cosign.bundle
-            artifacts/**/*.asc
-          if-no-files-found: warn
+            artifacts/nuget/*.asc
+          if-no-files-found: error
           retention-days: 30
 
   # ===========================================================================
@@ -1419,26 +1668,46 @@ jobs:
 
   # ===========================================================================
   # publish-release
-  # Assembles all artifacts and attaches them to the GitHub Release.
-  # Publishes the nupkg to NuGet.org via Trusted Publishing (GitHub OIDC,
-  # no long-lived secret; repo-gated).
+  # The only job that creates, changes or deletes a GitHub Release, logs in to
+  # NuGet.org or pushes a package. It runs in rehearse and publish modes only,
+  # on refs/heads/main of the canonical repository, in the `release`
+  # environment (main only, one required reviewer, no administrator bypass), so
+  # it waits for approval. Its `if` uses no status-check function: a failed,
+  # cancelled or skipped dependency skips it.
+  #
+  # Steps, in this order, each safe to run again so that "Re-run failed jobs"
+  # completes a partial run:
+  #   1. Classify v<version>: nothing exists, a draft exists, or a published
+  #      Release exists. A tag, a draft target or a published Release at any
+  #      other commit than this run's fails the job. In publish mode, when no
+  #      Release is published yet, it also fails when a higher stable version
+  #      is already published (for a stable version), and, when nothing exists,
+  #      when a package of this version is already on NuGet.org.
+  #   2. Create the draft (target: the run's full commit SHA, never a branch)
+  #      and upload the assets. An earlier draft at this commit is deleted and
+  #      made again, so its notes, title, pre-release flag and assets all come
+  #      from this run. For a Release already published, its asset names must
+  #      equal this run's, and nothing is uploaded.
+  #   3. NuGet login (token exchange).
+  #   4. Rehearse mode: delete the draft and stop.
+  #   5. Publish mode: push the packages, publish the draft (which is expected
+  #      to create the tag at the run's commit), then check that the tag
+  #      resolves to the run's commit and the Release is no longer a draft.
+  # NuGet goes before publication of the Release: it is the step most likely to
+  # fail, and a failure there leaves only a draft, which is not public.
   # ===========================================================================
   publish-release:
     name: Publish artifacts to GitHub Release and NuGet
     runs-on: ubuntu-latest
-    # docker-integration is the release gate: no release asset or NuGet push for a
+    # docker-integration is the release gate: no draft, asset or NuGet push for a
     # commit whose Docker lane has not passed. Listed here as well as through
     # sign-and-attest so the gate does not depend on the transitive edge.
-    needs: [docker-integration, tls-transport, build-dotnet, sign-and-attest, smoke-test-packaged-tool, smoke-test-distribution-platforms]
-    # Smoke-test: dispatch runs never publish (every step below is
-    # tag/release-gated), but the artifact downloads used to run
-    # unconditionally and failed hard because the cosign/GPG steps skip on
-    # dispatch, so no signing-material artifact exists (first-smoke finding,
-    # 2026-07-05).  Skip the whole job on dispatch — it has nothing to do.
-    if: github.event_name != 'workflow_dispatch'
+    needs: [prepare, docker-integration, tls-transport, build-dotnet, sign-and-attest, smoke-test-packaged-tool, smoke-test-distribution-platforms]
+    if: inputs.mode != 'validate' && github.ref == 'refs/heads/main' && github.repository == 'tomas-rampas/vouchfx'
+    environment: release
 
     permissions:
-      contents: write   # attach files to the GitHub Release
+      contents: write   # create, upload to, publish and delete the Release
       id-token: write   # mint GitHub OIDC token for NuGet Trusted Publishing
       # id-token is necessarily job-scoped (Actions has no step-level
       # permissions), so every step in this job could technically mint an
@@ -1446,18 +1715,117 @@ jobs:
       # riskier than this residual surface.
 
     env:
-      VERSION: ${{ needs.build-dotnet.outputs.version }}
-      TAG:     ${{ needs.build-dotnet.outputs.tag }}
+      MODE:    ${{ inputs.mode }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG:     ${{ needs.prepare.outputs.tag }}
 
     steps:
-      - name: Checkout triggering source for NuGet publication checks
+      - name: Checkout the run's commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Test NuGet publication presence checks
-        run: python3 -m unittest discover -s scripts/tests -p test_check_nuget_presence.py -v
+      - name: Test the release helper scripts
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/tests -p test_check_nuget_presence.py -v
+          python3 -m unittest discover -s scripts/tests -p test_release_metadata.py -v
+
+      # Reads the tag with git and the releases (drafts included, which needs
+      # this job's contents: write) with the API. Writes `state`: none, draft or
+      # published, and `draft_id` for a draft. A rehearsal needs a clean slate,
+      # so that its clean-up step can only ever delete the draft this job made.
+      # The id comes before the target in each line: the target may be empty,
+      # and `read` with a tab separator would merge two tabs in a row.
+      - name: Classify the release state
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if ! listing="$(git ls-remote --tags origin)"; then
+            echo "::error::Could not read the remote tags."
+            exit 1
+          fi
+          tag_sha="$(awk -F'\t' -v ref="refs/tags/$TAG" '$2 == ref "^{}" { peeled = $1 } $2 == ref { direct = $1 } END { print (peeled != "" ? peeled : direct) }' <<<"$listing")"
+          if ! releases="$(gh api --paginate "repos/${GH_REPO}/releases?per_page=100" --jq '.[] | [.tag_name, (.draft | tostring), (.id | tostring), .target_commitish] | @tsv')"; then
+            echo "::error::Could not read the releases."
+            exit 1
+          fi
+          matches="$(awk -F'\t' -v tag="$TAG" '$1 == tag' <<<"$releases")"
+          count="$(grep -c . <<<"$matches" || true)"
+
+          if [[ -n "$tag_sha" && "$tag_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::Tag '$TAG' resolves to $tag_sha, not to this run's commit $GITHUB_SHA."
+            exit 1
+          fi
+          if [[ "$count" -gt 1 ]]; then
+            echo "::error::$count releases or drafts exist for '$TAG'. Delete the extra drafts by hand."
+            exit 1
+          fi
+
+          state=none
+          draft_id=""
+          if [[ "$count" -eq 1 ]]; then
+            IFS=$'\t' read -r _ draft id target <<<"$matches"
+            if [[ "$draft" == "true" ]]; then
+              draft_id="$id"
+              if [[ "$target" != "$GITHUB_SHA" ]]; then
+                echo "::error::The draft for '$TAG' targets '$target', not this run's commit $GITHUB_SHA. Delete the draft by hand."
+                exit 1
+              fi
+              state=draft
+            else
+              if [[ -z "$tag_sha" ]]; then
+                echo "::error::A published Release for '$TAG' exists but its tag cannot be found."
+                exit 1
+              fi
+              state=published
+            fi
+          fi
+
+          if [[ "$MODE" == "rehearse" && ( "$state" != "none" || -n "$tag_sha" ) ]]; then
+            echo "::error::A rehearsal needs no existing tag, draft or Release for '$TAG' (found state '$state'). Rehearse another version."
+            exit 1
+          fi
+
+          # A stable Release is marked "Latest". Publishing an older stable
+          # version (for example from a late re-run of an old run) would take
+          # "Latest" from a newer one, so it is refused. `sort -V` orders plain
+          # X.Y.Z versions numerically. A pre-release is never marked "Latest".
+          if [[ "$MODE" == "publish" && "$VERSION" != *-* && ( "$state" == "none" || "$state" == "draft" ) ]]; then
+            highest="$(awk -F'\t' '$2 == "false" && $1 ~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { print substr($1, 2) }' <<<"$releases" | sort -V | tail -n 1)"
+            if [[ -n "$highest" && "$(printf '%s\n%s\n' "$highest" "$VERSION" | sort -V | tail -n 1)" != "$VERSION" ]]; then
+              echo "::error::Refusing to publish '$TAG': the published Release 'v$highest' is a higher stable version, and '$TAG' would be marked Latest in its place."
+              exit 1
+            fi
+          fi
+
+          # This job makes the draft before it pushes to NuGet.org, so packages
+          # of this version on NuGet.org with no draft or Release mean that a
+          # draft was deleted after a partial push, or that a re-run deleted
+          # its own draft and failed before making a new one. Publishing now
+          # could pair another commit's packages with this commit's Release.
+          # Only exit 3 means absent; any other failure stops the run.
+          if [[ "$MODE" == "publish" && "$state" == "none" ]]; then
+            for package in vouchfx Vouchfx.Sdk Vouchfx.Sdk.Testing Vouchfx.Engine.Abstractions Vouchfx.Engine.Authoring Vouchfx.Engine.Compilation; do
+              rc=0
+              python3 scripts/check_nuget_presence.py --id "$package" --version "$VERSION" || rc=$?
+              if [[ "$rc" -eq 0 ]]; then
+                echo "::error::$package $VERSION is already on NuGet.org, but no draft or Release exists for '$TAG'. Either an earlier run pushed it and its draft was deleted, or a re-run deleted its own draft and failed before making a new one (see RELEASING.md, case 7)."
+                exit 1
+              elif [[ "$rc" -ne 3 ]]; then
+                echo "::error::Could not check $package $VERSION on NuGet.org."
+                exit 1
+              fi
+            done
+          fi
+
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          echo "draft_id=$draft_id" >> "$GITHUB_OUTPUT"
+          echo "Release state for $TAG: $state (mode $MODE, commit $GITHUB_SHA)"
 
       - name: Download nupkg
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -1483,17 +1851,14 @@ jobs:
           name: vsix
           path: release-upload/
 
+      # sign-and-attest always uploads this artefact; it holds `signing-mode`
+      # and, in publish mode, the cosign bundles and GPG signatures. It goes to
+      # its own directory so that `signing-mode` is never uploaded as an asset.
       - name: Download signing material (cosign bundles, GPG signatures)
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        # The sign job uploads this artifact with if-no-files-found: warn, so
-        # it legitimately does not exist when every signing step was skipped
-        # (no secrets provisioned).  A release without detached signatures is
-        # still a valid release (SLSA attestations are stored server-side);
-        # never hard-fail the publish on its absence.
-        continue-on-error: true
         with:
           name: signing-material
-          path: release-upload/
+          path: signing-material/
 
       - name: Download MSI installer
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -1515,53 +1880,194 @@ jobs:
 
       - name: List release artifacts
         run: |
-          echo "Artifacts to attach to release $TAG:"
-          find release-upload/ -type f | sort
+          echo "Artifacts to attach to the release $TAG:"
+          find release-upload/ signing-material/ -type f | sort
 
-      # Smoke-test runs (workflow_dispatch) stop here — all steps below interact
-      # with GitHub Releases or NuGet.org and must not fire on test runs.
-      - name: List release artifacts (smoke-test final step)
-        run: |
-          echo "Artifacts that would be uploaded to release $TAG:"
-          find release-upload/ -type f | sort
-
-      # Attach all artifacts to the release.  --clobber replaces any file
-      # already uploaded (safe for re-runs or partial re-runs).
-      # Skipped on workflow_dispatch smoke-test runs.
-      - name: Upload artifacts to GitHub Release
-        if: github.event_name != 'workflow_dispatch'
+      # Creates the draft when nothing exists. When a draft at this commit
+      # exists (an earlier attempt of this run, or an earlier run), reads it
+      # again by its id, deletes it only if it is still that draft, and creates
+      # a new one, so that the notes, title, pre-release flag and every asset
+      # come from this run. For a Release that is already
+      # published (a re-run after publication), uploads nothing and fails
+      # unless its asset names are exactly the names this run would upload.
+      # The draft's target is the run's full commit SHA, so publishing it later
+      # is expected to create the tag at the tested commit. Notes: the
+      # CHANGELOG.md section for the version, then GitHub's generated notes
+      # (`--notes-file` with `--generate-notes`: the file's text is put in
+      # front of them). `created=true` tells the rehearsal clean-up that this
+      # step made a draft.
+      - name: Create the draft release and upload the assets
+        id: create
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          STATE: ${{ steps.state.outputs.state }}
+          DRAFT_ID: ${{ steps.state.outputs.draft_id }}
         run: |
           set -euo pipefail
-          mapfile -d '' files < <(find release-upload/ -type f -print0)
-          echo "Uploading ${#files[@]} files to release $TAG..."
+          if [[ "$(cat signing-material/signing-mode)" != "$MODE" ]]; then
+            echo "::error::The signing material was made for another mode."
+            exit 1
+          fi
+          mapfile -d '' files < <(find release-upload/ signing-material/ -type f ! -name signing-mode -print0 | sort -z)
+          # A failure inside the process substitution is not seen by `set -e`,
+          # and an empty list would compare equal to a Release with no assets.
+          if [[ "${#files[@]}" -eq 0 ]]; then
+            echo "::error::No release files were found."
+            exit 1
+          fi
+          duplicates="$(printf '%s\n' "${files[@]##*/}" | sort | uniq -d)"
+          if [[ -n "$duplicates" ]]; then
+            echo "::error::Two assets share a name: $duplicates"
+            exit 1
+          fi
+
+          # The notes and the pre-release flag are made before any earlier draft
+          # is deleted, so that a failure here leaves that draft in place. A
+          # published Release needs neither.
+          notes="$RUNNER_TEMP/release-notes.md"
+          prerelease=()
+          if [[ "$STATE" == "none" || "$STATE" == "draft" ]]; then
+            if [[ "$MODE" == "publish" ]]; then
+              python3 scripts/release_metadata.py notes --changelog CHANGELOG.md --version "$VERSION" > "$notes"
+            else
+              printf '%s\n' "Rehearsal draft made by the release workflow. It is deleted when the rehearsal ends and is never published." > "$notes"
+            fi
+            if [[ "$VERSION" == *-* ]]; then
+              prerelease=(--prerelease)
+            fi
+          fi
+
+          case "$STATE" in
+            none) ;;
+            draft)
+              if [[ ! "$DRAFT_ID" =~ ^[0-9]+$ ]]; then
+                echo "::error::The draft for $TAG has no usable id ('$DRAFT_ID')."
+                exit 1
+              fi
+              # The releases were listed earlier in this job. The draft may have
+              # been published, or moved to another tag or commit, since. This
+              # read narrows that window;
+              # it does not close it, as the release can still change between
+              # the read and the delete.
+              if ! current="$(gh api "repos/${GH_REPO}/releases/${DRAFT_ID}" --jq '[.tag_name, (.draft | tostring), .target_commitish] | @tsv')" \
+                 || [[ "$current" != "$TAG"$'\t'"true"$'\t'"$GITHUB_SHA" ]]; then
+                echo "::error::Release $DRAFT_ID could not be read, or is no longer the draft for $TAG at $GITHUB_SHA; nothing was deleted."
+                exit 1
+              fi
+              gh api -X DELETE "repos/${GH_REPO}/releases/${DRAFT_ID}"
+              echo "Deleted the earlier draft $DRAFT_ID for $TAG; this run replaces it with a new draft."
+              ;;
+            published)
+              if ! published="$(gh api "repos/${GH_REPO}/releases/tags/${TAG}" --jq '.assets[].name')"; then
+                echo "::error::Could not read the assets of the published Release $TAG."
+                exit 1
+              fi
+              if [[ "$(sort <<<"$published")" != "$(printf '%s\n' "${files[@]##*/}" | sort)" ]]; then
+                echo "::error::The published Release $TAG does not hold this run's assets: its asset names differ from the ${#files[@]} files this run would upload. This run uploads nothing and pushes nothing to NuGet.org."
+                exit 1
+              fi
+              echo "The Release $TAG is already published with an asset of each name this run would upload; nothing is uploaded."
+              exit 0
+              ;;
+            *)
+              echo "::error::Unknown release state '$STATE'."
+              exit 1
+              ;;
+          esac
+
+          gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" \
+            --notes-file "$notes" --generate-notes "${prerelease[@]}"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+          # Read the new draft back before anything is uploaded or pushed. The
+          # classification can compare a draft's target with this run's commit
+          # only on a later attempt. This proves the round trip in a rehearsal,
+          # before any NuGet push. That GitHub returns the full SHA for a draft
+          # made with a full SHA as its target is expected, not observed.
+          if ! readback="$(gh api --paginate "repos/${GH_REPO}/releases?per_page=100" --jq '.[] | [.tag_name, (.draft | tostring), (.id | tostring), .target_commitish] | @tsv')"; then
+            echo "::error::Could not read the releases back after creating the draft for $TAG. Nothing was uploaded and nothing was pushed to NuGet.org."
+            exit 1
+          fi
+          readback_matches="$(awk -F'\t' -v tag="$TAG" '$1 == tag' <<<"$readback")"
+          readback_count="$(grep -c . <<<"$readback_matches" || true)"
+          readback_draft=""
+          readback_target=""
+          if [[ "$readback_count" -eq 1 ]]; then
+            IFS=$'\t' read -r _ readback_draft _ readback_target <<<"$readback_matches"
+          fi
+          if [[ "$readback_count" -ne 1 || "$readback_draft" != "true" || "$readback_target" != "$GITHUB_SHA" ]]; then
+            echo "::error::The new draft for $TAG did not read back as expected: entries found for the tag: $readback_count, draft flag '$readback_draft', target '$readback_target'; expected exactly one draft with target $GITHUB_SHA. Nothing was uploaded and nothing was pushed to NuGet.org."
+            exit 1
+          fi
+          echo "Uploading ${#files[@]} files to the draft $TAG..."
           gh release upload "$TAG" "${files[@]}" --clobber
           echo "Done."
 
       # Exchange the single-use GitHub OIDC token for a short-lived
       # (~1 hour), reusable NuGet.org API key via the Trusted Publishing
       # policy configured on nuget.org (Package Owner "Tomas.R"): Repository
-      # tomas-rampas/vouchfx, Workflow File release.yml, no Environment.
-      # Repository-gated: forks have no matching policy, so the token
-      # exchange would fail there anyway — the explicit condition just
-      # fails fast/skips instead of erroring mid-job. The workflow_dispatch
-      # guard is redundant with the job-level `if` above but kept as
-      # defence in depth, matching the neighbouring steps.
+      # tomas-rampas/vouchfx, Workflow File release.yml. It runs in rehearse
+      # mode too, which proves the exchange without pushing anything. Forks
+      # never reach it: the job's `if` names this repository.
       - name: NuGet login (OIDC → short-lived API key)
         id: nuget-login
-        if: ${{ github.repository == 'tomas-rampas/vouchfx' && github.event_name != 'workflow_dispatch' }}
         uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         with:
           user: Tomas.R
 
-      # Publish the nupkg to NuGet.org — TRUSTED-PUBLISHING-GATED.
+      # Rehearse mode ends here. `always()` is deliberate and is the only
+      # status-check function on a step of this job: the rehearsal draft must
+      # be deleted even when a step after its creation failed or the run was
+      # cancelled. It runs only when the classification found nothing for the
+      # tag (state `none`), so any draft for the tag was made by this job.
+      # It lists the releases again after the deletion and fails if anything
+      # for the tag remains. When the draft step reported that it created a
+      # draft (`created`) but the list shows none, the list may lag behind;
+      # it fails rather than end green.
+      - name: Rehearsal — delete the draft release
+        if: always() && inputs.mode == 'rehearse' && steps.state.outputs.state == 'none'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CREATED: ${{ steps.create.outputs.created }}
+        run: |
+          set -euo pipefail
+          if ! releases="$(gh api --paginate "repos/${GH_REPO}/releases?per_page=100" --jq '.[] | [.tag_name, (.draft | tostring), (.id | tostring)] | @tsv')"; then
+            echo "::error::Could not read the releases; delete the rehearsal draft for '$TAG' by hand."
+            exit 1
+          fi
+          if awk -F'\t' -v tag="$TAG" '$1 == tag && $2 != "true" { found = 1 } END { exit !found }' <<<"$releases"; then
+            echo "::error::A published Release for '$TAG' exists; a rehearsal never publishes. Investigate."
+            exit 1
+          fi
+          ids="$(awk -F'\t' -v tag="$TAG" '$1 == tag && $2 == "true" { print $3 }' <<<"$releases")"
+          if [[ -z "$ids" ]]; then
+            if [[ "$CREATED" == "true" ]]; then
+              echo "::error::This job created a rehearsal draft for '$TAG', but the list of releases does not show it. Look for the draft by hand and delete it."
+              exit 1
+            fi
+            echo "No rehearsal draft for $TAG to delete."
+            exit 0
+          fi
+          for id in $ids; do
+            gh api -X DELETE "repos/${GH_REPO}/releases/${id}"
+            echo "Deleted the rehearsal draft $id for $TAG."
+          done
+          if ! releases="$(gh api --paginate "repos/${GH_REPO}/releases?per_page=100" --jq '.[] | [.tag_name, (.draft | tostring), (.id | tostring)] | @tsv')"; then
+            echo "::error::Could not read the releases after the deletion; check by hand that no draft for '$TAG' remains."
+            exit 1
+          fi
+          if awk -F'\t' -v tag="$TAG" '$1 == tag { found = 1 } END { exit !found }' <<<"$releases"; then
+            echo "::error::A release or draft for '$TAG' remains after the deletion. Delete it by hand."
+            exit 1
+          fi
+
+      # Publish the nupkg to NuGet.org — TRUSTED-PUBLISHING-GATED, publish mode only.
       # Install: dotnet tool install -g vouchfx
       # Package: https://www.nuget.org/packages/vouchfx/
-      # Also skipped on workflow_dispatch smoke-test runs.
       - name: Publish nupkg to NuGet.org — Trusted Publishing
-        if: ${{ github.repository == 'tomas-rampas/vouchfx' && github.event_name != 'workflow_dispatch' }}
+        if: inputs.mode == 'publish'
         env:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
@@ -1569,9 +2075,10 @@ jobs:
           # Non-fatal per package: glob order pushes the five Vouchfx.* SDK
           # packages BEFORE vouchfx, and a first-time 403 on a new ID (policy
           # scope, prefix squat) must not hold the primary CLI publish hostage.
-          # Every failure is still reported and fails the step at the end;
-          # re-running the same tag completes the missing pushes via
-          # --skip-duplicate once the policy issue is fixed.
+          # Every failure is still reported and fails the step at the end, so
+          # the Release stays a draft; "Re-run failed jobs" completes the
+          # missing pushes via the presence check and --skip-duplicate once the
+          # policy issue is fixed.
           rc=0
           for nupkg in release-upload/*.nupkg; do
             # Avoid uploading an immutable version again (the large CLI can
@@ -1611,12 +2118,82 @@ jobs:
           done
           exit $rc
 
+      # Publish mode only, after every NuGet push succeeded. Publishing the
+      # draft is expected to create the lightweight tag at the draft's target,
+      # this run's commit; the next step checks it. Only a stable version is
+      # marked "latest". On a re-run after publication there is nothing to do.
+      - name: Publish the draft release
+        if: inputs.mode == 'publish'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          STATE: ${{ steps.state.outputs.state }}
+        run: |
+          set -euo pipefail
+          case "$STATE" in
+            published)
+              echo "The Release $TAG is already published."
+              exit 0
+              ;;
+            none|draft) ;;
+            *)
+              echo "::error::Unknown release state '$STATE'."
+              exit 1
+              ;;
+          esac
+          # Look at the tag once more. The classify step read it earlier; a tag
+          # made at another commit since then would be kept by the publication,
+          # and the Release would point at that commit. This narrows the window;
+          # it does not close it.
+          if ! listing="$(git ls-remote --tags origin)"; then
+            echo "::error::Could not read the remote tags; nothing was published."
+            exit 1
+          fi
+          tag_sha="$(awk -F'\t' -v ref="refs/tags/$TAG" '$2 == ref "^{}" { peeled = $1 } $2 == ref { direct = $1 } END { print (peeled != "" ? peeled : direct) }' <<<"$listing")"
+          if [[ -n "$tag_sha" && "$tag_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::Tag '$TAG' now resolves to $tag_sha, not to this run's commit $GITHUB_SHA; nothing was published."
+            exit 1
+          fi
+          latest=(--latest)
+          if [[ "$VERSION" == *-* ]]; then
+            latest=(--latest=false)
+          fi
+          gh release edit "$TAG" --draft=false --target "$GITHUB_SHA" "${latest[@]}"
+          echo "Published the Release $TAG."
+
+      # Publish mode only. Fails the job, and so skips the Marketplace and the
+      # floating tag, unless the tag resolves to this run's commit and the
+      # Release is published.
+      - name: Verify the tag and the published release
+        if: inputs.mode == 'publish'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if ! listing="$(git ls-remote --tags origin)"; then
+            echo "::error::Could not read the remote tags."
+            exit 1
+          fi
+          tag_sha="$(awk -F'\t' -v ref="refs/tags/$TAG" '$2 == ref "^{}" { peeled = $1 } $2 == ref { direct = $1 } END { print (peeled != "" ? peeled : direct) }' <<<"$listing")"
+          if [[ "$tag_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::Tag '$TAG' resolves to '$tag_sha', not to this run's commit $GITHUB_SHA."
+            exit 1
+          fi
+          # This endpoint returns published releases only; a draft gives a 404.
+          if ! draft="$(gh api "repos/${GH_REPO}/releases/tags/${TAG}" --jq '.draft')" || [[ "$draft" != "false" ]]; then
+            echo "::error::The Release $TAG is not published."
+            exit 1
+          fi
+          echo "Verified: $TAG is at $GITHUB_SHA and its Release is published."
+
   # ===========================================================================
   # move-floating-tag
   # Moves the floating convenience tags (v1-alpha, v1-rc, v1) to this release,
-  # as the last job of the run. `needs` puts it behind publication; its `if`
-  # uses no status-check function, so a failed, cancelled or skipped dependency
-  # skips it. Do not add always() or similar to its guard.
+  # as the last job of the run, in publish mode only. `needs` puts it behind
+  # publication; its `if` uses no status-check function, so a failed, cancelled
+  # or skipped dependency skips it. Do not add always() or similar to its guard.
+  # `tag` is prepare's output, the same value publish-release published under.
   # `expected_sha` is the commit this run tested. The called workflow refuses to
   # move a tag whose release resolves to a different commit, and leaves a tag
   # alone when the floating tag already sits on a newer release of its line (a
@@ -1627,11 +2204,11 @@ jobs:
   # ===========================================================================
   move-floating-tag:
     name: Move floating tag
-    needs: [build-dotnet, publish-release, publish-marketplace]
-    if: github.event_name != 'workflow_dispatch'
+    needs: [prepare, publish-release, publish-marketplace]
+    if: inputs.mode == 'publish'
     permissions:
       contents: write
     uses: ./.github/workflows/move-floating-tag.yml
     with:
-      tag: ${{ needs.build-dotnet.outputs.tag }}
+      tag: ${{ needs.prepare.outputs.tag }}
       expected_sha: ${{ github.sha }}

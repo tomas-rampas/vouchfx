@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check an actual nupkg before NuGet.org publication, using the standard library.
 
+With `--id` and `--version` instead of a package, check that ID and version.
 Exit 0: this ID/version is already public. Exit 3: it is missing. Exit 1: the
 package or lookup is invalid. Usage errors return argparse's distinct exit 2.
 The flat-container index includes unlisted versions, which are also immutable:
@@ -122,12 +123,27 @@ def is_public(package_id, version):
     return version in versions
 
 
+def requested_identity(package_id, version):
+    """An ID and version given on the command line, before any package exists."""
+    if PACKAGE_ID.fullmatch(package_id) is None:
+        raise PresenceError("invalid package ID")
+    return package_id, normalized_version(version)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("package", type=Path, help="actual .nupkg to publish")
+    parser.add_argument("package", type=Path, nargs="?", help="actual .nupkg to publish")
+    # The release run's first job checks a version before anything is packed.
+    parser.add_argument("--id", dest="package_id", help="package ID to look up instead of a package")
+    parser.add_argument("--version", help="version to look up with --id")
     args = parser.parse_args(argv)
+    if (args.package is None) == (args.package_id is None) or (args.package_id is None) != (args.version is None):
+        parser.error("give either a package, or both --id and --version")
     try:
-        package_id, version = package_identity(args.package)
+        if args.package is not None:
+            package_id, version = package_identity(args.package)
+        else:
+            package_id, version = requested_identity(args.package_id, args.version)
         exists = is_public(package_id, version)
     except PresenceError as error:
         print("NuGet presence check failed: " + str(error), file=sys.stderr)

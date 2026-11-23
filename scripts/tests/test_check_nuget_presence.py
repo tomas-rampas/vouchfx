@@ -208,6 +208,42 @@ class PresenceTests(unittest.TestCase):
         self.assertEqual(2, process.returncode)
         self.assertNotEqual(gate.MISSING, process.returncode)
 
+    def id_cli(self, argv, response=None, error=None):
+        kwargs = {"side_effect": error} if error else {"return_value": response}
+        with patch.object(gate, "urlopen", **kwargs) as open_url, \
+                contextlib.redirect_stdout(io.StringIO()) as stdout, \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = gate.main(argv)
+        return code, stdout.getvalue(), open_url
+
+    def test_id_and_version_mode_reports_present_and_missing(self):
+        argv = ["--id", "Vouchfx.Sdk", "--version", "1.0.0"]
+        code, stdout, open_url = self.id_cli(argv, Response(b'{"versions":["1.0.0"]}'))
+        self.assertEqual((0, "NuGet version already public: Vouchfx.Sdk 1.0.0\n"), (code, stdout))
+        self.assertEqual(URL, open_url.call_args.args[0].full_url)
+        self.assertEqual(3, self.id_cli(argv, Response(b'{"versions":["0.9.0"]}'))[0])
+        self.assertEqual(3, self.id_cli(argv, error=HTTPError(URL, 404, "not found", {}, None))[0])
+        self.assertEqual(1, self.id_cli(argv, error=HTTPError(URL, 503, "busy", {}, None))[0])
+
+    def test_id_and_version_mode_normalises_the_version(self):
+        argv = ["--id", "Vouchfx.Sdk", "--version", "1.0.0-RC.1"]
+        self.assertEqual(0, self.id_cli(argv, Response(b'{"versions":["1.0.0-rc.1"]}'))[0])
+
+    def test_id_and_version_mode_rejects_bad_input_before_network(self):
+        for package_id, version in (("../other", "1.0.0"), ("Vouchfx.Sdk", "latest"), ("Vouchfx.Sdk", "")):
+            with self.subTest(package_id=package_id, version=version):
+                code, _, open_url = self.id_cli(["--id", package_id, "--version", version])
+                self.assertEqual(1, code)
+                open_url.assert_not_called()
+
+    def test_package_and_id_modes_cannot_be_mixed_or_half_given(self):
+        package = str(self.archive())
+        for argv in ([package, "--id", "Vouchfx.Sdk", "--version", "1.0.0"],
+                     ["--id", "Vouchfx.Sdk"], ["--version", "1.0.0"], [package, "--version", "1.0.0"]):
+            with self.subTest(argv=argv):
+                process = subprocess.run([sys.executable, str(SCRIPT), *argv], capture_output=True)
+                self.assertEqual(2, process.returncode)
+
 
 if __name__ == "__main__":
     unittest.main()

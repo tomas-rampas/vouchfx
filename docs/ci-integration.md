@@ -421,8 +421,10 @@ Three maintainer-moved tags exist as a convenience tier, maintained by
 which force-moves the matching tag to a release's commit. The tag is moved by the last job of the release
 run, which is expected to start only after the release's checks have passed and its packages have been
 published, so a release that fails its checks is expected to leave the tag where it was. This applies to
-releases tagged on a commit that contains this behaviour. A GitHub Release created or published again for
-a tag made before this behaviour was added still moves the tag as soon as it is published, with no checks.
+releases made by the current release flow, which a maintainer starts by manual dispatch and which creates
+the release tag and the GitHub Release itself. A GitHub Release created by hand for a tag made before this
+flow was added still runs that tag's old workflows, and its floating-tag move runs as soon as the Release
+is published, with no checks.
 
 The three tags:
 
@@ -643,11 +645,12 @@ opening an MR to bump the pinned SHA and its trailing comment.
 git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.2.1
 ```
 
-Depending on how the release tag was created (both kinds are documented in
-[RELEASING.md](https://github.com/tomas-rampas/vouchfx/blob/main/RELEASING.md)), this prints either
+Depending on how the release tag was created, this prints either
 *two* lines — `refs/tags/v1.2.1` (an annotated tag object's own SHA) and
 `refs/tags/v1.2.1^{}` (the commit it points at, "peeled") — or a *single* line for a lightweight
-tag, whose SHA already **is** the commit. **If a `^{}` line is present, take that one**; otherwise the
+tag, whose SHA already **is** the commit. A tag made by the release run is expected to be lightweight; how a release
+is made is described in
+[RELEASING.md](https://github.com/tomas-rampas/vouchfx/blob/main/RELEASING.md). **If a `^{}` line is present, take that one**; otherwise the
 single line's SHA is the commit SHA to pin.
 
 ---
@@ -684,10 +687,10 @@ workflow `.github/workflows/docker-integration.yml`, which the `integration` job
 at the commit under test; the job's `if:` keeps it to the daily run on `main`, scheduled for
 06:17 UTC, and to manual dispatch from any branch. A Docker-test failure therefore surfaces on the
 next daily run, not before merge. The lane's job has a 120-minute timeout. The release workflow
-(`release.yml`) calls the same lane on every release run, including its manual preflight, as a
+(`release.yml`) calls the same lane on every release run, including its `validate` runs, as a
 gate: `sign-and-attest` and `publish-release` need it, so for a commit on which it has not passed
-no attestation, cosign signature or NuGet package signature is made, nothing is attached to the
-release, and nothing is published to NuGet.org or the Marketplace. The build jobs still run: the
+no attestation, cosign signature or NuGet package signature is made, no draft, tag or GitHub Release
+is created, and nothing is published to NuGet.org or the Marketplace. The build jobs still run: the
 installers are signed or notarised where those secrets are configured, and the packages, archives,
 SBOM, extension and installers stay downloadable as run artefacts. `RELEASING.md` says what a red
 lane leaves behind. The

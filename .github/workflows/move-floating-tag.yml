@@ -95,8 +95,8 @@
 # workflow's own run log is the audit trail for when/why each one moved.
 #
 # github.sha: not used here for the tag's commit. In a called workflow
-# `github.sha` is the caller's commit. release.yml passes it as `expected_sha`,
-# and GitHub documents it as the tag's commit for a `release` event. This
+# `github.sha` is the caller's commit. release.yml passes it as `expected_sha`;
+# it is the commit that release run tested and tagged. This
 # workflow checks out the release tag and reads the resulting commit with
 # `git rev-parse HEAD`. On the called path that commit must equal `expected_sha`.
 
@@ -134,7 +134,7 @@ jobs:
     name: Move v1-alpha / v1-rc / v1 to the published release
     runs-on: ubuntu-latest
     # Canonical-repo guard: a fork's own run must never move tags here (mirrors
-    # release.yml's NuGet Trusted Publishing repository guard).
+    # the repository condition on release.yml's publishing jobs).
     if: github.repository == 'tomas-rampas/vouchfx'
     permissions:
       contents: write
@@ -202,8 +202,8 @@ jobs:
         # that anyone who can create a release (or run a workflow) in THIS
         # repo controls it — already gated above to the canonical repo. Still
         # passed through a quoted env var and validated before use, matching
-        # release.yml's "Determine release version" discipline (never
-        # interpolate directly into a run: shell via ${{ }}).
+        # the discipline of release.yml's `prepare` job (never interpolate
+        # directly into a run: shell via ${{ }}).
         run: |
           set -euo pipefail
 
@@ -218,9 +218,10 @@ jobs:
           version="${tag#v}"
 
           # Semver-accurate validation: MAJOR.MINOR.PATCH, an optional pre-release
-          # that MUST begin with '-', and optional '+build' metadata. Deliberately
-          # STRICTER than release.yml's pattern (which also tolerates a '.'-led
-          # suffix): a mistag like v1.2.3.rc.1 must fail here rather than slip
+          # that MUST begin with '-', and optional '+build' metadata. A release
+          # run's own check (the `prepare` job in release.yml) is stricter and
+          # also refuses '+build'; this pattern still matters for a manual run,
+          # where a mistag like v1.2.3.rc.1 must fail here rather than slip
           # through with no '-' and be routed as a GA release, moving `v1`.
           if [[ ! "$version" =~ ^([0-9]+)\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::'$tag' is not a valid semver tag — refusing to move any floating tag."
