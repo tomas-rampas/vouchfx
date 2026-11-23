@@ -482,6 +482,11 @@ cosign verify-blob vouchfx.1.0.0.nupkg \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
+These two commands show that some workflow run in this repository (`gh`), or some run of
+`release.yml` on any branch or tag (`cosign`), made the file. They do not show which ref or commit it
+was built from. [RELEASING.md](https://github.com/tomas-rampas/vouchfx/blob/main/RELEASING.md#verifying-artifacts)
+gives stricter commands that pin the workflow, the ref and the release commit.
+
 Certificate-based signing (Windows Authenticode, macOS notarisation, GPG) is secret-gated until those
 certificates are provisioned; cosign signatures and SLSA provenance are present on every artefact from
 day one, so verification is never blocked on them. Full procedures are in

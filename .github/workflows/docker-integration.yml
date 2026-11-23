@@ -5,8 +5,8 @@
 # called by two workflows. build.yml's `integration` job calls it on the daily
 # schedule and on manual dispatch; build.yml's `integration-gate` job reports the
 # lane's result under the required check name `Integration tests — Docker / Aspire`.
-# release.yml's `docker-integration` job calls it on every release run, including
-# the manual-dispatch preflight, and is the gate that `sign-and-attest` and
+# release.yml's `docker-integration` job calls it on every release run, in every
+# mode (validate, rehearse and publish), and is the gate that `sign-and-attest` and
 # `publish-release` need.
 #
 # The caller passes the exact commit to test as `reviewed_sha`, and it must be the

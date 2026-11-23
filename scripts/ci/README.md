@@ -27,7 +27,7 @@ different events and must run the same steps for each.
 
 The release workflow is the lane's second caller. `test_release_workflow.py` pins
 the `docker-integration` job in `release.yml` (the same `uses`, `reviewed_sha`
-and `contents: read`, no `if`, no `needs`), requires `sign-and-attest` and
+and `contents: read`, `needs: prepare` and no `if`), requires `sign-and-attest` and
 `publish-release` to need it, and derives from the parsed workflow which jobs
 have a side effect (a secret, any `secrets` reference inside an expression, a
 `HAS_*` condition, any `write` permission, or an attest, cosign or publish step or
@@ -47,17 +47,53 @@ in its job-level `if`. Every `actions/checkout` step in `release.yml` must omit 
 set it to `${{ github.sha }}`, because the gate tests the run's commit and every build
 must ship that same commit.
 
-The release contract also requires exactly one public publishing trigger
-(`release: published`) and preserves the non-publishing manual dispatch. It runs
-the actual version-step shell for stable, pre-release, dispatch and refused push
-events without invoking signing or publication.
+The release contract also requires that manual dispatch (`workflow_dispatch`) is the
+only trigger of `release.yml`, with the inputs `mode` (`validate`, `rehearse`,
+`publish`; `validate` by default), `version` and `commit`. It pins the first job,
+`prepare`, as the read-only root that every other job needs, and the source of the
+version and tag for the later jobs. It pins the exact `if` of `publish-release`,
+`publish-marketplace` and `move-floating-tag`, and requires that none of them uses a
+status-check function. The `release` environment must be on `publish-release` and on
+no other job. Attestation and cosign signing steps must run in `publish` mode only.
+`sign-and-attest` and `publish-marketplace` each have an exact `needs` list, and no
+job may join the `release-publish` concurrency group. The steps of `publish-release`
+must keep their order (classify the state, create the draft and upload the assets,
+NuGet login, delete the rehearsal draft, push, publish the draft, verify the tag,
+last). The exact set of `gh` command forms in `prepare` and in `publish-release` is
+pinned. A `gh api` call with a method flag in either spelling, a field or input
+flag, or `graphql` counts as a write. A `curl` or other HTTP client that uses the
+token is not seen. The shape of that job is fixed: its keys, its permissions, its
+`env`, and each step's keys and own `env`, so a step cannot gain an `if`, a
+`continue-on-error` or an `env` without failing a test. Only the clean-up step of the
+rehearsal draft may use a status-check function. No step may make a tag with `git`.
+
+The tests also run the actual step scripts of `prepare` and `publish-release` under
+Bash, with fixture `git`, `gh`, `python3` and `dotnet` commands, for each mode. They
+cover the refusal of a malformed version, a rehearsal version that is not of the
+form `0.0.0-rehearsal.N`, a `0.0.0-` version in `publish` mode, a wrong ref, a commit that is not the run's
+commit, another repository, an existing tag or published Release, a version already
+on NuGet and an unprepared changelog, and the order and result of the draft, the
+upload, the NuGet push, the publication and the check of the tag. They also cover
+the recovery states: an existing draft at the run's commit, which is deleted and
+replaced by a new one; a published Release that holds other assets than the run
+would upload; a higher stable version that is already published; a package on
+NuGet with no draft; a tag or draft at another commit; and a failed push that
+leaves only the draft. They cover the clean-up of a rehearsal draft, also after a
+failed step, including its second list of the releases. The test image has no `gh`
+or `jq` here either: the fixture `gh` emulates six `--jq` filters (three list
+filters, the read of one release by its id, and the tag endpoint's `.draft` and
+`.assets[].name`). A call that the
+fixtures do not know is recorded and fails the test. The real `gh` and the jq
+expressions are not run.
 
 The same file pins the floating-tag move (`MoveFloatingTagStructureTests` and
 `MoveFloatingTagScriptTests`). `move-floating-tag.yml` has only the
 `workflow_call` and `workflow_dispatch` triggers and the inputs of each.
-`release.yml` is the only workflow that triggers on `release` and the only caller
-of it. The calling job's `needs` includes `build-dotnet`, `publish-release` and
-`publish-marketplace`, and its `if`, `permissions` and `with` are fixed. In
+No workflow triggers on `release` or on a tag push, and `release.yml` is the only
+caller of `move-floating-tag.yml`. The calling job's `needs` includes `prepare`,
+`publish-release` and `publish-marketplace`; it takes the tag from `prepare`'s
+output and the commit from `github.sha`. Its `if`, `permissions` and `with` are
+fixed. In
 `release.yml` only that job and `publish-release` hold `contents: write`; in
 `move-floating-tag.yml` only the called job does (the `write-all` shorthand
 counts as write). The called workflow has exactly one job, with its repository

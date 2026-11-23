@@ -1,9 +1,11 @@
-"""Release event contract and actual version-step regressions; no publication."""
+"""Release workflow contract and its actual step scripts, run with fixtures; no publication."""
 
 import json
 import os
 from pathlib import Path
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +15,61 @@ from docker_ci_support import BASH, ROOT, workflow
 
 
 GATE = "docker-integration"
+PREPARE = "prepare"
+REPOSITORY = "tomas-rampas/vouchfx"
+MODE_PUBLISH = "inputs.mode == 'publish'"
+# The exact job-level conditions of the publishing jobs. None uses a status-check
+# function, so a failed, cancelled or skipped dependency skips the job.
+PUBLISH_RELEASE_IF = ("inputs.mode != 'validate' && github.ref == 'refs/heads/main' && "
+                      "github.repository == 'tomas-rampas/vouchfx'")
+PUBLISH_MARKETPLACE_IF = "inputs.mode == 'publish' && github.repository == 'tomas-rampas/vouchfx'"
+MOVE_TAG_IF = "inputs.mode == 'publish'"
+# The one step-level status function in publish-release: the rehearsal clean-up.
+REHEARSAL_CLEANUP_IF = "always() && inputs.mode == 'rehearse' && steps.state.outputs.state == 'none'"
+CONCURRENCY_GROUP = ("${{ (inputs.mode == 'rehearse' || inputs.mode == 'publish') && "
+                     "github.ref == 'refs/heads/main' && 'release-publish' || "
+                     "format('release-run-{0}', github.run_id) }}")
+# A `gh api` call that writes: an explicit method, any field or input (with which
+# `gh api` sends a POST by default), or any GraphQL call (a mutation cannot be told
+# from a query here).
+GH_API_WRITE = (r"gh\s+api\b[^\n]*(?:-X|--method)[\s=]*(?:POST|PATCH|PUT|DELETE)|"
+                r"gh\s+api\b[^\n]*\s(?:-f|-F|--field|--raw-field|--input)(?=[\s=]|$)|"
+                r"gh\s+api\b[^\n]*\bgraphql\b")
+# Commands that create, change or delete a Release, log in to or push to NuGet.org.
+RELEASE_COMMANDS = re.compile(
+    r"gh\s+release\s+(?:create|upload|edit|delete)|" + GH_API_WRITE + r"|nuget\s+push",
+    re.IGNORECASE | re.MULTILINE)
+# publish-release, step by step: (name, keys, step-level env keys). The behaviour
+# tests run each `run:` with their own environment and evaluate only these exact
+# `if` strings, so everything else about a step is pinned here.
+GH_ENV = {"GH_TOKEN": "${{ github.token }}", "GH_REPO": "${{ github.repository }}"}
+GH_STATE_ENV = {**GH_ENV, "STATE": "${{ steps.state.outputs.state }}"}
+PUBLISH_RELEASE_STEPS = [
+    ("Checkout the run's commit", {"name", "uses", "with"}, None),
+    ("Test the release helper scripts", {"name", "run"}, None),
+    ("Classify the release state", {"name", "id", "env", "run"}, GH_ENV),
+    ("Download nupkg", {"name", "uses", "with"}, None),
+    ("Download publish archives", {"name", "uses", "with"}, None),
+    ("Download SBOM", {"name", "uses", "with"}, None),
+    ("Download .vsix", {"name", "uses", "with"}, None),
+    ("Download signing material (cosign bundles, GPG signatures)", {"name", "uses", "with"}, None),
+    ("Download MSI installer", {"name", "uses", "with"}, None),
+    ("Download .deb package", {"name", "uses", "with"}, None),
+    ("Download .pkg installer", {"name", "uses", "with"}, None),
+    ("List release artifacts", {"name", "run"}, None),
+    ("Create the draft release and upload the assets", {"name", "id", "env", "run"},
+     {**GH_STATE_ENV, "DRAFT_ID": "${{ steps.state.outputs.draft_id }}"}),
+    ("NuGet login (OIDC → short-lived API key)", {"name", "id", "uses", "with"}, None),
+    ("Rehearsal — delete the draft release", {"name", "if", "env", "run"},
+     {**GH_ENV, "CREATED": "${{ steps.create.outputs.created }}"}),
+    ("Publish nupkg to NuGet.org — Trusted Publishing", {"name", "if", "env", "run"},
+     {"NUGET_API_KEY": "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"}),
+    ("Publish the draft release", {"name", "if", "env", "run"}, GH_STATE_ENV),
+    ("Verify the tag and the published release", {"name", "if", "env", "run"}, GH_ENV),
+]
+CREATE_STEP, CLEANUP_STEP, PUSH_STEP, PUBLISH_STEP, VERIFY_STEP = (
+    PUBLISH_RELEASE_STEPS[12][0], PUBLISH_RELEASE_STEPS[14][0], PUBLISH_RELEASE_STEPS[15][0],
+    PUBLISH_RELEASE_STEPS[16][0], PUBLISH_RELEASE_STEPS[17][0])
 # Jobs that sign, notarise or contact an external service at build time and are
 # deliberately NOT behind the Docker gate: the owner chose to gate only
 # `sign-and-attest` and `publish-release`. Each entry pins the job's exact set of
@@ -38,9 +95,28 @@ SIDE_EFFECT_ACTIONS = re.compile(
 # Matched in any letter case: action names are case-insensitive, and so are the
 # Windows tools among the commands (signtool).
 SIDE_EFFECT_COMMANDS = re.compile(
-    r"cosign\s+sign|gh\s+release\s+(?:create|upload|edit)|nuget\s+push|"
+    r"cosign\s+sign|gh\s+release\s+(?:create|upload|edit|delete)|nuget\s+push|" + GH_API_WRITE + "|"
     r"vsce\s+publish|notarytool|signtool|--detach-sign|gh\s+attestation|"
-    r"\bovsx\b|npm\s+publish|docker\s+push|gpg\b.*--(?:clear)?sign\b", re.IGNORECASE)
+    r"\bovsx\b|npm\s+publish|docker\s+push|gpg\b.*--(?:clear)?sign\b", re.IGNORECASE | re.MULTILINE)
+# The exact `gh` command forms (see `gh_forms`) each job may run. A new call, or a
+# changed filter, method or field on an existing one, fails the test.
+LIST_RELEASES = "gh api --paginate repos/${GH_REPO}/releases?per_page=100 --jq "
+PUBLISH_RELEASE_GH_FORMS = {
+    LIST_RELEASES + ".[] | [.tag_name, (.draft | tostring), (.id | tostring), .target_commitish] | @tsv",
+    LIST_RELEASES + ".[] | [.tag_name, (.draft | tostring), (.id | tostring)] | @tsv",
+    "gh api repos/${GH_REPO}/releases/${DRAFT_ID} --jq [.tag_name, (.draft | tostring), .target_commitish] | @tsv",
+    "gh api -X DELETE repos/${GH_REPO}/releases/${DRAFT_ID}",
+    "gh api -X DELETE repos/${GH_REPO}/releases/${id}",
+    "gh api repos/${GH_REPO}/releases/tags/${TAG} --jq .assets[].name",
+    "gh api repos/${GH_REPO}/releases/tags/${TAG} --jq .draft",
+    "gh release create $TAG --draft --target $GITHUB_SHA --title $TAG --notes-file $notes --generate-notes "
+    "${prerelease[@]}",
+    "gh release upload $TAG ${files[@]} --clobber",
+    "gh release edit $TAG --draft=false --target $GITHUB_SHA ${latest[@]}",
+}
+PREPARE_GH_FORMS = {
+    "gh api --paginate repos/${GITHUB_REPOSITORY}/releases?per_page=100 --jq .[] | select(.draft == false) | .tag_name",
+}
 # Any status-check function in a job-level `if` replaces the implicit success(), so a job
 # downstream of the gate may use none. Expression function names are case-insensitive.
 DEFEATS_NEEDS = re.compile(r"\b(?:always|cancelled|failure|success)\s*\(", re.IGNORECASE)
@@ -90,7 +166,10 @@ def side_effects(job):
     Limits. There is no rule for an unauthenticated network side effect (`curl`,
     `gh api` without a token): the check relies on any authenticated effect needing a
     secret, a write permission or `id-token`. A `curl -T` upload step with no secret
-    is therefore not recognised. A job that calls a reusable workflow is judged on
+    is therefore not recognised. Nor is a `curl` (or any other HTTP client) that uses
+    the job token, `GH_TOKEN` or `GITHUB_TOKEN`: only `gh` calls are matched. A `gh
+    api` call counts as a write when it names a method, passes a field or an input
+    (`-f`, `-F`, `--field`, `--raw-field`, `--input`), or is a `graphql` call. A job that calls a reusable workflow is judged on
     the call only (its `permissions`, `with` and `secrets`), not on the workflow it
     calls. Workflow-level `env` and `permissions` are checked separately, by
     `test_top_level_has_no_secret_env_and_read_only_permissions`.
@@ -119,6 +198,36 @@ def side_effects(job):
     return reasons
 
 
+def gh_forms(job):
+    """The `gh` commands in a job's `run:` texts, each as one normalised string.
+
+    Comment lines are dropped and backslash-continued lines joined. Each command is
+    read with shell quoting rules from `gh` up to the first shell operator (`)`, `|`,
+    `;`, `>`, `&` and the like), and its words are joined with single spaces, so a
+    quoted jq filter stays one word.
+    """
+    forms = set()
+    for step in job.get("steps", []):
+        text = step.get("run", "").replace("\\\n", " ")
+        for line in text.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            # A `gh` after a slash counts too (`/usr/bin/gh`): it must not hide a call.
+            for match in re.finditer(r"(?<![\w.$-])gh\s", line):
+                lexer = shlex.shlex(line[match.start():], posix=True, punctuation_chars=True)
+                words = []
+                while True:
+                    try:
+                        word = lexer.get_token()
+                    except ValueError:  # an unclosed quote after the command
+                        break
+                    if word is None or (word and set(word) <= set("();<>|&")):
+                        break
+                    words.append(word)
+                forms.add(" ".join(words))
+    return forms
+
+
 def ancestors(jobs, name):
     seen, pending = set(), list(needs_of(jobs[name]))
     while pending:
@@ -135,44 +244,269 @@ class ReleaseWorkflowTests(unittest.TestCase):
         cls.data = workflow(ROOT / ".github/workflows/release.yml")
         cls.jobs = cls.data["jobs"]
 
-    def test_one_public_trigger_and_manual_preflight(self):
-        self.assertEqual({"release", "workflow_dispatch"}, set(self.data["on"]))
-        self.assertEqual(["published"], self.data["on"]["release"]["types"])
-        version = self.data["on"]["workflow_dispatch"]["inputs"]["version"]
-        self.assertTrue(version["required"])
-        self.assertEqual("string", version["type"])
-        self.assertIs(False, self.data["concurrency"]["cancel-in-progress"])
+    def test_manual_dispatch_is_the_only_trigger_with_three_modes(self):
+        self.assertEqual(["workflow_dispatch"], list(self.data["on"]))
+        inputs = self.data["on"]["workflow_dispatch"]["inputs"]
+        self.assertEqual({"mode", "version", "commit"}, set(inputs))
+        self.assertEqual({"description", "required", "default", "type", "options"}, set(inputs["mode"]))
+        self.assertEqual("choice", inputs["mode"]["type"])
+        self.assertEqual(["validate", "rehearse", "publish"], inputs["mode"]["options"])
+        self.assertEqual("validate", inputs["mode"]["default"])
+        self.assertIs(True, inputs["version"]["required"])
+        self.assertEqual("string", inputs["version"]["type"])
+        self.assertEqual("0.0.0-test", inputs["version"]["default"])
+        self.assertIs(False, inputs["commit"]["required"])
+        self.assertEqual(("string", ""), (inputs["commit"]["type"], inputs["commit"]["default"]))
 
-    def test_dispatch_cannot_publish_or_require_cosign(self):
-        self.assertEqual("github.event_name != 'workflow_dispatch'",
-                         self.jobs["publish-release"]["if"])
-        self.assertEqual("github.event_name != 'workflow_dispatch' && "
-                         "github.repository == 'tomas-rampas/vouchfx'",
-                         self.jobs["publish-marketplace"]["if"])
-        signers = [s for s in self.jobs["sign-and-attest"]["steps"]
-                   if s.get("name") in ("Install cosign", "Sign artifacts (cosign keyless)")]
-        self.assertEqual(2, len(signers))
-        for step in signers:
-            self.assertEqual("github.event_name != 'workflow_dispatch'", step["if"])
+    def test_concurrency_serialises_rehearse_and_publish_runs_on_main_only(self):
+        self.assertEqual({"group": CONCURRENCY_GROUP, "cancel-in-progress": False}, self.data["concurrency"])
+        # No job of this workflow, and no other workflow, can join the shared group
+        # and so take the place of a pending release run.
+        for name, job in self.jobs.items():
+            with self.subTest(job=name):
+                self.assertNotIn("concurrency", job)
+        for path in workflow_files():
+            if path.name != "release.yml":
+                with self.subTest(workflow=path.name):
+                    self.assertNotIn("release-publish", path.read_text(encoding="utf-8").lower())
+
+    def test_gh_api_writes_are_recognised_in_every_spelling(self):
+        for command in ('gh api -X DELETE "repos/o/r/releases/1"', 'gh api --method=DELETE "repos/o/r/releases/1"',
+                        'gh api --method PATCH x', "gh api -XPOST x", 'gh api "repos/o/r/releases" -f tag_name="$TAG"',
+                        "gh api repos/o/r/releases -F draft=false", "gh api x --field a=b", "gh api x --raw-field a=b",
+                        "gh api x --input body.json", "gh api x --input=body.json",
+                        "gh api graphql -f query='mutation { x }'", "gh api graphql --paginate"):
+            with self.subTest(command=command):
+                self.assertIsNotNone(RELEASE_COMMANDS.search(command))
+                self.assertIsNotNone(SIDE_EFFECT_COMMANDS.search(command))
+        for command in ("gh api --paginate repos/o/r/releases?per_page=100 --jq '.[] | .tag_name'",
+                        "gh api repos/o/r/releases/tags/v1 --jq .draft"):
+            with self.subTest(command=command):
+                self.assertIsNone(RELEASE_COMMANDS.search(command))
+                self.assertIsNone(SIDE_EFFECT_COMMANDS.search(command))
+
+    def test_each_job_runs_exactly_the_expected_gh_commands(self):
+        self.assertEqual(PUBLISH_RELEASE_GH_FORMS, gh_forms(self.jobs["publish-release"]))
+        self.assertEqual(PREPARE_GH_FORMS, gh_forms(self.jobs[PREPARE]))
+        for name, job in self.jobs.items():
+            if name not in ("publish-release", PREPARE):
+                with self.subTest(job=name):
+                    self.assertEqual(set(), gh_forms(job))
+
+    def test_both_nuget_checks_cover_every_package_id(self):
+        loops = [re.findall(r"^\s*for \w+ in ([^;\n]+); do$", step.get("run", ""), re.MULTILINE)
+                 for job in (PREPARE, "publish-release") for step in self.jobs[job]["steps"]
+                 if "check_nuget_presence.py --id" in step.get("run", "")]
+        self.assertEqual([[" ".join(PACKAGE_IDS)], [" ".join(PACKAGE_IDS)]], loops)
+
+    def test_signing_waits_for_the_gate_the_builds_and_both_smoke_tests(self):
+        job = self.jobs["sign-and-attest"]
+        self.assertEqual([GATE, "build-dotnet", "build-vsix", "build-msi", "build-deb", "build-pkg",
+                          "smoke-test-packaged-tool", "smoke-test-distribution-platforms"], job["needs"])
+        # The job runs in every mode; only its signing steps are limited to publish.
+        for key in ("if", "environment", "continue-on-error"):
+            self.assertNotIn(key, job)
+
+    def test_marketplace_waits_for_signing_both_smoke_tests_and_the_release(self):
+        self.assertEqual(["build-dotnet", "build-vsix", "sign-and-attest", "smoke-test-packaged-tool",
+                          "smoke-test-distribution-platforms", "publish-release"],
+                         self.jobs["publish-marketplace"]["needs"])
+
+    def test_publishing_jobs_have_exact_conditions_without_status_functions(self):
+        for name, expected in (("publish-release", PUBLISH_RELEASE_IF),
+                               ("publish-marketplace", PUBLISH_MARKETPLACE_IF),
+                               ("move-floating-tag", MOVE_TAG_IF)):
+            with self.subTest(job=name):
+                self.assertEqual(expected, self.jobs[name]["if"])
+                self.assertIsNone(DEFEATS_NEEDS.search(self.jobs[name]["if"]))
+
+    def test_release_environment_is_on_publish_release_only(self):
+        self.assertEqual("release", self.jobs["publish-release"]["environment"])
+        self.assertEqual({"contents": "write", "id-token": "write"}, self.jobs["publish-release"]["permissions"])
+        others = {name for name, job in self.jobs.items() if name != "publish-release" and "environment" in job}
+        self.assertEqual(set(), others)
+
+    def test_prepare_is_the_read_only_root_of_every_other_job(self):
+        job = self.jobs[PREPARE]
+        for key in ("needs", "if", "environment", "secrets", "continue-on-error", "strategy"):
+            self.assertNotIn(key, job)
+        self.assertEqual({"contents": "read"}, job["permissions"])
+        self.assertEqual(set(), side_effects(job))
+        self.assertEqual({"version": "${{ steps.request.outputs.version }}",
+                          "tag": "${{ steps.request.outputs.tag }}",
+                          "mode": "${{ steps.request.outputs.mode }}"}, job["outputs"])
+        for name in self.jobs:
+            if name != PREPARE:
+                with self.subTest(job=name):
+                    self.assertIn(PREPARE, ancestors(self.jobs, name))
+        for name in ("tls-transport", GATE):
+            with self.subTest(job=name):
+                self.assertEqual(PREPARE, self.jobs[name]["needs"])
+                self.assertNotIn("if", self.jobs[name])
+
+    def test_version_and_tag_come_from_prepare(self):
+        build = self.jobs["build-dotnet"]
+        self.assertIn(PREPARE, needs_of(build))
+        self.assertEqual({"version": "${{ needs.prepare.outputs.version }}",
+                          "tag": "${{ needs.prepare.outputs.tag }}"}, build["outputs"])
+        self.assertNotIn("Determine release version", [s.get("name") for s in build["steps"]])
+        self.assertEqual("${{ needs.prepare.outputs.version }}", self.jobs["publish-release"]["env"]["VERSION"])
+        self.assertEqual("${{ needs.prepare.outputs.tag }}", self.jobs["publish-release"]["env"]["TAG"])
+        self.assertEqual("${{ inputs.mode }}", self.jobs["publish-release"]["env"]["MODE"])
+        self.assertNotIn("github.event", json.dumps(self.data))
+
+    def test_attestation_and_signing_steps_run_in_publish_mode_only(self):
+        steps = self.jobs["sign-and-attest"]["steps"]
+        attest = [s for s in steps if "attest-build-provenance" in str(s.get("uses", ""))]
+        cosign = [s for s in steps if "cosign-installer" in str(s.get("uses", ""))
+                  or re.search(r"cosign\s+sign", s.get("run", ""))]
+        gpg = [s for s in steps if "--detach-sign" in s.get("run", "")]
+        self.assertEqual(5, len(attest))
+        self.assertEqual(2, len(cosign))
+        self.assertEqual(1, len(gpg))
+        for step in attest + cosign:
+            with self.subTest(step=step["name"]):
+                self.assertEqual(MODE_PUBLISH, step["if"])
+        self.assertEqual("${{ inputs.mode == 'publish' && env.HAS_GPG == 'true' }}", gpg[0]["if"])
+        # No other job attests or cosign-signs.
+        for name, job in self.jobs.items():
+            if name != "sign-and-attest":
+                for step in job.get("steps", []):
+                    self.assertNotRegex(str(step.get("uses", "")), "attest-build-provenance|cosign-installer")
+                    self.assertNotRegex(step.get("run", ""), r"cosign\s+sign|gh\s+attestation")
+
+    def test_signing_material_has_a_known_shape_in_every_mode(self):
+        steps = self.jobs["sign-and-attest"]["steps"]
+        names = [s.get("name") for s in steps]
+        check = steps[names.index("Check the signing material for this mode")]
+        upload = steps[names.index("Upload cosign bundles + GPG signatures")]
+        self.assertLess(names.index("Sign nupkg (GPG) — secret-gated"), names.index(check["name"]))
+        self.assertLess(names.index(check["name"]), names.index(upload["name"]))
+        self.assertNotIn("if", check)
+        self.assertEqual("${{ inputs.mode }}", self.jobs["sign-and-attest"]["env"]["MODE"])
+        self.assertEqual("error", upload["with"]["if-no-files-found"])
+        self.assertEqual(["artifacts/signing-mode", "artifacts/**/*.cosign.bundle", "artifacts/nuget/*.asc"],
+                         upload["with"]["path"].split())
+        for name in ("sign-and-attest", "publish-release"):
+            for step in self.jobs[name]["steps"]:
+                with self.subTest(job=name, step=step.get("name")):
+                    self.assertNotIn("continue-on-error", step)
+
+    def test_signing_material_check_behaviour(self):
+        step = next(s for s in self.jobs["sign-and-attest"]["steps"]
+                    if s.get("name") == "Check the signing material for this mode")
+        subjects = ["nuget/vouchfx.1.5.0.nupkg", "vouchfx-1.5.0-linux-x64.tar.gz", "installers/x.deb"]
+        for label, mode, extra, expected in (
+                ("publish, all signed", "publish", [s + ".cosign.bundle" for s in subjects], 0),
+                ("publish, one unsigned", "publish", [s + ".cosign.bundle" for s in subjects[1:]], 1),
+                ("validate, unsigned", "validate", ["installers/x.deb.asc"], 0),
+                ("validate, cosign bundle", "validate", [subjects[0] + ".cosign.bundle"], 1),
+                ("rehearse, nupkg signature", "rehearse", ["nuget/vouchfx.1.5.0.nupkg.asc"], 1)):
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as scratch:
+                for relative in subjects + extra:
+                    path = Path(scratch) / "artifacts" / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("x", encoding="utf-8")
+                result = subprocess.run([BASH, "--noprofile", "--norc", "-c", step["run"]], cwd=scratch,
+                                        env=dict(os.environ, MODE=mode), capture_output=True, timeout=10)
+                self.assertEqual(expected, result.returncode, result.stdout + result.stderr)
+                mode_file = Path(scratch) / "artifacts/signing-mode"
+                if expected == 0:
+                    self.assertEqual(mode + "\n", mode_file.read_text(encoding="utf-8"))
+                else:
+                    self.assertFalse(mode_file.exists())
 
     def test_publication_still_requires_all_acceptance_jobs(self):
-        self.assertEqual({GATE, "tls-transport", "build-dotnet", "sign-and-attest",
+        self.assertEqual({PREPARE, GATE, "tls-transport", "build-dotnet", "sign-and-attest",
                           "smoke-test-packaged-tool", "smoke-test-distribution-platforms"},
                          set(self.jobs["publish-release"]["needs"]))
         self.assertIn("publish-release", self.jobs["publish-marketplace"]["needs"])
-        commands = [s.get("run", "") for j in self.jobs.values() for s in j.get("steps", [])]
-        self.assertFalse(any("gh release create" in command for command in commands))
+
+    def test_only_publish_release_creates_changes_or_deletes_releases_or_touches_nuget(self):
+        for name, job in self.jobs.items():
+            if name == "publish-release":
+                continue
+            for step in job.get("steps", []):
+                with self.subTest(job=name, step=step.get("name")):
+                    self.assertIsNone(RELEASE_COMMANDS.search(step.get("run", "")))
+                    self.assertNotIn("nuget/login", str(step.get("uses", "")).lower())
+        runs = "\n".join(s.get("run", "") for s in self.jobs["publish-release"]["steps"])
+        self.assertEqual(1, len(re.findall(r"gh\s+release\s+create", runs)))
+        self.assertEqual(1, len(re.findall(r"gh\s+release\s+edit", runs)))
+
+    def test_release_creation_is_always_a_draft_at_the_run_commit(self):
+        steps = {s["name"]: s for s in self.jobs["publish-release"]["steps"]}
+        create = steps[CREATE_STEP]["run"]
+        # The command with its backslash-continued lines.
+        command = re.search(r"gh release create (?:[^\n]*\\\n)*[^\n]*", create).group(0)
+        self.assertIn('--draft ', command)
+        self.assertIn('--target "$GITHUB_SHA"', command)
+        self.assertIn('--notes-file "$notes" --generate-notes', command)
+        self.assertNotRegex(command, r"--draft=|--latest|--verify-tag")
+        edit = re.search(r"gh release edit [^\n]*", steps[PUBLISH_STEP]["run"]).group(0)
+        self.assertIn('--draft=false --target "$GITHUB_SHA"', edit)
+        # Every --target anywhere in the workflow is the run's full commit SHA.
+        runs = "\n".join(s.get("run", "") for j in self.jobs.values() for s in j.get("steps", []))
+        self.assertEqual({'"$GITHUB_SHA"'}, set(re.findall(r"--target[ =](\S+)", runs)))
+
+    def test_publish_release_shape_is_fixed(self):
+        # The behaviour tests run each step's `run:` with their own environment, and
+        # evaluate only the exact `if` strings below, so the rest is pinned here: the
+        # steps in order, the keys of each, and each step's own `env` (which could
+        # otherwise override MODE, VERSION or TAG). A step cannot gain an `if`, a
+        # `continue-on-error`, an `env` or a neighbour without failing this test.
+        job = self.jobs["publish-release"]
+        self.assertEqual({"name", "runs-on", "needs", "if", "environment", "permissions", "env", "steps"}, set(job))
+        self.assertEqual({"MODE", "VERSION", "TAG"}, set(job["env"]))
+        steps = job["steps"]
+        self.assertEqual([name for name, _, _ in PUBLISH_RELEASE_STEPS], [s.get("name") for s in steps])
+        for (name, keys, env), step in zip(PUBLISH_RELEASE_STEPS, steps):
+            with self.subTest(step=name):
+                self.assertEqual(keys, set(step))
+                self.assertEqual(env, step.get("env"))
+                if "run" in step:
+                    self.assertTrue(step["run"].startswith(("set -euo pipefail\n", "echo ")), step["run"][:40])
+                    self.assertNotIn("${{", step["run"], "context values go through env:")
+        by_name = {s["name"]: s for s in steps}
+        self.assertEqual({"ref": "${{ github.sha }}", "persist-credentials": False},
+                         by_name["Checkout the run's commit"]["with"])
+        self.assertEqual("state", by_name["Classify the release state"]["id"])
+        self.assertEqual("nuget-login", by_name["NuGet login (OIDC → short-lived API key)"]["id"])
+        self.assertEqual("signing-material/",
+                         by_name["Download signing material (cosign bundles, GPG signatures)"]["with"]["path"])
+
+    def test_publish_release_step_conditions_and_order(self):
+        steps = self.jobs["publish-release"]["steps"]
+        conditions = {s["name"]: s.get("if") for s in steps}
+        for name in (PUSH_STEP, PUBLISH_STEP, VERIFY_STEP):
+            with self.subTest(step=name):
+                self.assertEqual(MODE_PUBLISH, conditions[name])
+        self.assertEqual(REHEARSAL_CLEANUP_IF, conditions[CLEANUP_STEP])
+        # The clean-up is the only step-level status function in the job.
+        with_status = [s["name"] for s in steps if DEFEATS_NEEDS.search(str(s.get("if", "")))]
+        self.assertEqual([CLEANUP_STEP], with_status)
+        names = [s["name"] for s in steps]
+        order = [names.index(n) for n in ("Classify the release state", CREATE_STEP,
+                                          "NuGet login (OIDC → short-lived API key)", CLEANUP_STEP,
+                                          PUSH_STEP, PUBLISH_STEP, VERIFY_STEP)]
+        self.assertEqual(sorted(order), order)
+        self.assertEqual(len(steps) - 1, names.index(VERIFY_STEP))
+
+    def test_no_step_makes_a_tag_with_git(self):
+        runs = "\n".join(s.get("run", "") for j in self.jobs.values() for s in j.get("steps", []))
+        self.assertIsNone(re.search(r"\bgit\s+(?:push|tag)\b", runs))
 
     def test_docker_gate_is_an_unconditional_call_of_the_lane_at_the_run_commit(self):
         gate = self.jobs[GATE]
-        self.assertEqual({"name", "permissions", "uses", "with"}, set(gate))
+        self.assertEqual({"name", "needs", "permissions", "uses", "with"}, set(gate))
         self.assertEqual("Docker integration", gate["name"])
         self.assertEqual("./.github/workflows/docker-integration.yml", gate["uses"])
         self.assertEqual({"reviewed_sha": "${{ github.sha }}"}, gate["with"])
         self.assertEqual({"contents": "read"}, gate["permissions"])
-        # No `if`, `needs`, `secrets` or `continue-on-error`: the gate starts with the run
-        # on every event and a failure or skip of the lane must be visible downstream.
-        for key in ("if", "needs", "secrets", "continue-on-error", "strategy"):
+        self.assertEqual(PREPARE, gate["needs"])
+        # No `if`, `secrets` or `continue-on-error`: the gate runs in every mode once the
+        # request is checked, and a failure or skip of the lane must be visible downstream.
+        for key in ("if", "secrets", "continue-on-error", "strategy"):
             self.assertNotIn(key, gate)
 
     def test_signing_and_publication_need_the_docker_gate(self):
@@ -223,29 +557,931 @@ class ReleaseWorkflowTests(unittest.TestCase):
                                   "status functions defeat the gate's needs")
                 self.assertNotIn("continue-on-error", self.jobs[name])
 
-    def test_actual_version_step_accepts_release_and_dispatch_only(self):
-        step = next(s for s in self.jobs["build-dotnet"]["steps"]
-                    if s.get("name") == "Determine release version")
-        self.assertEqual({"EV_TAG": "${{ github.event.release.tag_name }}",
-                          "EV_INPUT": "${{ inputs.version }}"}, step["env"])
-        cases = (("release", "v1.2.3", "", "1.2.3", 0),
-                 ("release", "v1.2.3-rc.1", "", "1.2.3-rc.1", 0),
-                 ("workflow_dispatch", "", "0.0.0-test", "0.0.0-test", 0),
-                 ("push", "v1.2.3", "", "", 1))
-        for event, tag, version, expected_version, expected_exit in cases:
-            with self.subTest(event=event, tag=tag), tempfile.TemporaryDirectory() as scratch:
-                output = Path(scratch) / "github-output"
-                env = os.environ.copy()
-                env.update(GITHUB_EVENT_NAME=event, GITHUB_REF_NAME="v9.9.9",
-                           EV_TAG=tag, EV_INPUT=version, GITHUB_OUTPUT=output.as_posix())
-                result = subprocess.run([BASH, "--noprofile", "--norc", "-c", step["run"]],
-                                        cwd=scratch, env=env, capture_output=True, timeout=10)
-                self.assertEqual(expected_exit, result.returncode, result.stdout + result.stderr)
-                if expected_exit:
-                    self.assertFalse(output.exists())
-                else:
-                    self.assertEqual([f"tag=v{expected_version}", f"version={expected_version}"],
-                                     output.read_text(encoding="utf-8").splitlines())
+    def test_prepare_shape_is_fixed(self):
+        steps = self.jobs[PREPARE]["steps"]
+        self.assertEqual(["Checkout (release metadata and helper scripts)", "Test the release helper scripts",
+                          "Check the version, ref, commit and what already exists"],
+                         [s.get("name") for s in steps])
+        self.assertEqual({"ref": "${{ github.sha }}", "persist-credentials": False}, steps[0]["with"])
+        request = steps[2]
+        self.assertEqual({"name", "id", "env", "run"}, set(request))
+        self.assertEqual("request", request["id"])
+        self.assertEqual({"MODE": "${{ inputs.mode }}", "VERSION": "${{ inputs.version }}",
+                          "COMMIT": "${{ inputs.commit }}", "GH_TOKEN": "${{ github.token }}"}, request["env"])
+        for step in steps[1:]:
+            with self.subTest(step=step["name"]):
+                self.assertNotIn("if", step)
+                self.assertNotIn("continue-on-error", step)
+                self.assertTrue(step["run"].startswith("set -euo pipefail\n"))
+                self.assertNotIn("${{", step["run"])
+
+
+# Fixture commands for the step scripts. Nothing touches the network.
+# `git ls-remote --tags origin` lists $FIXTURE_DIR/tags. `gh` keeps the releases in
+# $FIXTURE_DIR/releases.json and emulates only the exact --jq filters the workflow
+# uses (any other filter exits 97, so a changed filter fails the tests here and must
+# be checked against real gh). Publishing a draft creates its tag at the draft's
+# target, as GitHub is expected to. `python3` answers the NuGet presence check from
+# $FIXTURE_DIR/nuget and runs anything else with the real interpreter. `dotnet`
+# records pushes. Every call is logged to $FIXTURE_DIR/calls. A call the fixtures
+# do not know is also written to $FIXTURE_DIR/unexpected, and the tests fail when
+# that file exists, even if the step script ignored the exit code.
+FIXTURE_GIT = """#!/usr/bin/env bash
+echo "git $*" >> "$FIXTURE_DIR/calls"
+[[ "$*" == "ls-remote --tags origin" ]] || { echo "git $*" >> "$FIXTURE_DIR/unexpected"; exit 97; }
+[[ -f "$FIXTURE_DIR/ls-fails" ]] && exit 128
+# From the second listing on, a test may show other tags (`late-tags`) or an
+# unreadable remote (`late-ls-fails`): the state of the remote changed since the first look.
+n=$(( $(cat "$FIXTURE_DIR/ls-count" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$FIXTURE_DIR/ls-count"
+if [[ "$n" -ge 2 ]]; then
+  [[ -f "$FIXTURE_DIR/late-ls-fails" ]] && exit 128
+  [[ -f "$FIXTURE_DIR/late-tags" ]] && { cat "$FIXTURE_DIR/late-tags"; exit 0; }
+fi
+cat "$FIXTURE_DIR/tags"
+"""
+FIXTURE_PYTHON = """#!/usr/bin/env bash
+echo "python3 $*" >> "$FIXTURE_DIR/calls"
+if [[ "$1" == "scripts/check_nuget_presence.py" ]]; then
+  [[ "$2" == "--id" && "$4" == "--version" && $# -eq 5 ]] || [[ $# -eq 2 ]] || {
+    echo "python3 $*" >> "$FIXTURE_DIR/unexpected"; exit 2; }
+  [[ -f "$FIXTURE_DIR/nuget-fails" ]] && exit 1
+  key="$3 $5"; [[ $# -eq 2 ]] && key="$(basename "$2")"
+  grep -Fxq -- "$key" "$FIXTURE_DIR/nuget" && exit 0
+  exit 3
+fi
+exec "$REAL_PYTHON" "$@"
+"""
+FIXTURE_DOTNET = """#!/usr/bin/env bash
+echo "dotnet $*" >> "$FIXTURE_DIR/calls"
+[[ -f "$FIXTURE_DIR/push-fails" ]] && exit 1
+exit 0
+"""
+FIXTURE_GH = '''
+import json, os, sys
+from pathlib import Path
+
+d = Path(os.environ["FIXTURE_DIR"])
+args = sys.argv[1:]
+with open(d / "calls", "a", encoding="utf-8") as calls:
+    calls.write("gh " + " ".join(args) + "\\n")
+path = d / "releases.json"
+releases = json.loads(path.read_text(encoding="utf-8"))
+repo = "repos/" + os.environ["GH_REPO_EXPECTED"] + "/"
+
+def save():
+    path.write_text(json.dumps(releases), encoding="utf-8")
+
+def flag(name):
+    return args[args.index(name) + 1] if name in args else None
+
+def by_tag(tag):
+    found = [r for r in releases if r["tag_name"] == tag]
+    if len(found) != 1:
+        sys.exit(1)
+    return found[0]
+
+def unexpected(code):
+    with open(d / "unexpected", "a", encoding="utf-8") as record:
+        record.write("gh " + " ".join(args) + "\\n")
+    sys.exit(code)
+
+def tsv(*values):
+    # As jq's @tsv: a null becomes an empty field.
+    return "\\t".join("" if value is None else value for value in values)
+
+FILTERS = {
+    ".[] | select(.draft == false) | .tag_name":
+        lambda rs: [r["tag_name"] for r in rs if r["draft"] is False],
+    ".[] | [.tag_name, (.draft | tostring), (.id | tostring), .target_commitish] | @tsv":
+        lambda rs: [tsv(r["tag_name"], json.dumps(r["draft"]), str(r["id"]), r["target_commitish"]) for r in rs],
+    ".[] | [.tag_name, (.draft | tostring), (.id | tostring)] | @tsv":
+        lambda rs: [tsv(r["tag_name"], json.dumps(r["draft"]), str(r["id"])) for r in rs],
+}
+# The one filter the workflow uses to read a release by its id.
+ID_FILTERS = {
+    "[.tag_name, (.draft | tostring), .target_commitish] | @tsv":
+        lambda r: [tsv(r["tag_name"], json.dumps(r["draft"]), r["target_commitish"])],
+}
+# The two endpoints GitHub serves for a tag; a draft is not returned by it.
+TAG_FILTERS = {".draft": lambda r: [json.dumps(r["draft"])], ".assets[].name": lambda r: r["assets"]}
+
+if (d / "gh-fails").exists():
+    sys.exit(1)
+
+def count_read():
+    # A list of the releases and a read of one release by id are both reads. On
+    # the second read the releases become `late-releases.json`, if a test wrote
+    # one: the releases changed after the classification listed them. Later
+    # reads see the state that results.
+    global releases
+    n_path = d / "read-count"
+    n = int(n_path.read_text(encoding="utf-8")) + 1 if n_path.exists() else 1
+    n_path.write_text(str(n), encoding="utf-8")
+    if n == 2 and (d / "late-releases.json").exists():
+        releases = json.loads((d / "late-releases.json").read_text(encoding="utf-8"))
+        save()
+
+if args[:2] == ["api", "--paginate"]:
+    if len(args) != 5 or args[2] != repo + "releases?per_page=100" or args[3] != "--jq":
+        unexpected(96)
+    if args[4] not in FILTERS:
+        unexpected(97)
+    count_read()
+    # `list-fails-after` holds N: list calls after the Nth fail. `list-hides-drafts`
+    # shows a list that lags behind: it has no drafts.
+    count_path = d / "list-count"
+    count = int(count_path.read_text(encoding="utf-8")) + 1 if count_path.exists() else 1
+    count_path.write_text(str(count), encoding="utf-8")
+    after = d / "list-fails-after"
+    if after.exists() and count > int(after.read_text(encoding="utf-8")):
+        sys.exit(1)
+    shown = [r for r in releases if not ((d / "list-hides-drafts").exists() and r["draft"])]
+    for line in FILTERS[args[4]](shown):
+        print(line)
+elif args[:2] == ["api", "-X"] and len(args) == 4 and args[2] == "DELETE":
+    prefix = repo + "releases/"
+    if not args[3].startswith(prefix) or not args[3][len(prefix):].isdigit():
+        unexpected(96)
+    rid = int(args[3][len(prefix):])
+    if rid not in [r["id"] for r in releases]:
+        sys.exit(1)  # GitHub answers 404
+    if not (d / "delete-ignored").exists():
+        releases[:] = [r for r in releases if r["id"] != rid]
+        save()
+elif (len(args) == 4 and args[0] == "api" and args[1].startswith(repo + "releases/")
+      and args[1][len(repo + "releases/"):].isdigit()):
+    if args[2] != "--jq" or args[3] not in ID_FILTERS:
+        unexpected(97)
+    count_read()
+    if (d / "release-read-fails").exists():
+        sys.exit(1)
+    found = [r for r in releases if str(r["id"]) == args[1][len(repo + "releases/"):]]
+    if not found:
+        sys.exit(1)  # GitHub answers 404
+    for line in ID_FILTERS[args[3]](found[0]):
+        print(line)
+elif len(args) == 4 and args[0] == "api" and args[1].startswith(repo + "releases/tags/"):
+    if args[2] != "--jq" or args[3] not in TAG_FILTERS:
+        unexpected(97)
+    if (d / "tag-endpoint-fails").exists():
+        sys.exit(1)
+    tag = args[1][len(repo + "releases/tags/"):]
+    visible = [r for r in releases if r["tag_name"] == tag
+               and (r["draft"] is False or (d / "tags-endpoint-shows-drafts").exists())]
+    if not visible:
+        sys.exit(1)
+    for line in TAG_FILTERS[args[3]](visible[0]):
+        print(line)
+elif args[:2] == ["release", "create"]:
+    if (d / "create-fails").exists():
+        sys.exit(1)
+    releases.append({"id": max([r["id"] for r in releases] + [100]) + 1, "tag_name": args[2],
+                     "draft": "--draft" in args, "target_commitish": flag("--target") or "main",
+                     "prerelease": "--prerelease" in args, "title": flag("--title"),
+                     "generate_notes": "--generate-notes" in args,
+                     "body": Path(flag("--notes-file")).read_text(encoding="utf-8"), "assets": []})
+    with open(d / "bodies", "a", encoding="utf-8") as bodies:
+        bodies.write(releases[-1]["body"])
+    save()
+elif args[:2] == ["release", "upload"]:
+    if (d / "upload-fails").exists():
+        sys.exit(1)
+    release = by_tag(args[2])
+    release["assets"] = sorted(set(release["assets"]) | {Path(a).name for a in args[3:] if a != "--clobber"})
+    save()
+elif args[:2] == ["release", "edit"]:
+    release = by_tag(args[2])
+    if "--draft=false" in args:
+        # `edit-keeps-draft`: the tag is made but the Release stays a draft.
+        release["draft"] = (d / "edit-keeps-draft").exists()
+        release["latest"] = [a for a in args if a.startswith("--latest")]
+        target = flag("--target") or release["target_commitish"]
+        if (d / "tag-lands-elsewhere").exists():
+            target = "f" * 40
+        with open(d / "tags", "a", encoding="utf-8") as tags:
+            tags.write(target + "\\trefs/tags/" + release["tag_name"] + "\\n")
+    save()
+else:
+    unexpected(98)
+'''
+RUN_SHA = "c" * 40
+ID_READ = "gh api repos/tomas-rampas/vouchfx/releases/"
+ID_READ_FILTER = "[.tag_name, (.draft | tostring), .target_commitish] | @tsv"
+STALE_DRAFT = ("Release 42 could not be read, or is no longer the draft for v1.5.0 at " + "c" * 40
+               + "; nothing was deleted.")
+OTHER = "d" * 40
+REHEARSAL = "0.0.0-rehearsal.1"
+PACKAGE_IDS = ("vouchfx", "Vouchfx.Sdk", "Vouchfx.Sdk.Testing", "Vouchfx.Engine.Abstractions",
+               "Vouchfx.Engine.Authoring", "Vouchfx.Engine.Compilation")
+FIXTURE_CHANGELOG = """# Changelog
+
+## [Unreleased]
+
+## [{0}] — 2026-12-01
+
+### Added
+
+- Feature for {0}.
+
+## [1.4.0] — 2026-11-21
+
+- Older.
+"""
+FIXTURE_PROPS = ("<Project><PropertyGroup><VouchfxEngineVersion Condition=\"'$(VouchfxEngineVersion)' == ''\">"
+                 "{0}</VouchfxEngineVersion></PropertyGroup></Project>\n")
+
+
+class Fixture:
+    """A scratch working directory with fixture commands and remote state."""
+
+    def __init__(self, scratch, tags=(), releases=(), nuget=(), markers=(), changelog="1.5.0", props="1.5.0",
+                 late_tags=None, changelog_text=None, list_fails_after=None, late_releases=None):
+        self.root = Path(scratch)
+        self.dir = self.root / "fixture"
+        self.bin = self.dir / "bin"
+        self.bin.mkdir(parents=True)
+        for name, text in (("git", FIXTURE_GIT), ("python3", FIXTURE_PYTHON), ("dotnet", FIXTURE_DOTNET),
+                           ("gh", f"#!{sys.executable}\n" + FIXTURE_GH)):
+            (self.bin / name).write_text(text, encoding="utf-8", newline="\n")
+            (self.bin / name).chmod(0o755)
+        (self.dir / "tags").write_text("".join(f"{sha}\trefs/tags/{name}\n" for name, sha in tags),
+                                       encoding="utf-8", newline="\n")
+        (self.dir / "releases.json").write_text(json.dumps(list(releases)), encoding="utf-8")
+        (self.dir / "nuget").write_text("".join(f"{line}\n" for line in nuget), encoding="utf-8")
+        (self.dir / "calls").write_text("", encoding="utf-8")
+        if late_tags is not None:
+            (self.dir / "late-tags").write_text("".join(f"{sha}\trefs/tags/{name}\n" for name, sha in late_tags),
+                                                encoding="utf-8", newline="\n")
+        if late_releases is not None:
+            (self.dir / "late-releases.json").write_text(json.dumps(list(late_releases)), encoding="utf-8")
+        for marker in markers:
+            (self.dir / marker).write_text("", encoding="utf-8")
+        if list_fails_after is not None:
+            (self.dir / "list-fails-after").write_text(str(list_fails_after), encoding="utf-8")
+        self.work = self.root / "work"
+        (self.work / "scripts").mkdir(parents=True)
+        shutil.copy(ROOT / "scripts/release_metadata.py", self.work / "scripts/release_metadata.py")
+        (self.work / "CHANGELOG.md").write_text(
+            FIXTURE_CHANGELOG.format(changelog) if changelog_text is None else changelog_text, encoding="utf-8")
+        (self.work / "Directory.Build.props").write_text(FIXTURE_PROPS.format(props), encoding="utf-8")
+        self.temp = self.root / "runner-temp"
+        self.temp.mkdir()
+
+    def env(self, **values):
+        env = os.environ.copy()
+        env.update(FIXTURE_DIR=self.dir.as_posix(), REAL_PYTHON=sys.executable, GITHUB_SHA=RUN_SHA,
+                   GITHUB_REF="refs/heads/main", GITHUB_REPOSITORY=REPOSITORY, GH_REPO_EXPECTED=REPOSITORY,
+                   RUNNER_TEMP=self.temp.as_posix(), GH_TOKEN="fixture")
+        env.update(values)
+        return env
+
+    def run(self, script, env):
+        output = self.root / "github-output"
+        if output.exists():
+            output.unlink()
+        env = dict(env, GITHUB_OUTPUT=output.as_posix())
+        result = subprocess.run([BASH, "--noprofile", "--norc", "-c",
+                                 'export PATH="$FIXTURE_DIR/bin:$PATH"\n' + script],
+                                cwd=self.work, env=env, capture_output=True, timeout=60)
+        outputs = {}
+        if output.exists():
+            for line in output.read_text(encoding="utf-8").splitlines():
+                key, _, value = line.partition("=")
+                outputs[key] = value
+        return result.returncode, (result.stdout + result.stderr).decode(errors="replace"), outputs
+
+    @property
+    def calls(self):
+        return (self.dir / "calls").read_text(encoding="utf-8")
+
+    @property
+    def releases(self):
+        return json.loads((self.dir / "releases.json").read_text(encoding="utf-8"))
+
+    @property
+    def tags(self):
+        return (self.dir / "tags").read_text(encoding="utf-8")
+
+    @property
+    def unexpected(self):
+        path = self.dir / "unexpected"
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def release(tag, draft, target=RUN_SHA, rid=7, assets=()):
+    return {"id": rid, "tag_name": tag, "draft": draft, "target_commitish": target,
+            "prerelease": "-" in tag, "assets": list(assets), "body": ""}
+
+
+def run_assets(version="1.5.0"):
+    """The asset names `PublishReleaseScriptTests.run_job` prepares in publish mode."""
+    return sorted([f"Vouchfx.Sdk.{version}.nupkg", f"vouchfx-{version}-linux-x64.tar.gz",
+                   f"vouchfx.{version}.nupkg", f"vouchfx.{version}.nupkg.cosign.bundle"])
+
+
+class PrepareScriptTests(unittest.TestCase):
+    """Runs the actual `prepare` check with fixture `git`, `gh` and `python3`."""
+
+    @classmethod
+    def setUpClass(cls):
+        steps = workflow(ROOT / ".github/workflows/release.yml")["jobs"][PREPARE]["steps"]
+        cls.script = next(s for s in steps if s.get("id") == "request")["run"]
+
+    def check(self, mode="publish", version="1.5.0", commit=RUN_SHA, ref="refs/heads/main",
+              repository=REPOSITORY, **fixture):
+        with tempfile.TemporaryDirectory() as scratch:
+            f = Fixture(scratch, **fixture)
+            code, output, outputs = f.run(self.script, f.env(MODE=mode, VERSION=version, COMMIT=commit,
+                                                             GITHUB_REF=ref, GITHUB_REPOSITORY=repository))
+            self.assertEqual("", f.unexpected, "a call the fixtures do not know")
+            return code, output, outputs, f.calls
+
+    def assertAccepted(self, result, version="1.5.0", mode="publish"):
+        code, output, outputs, _ = result
+        self.assertEqual(0, code, output)
+        self.assertEqual({"version": version, "tag": f"v{version}", "mode": mode}, outputs)
+
+    def assertRefused(self, result, text):
+        code, output, outputs, _ = result
+        self.assertNotEqual(0, code, output)
+        self.assertIn("::error::", output)
+        self.assertIn(text, output)
+        self.assertEqual({}, outputs)
+
+    def test_publish_request_on_main_at_the_run_commit_is_accepted(self):
+        result = self.check(releases=[release("v1.4.0", False, OTHER)], tags=[("v1.4.0", OTHER)],
+                            nuget=["vouchfx 1.4.0"])
+        self.assertAccepted(result)
+        calls = result[3]
+        self.assertIn("git ls-remote --tags origin\n", calls)
+        for package_id in PACKAGE_IDS:
+            self.assertIn(f"python3 scripts/check_nuget_presence.py --id {package_id} --version 1.5.0\n", calls)
+        self.assertIn("python3 scripts/release_metadata.py check", calls)
+
+    def test_malformed_versions_are_refused_in_every_mode(self):
+        for version in ("1.2.3.rc.1", "1.2.3+build", "1.2.3-rc.1+build.7", "v1.2.3", "1.2", "1.2.3.4",
+                        "01.2.3", "1.2.3-", "1.2.3-rc..1", "1.2.3 ", " 1.2.3", "", "1.2.3\n", "1.2.3-rc_1",
+                        # A numeric pre-release part has no leading zero.
+                        "1.2.3-01", "1.2.3-00", "1.2.3-rc.01", "1.2.3-0.007", "1.2.3-rc.1.02"):
+            for mode in ("validate", "rehearse", "publish"):
+                with self.subTest(version=version, mode=mode):
+                    result = self.check(mode=mode, version=version, changelog=version, props=version)
+                    self.assertRefused(result, "is not MAJOR.MINOR.PATCH")
+                    self.assertEqual("", result[3], "no lookup before the version is valid")
+
+    def test_well_formed_versions_are_accepted(self):
+        for version in ("0.0.0-test", "1.2.3", "1.0.0-alpha.4", "1.5.0-rc.1", "10.20.30-x-y.0",
+                        "1.2.3-0", "1.2.3-0a", "1.2.3-01a", "1.2.3-rc.0", "1.2.3--", "1.2.3-0-1", "1.2.3-x.10"):
+            with self.subTest(version=version):
+                self.assertAccepted(self.check(mode="validate", version=version), version, "validate")
+
+    def test_unknown_mode_is_refused(self):
+        self.assertRefused(self.check(mode="Publish"), "Unknown mode")
+
+    def test_validate_mode_skips_the_main_only_checks(self):
+        result = self.check(mode="validate", ref="refs/heads/feature", commit="", repository="someone/fork",
+                            tags=[("v1.5.0", OTHER)], releases=[release("v1.5.0", False, OTHER)],
+                            nuget=["vouchfx 1.5.0"], changelog="1.4.9", props="1.4.9",
+                            markers=["ls-fails", "gh-fails", "nuget-fails"])
+        self.assertAccepted(result, mode="validate")
+        self.assertEqual("", result[3])
+
+    def test_wrong_ref_is_refused(self):
+        for mode, version in (("rehearse", REHEARSAL), ("publish", "1.5.0")):
+            for ref in ("refs/heads/feature", "refs/tags/v1.5.0", "refs/heads/main-old", "refs/pull/1/merge"):
+                with self.subTest(mode=mode, ref=ref):
+                    self.assertRefused(self.check(mode=mode, version=version, ref=ref), "runs only on refs/heads/main")
+
+    def test_commit_must_be_the_full_run_commit(self):
+        for mode, version in (("rehearse", REHEARSAL), ("publish", "1.5.0")):
+            for commit in ("", OTHER, RUN_SHA[:12], RUN_SHA.upper(), RUN_SHA + " ", " " + RUN_SHA, RUN_SHA + "\n"):
+                with self.subTest(mode=mode, commit=commit):
+                    self.assertRefused(self.check(mode=mode, version=version, commit=commit), "must be the full SHA")
+
+    def test_other_repository_is_refused(self):
+        self.assertRefused(self.check(mode="rehearse", version=REHEARSAL, repository="someone/vouchfx"), "runs only in")
+
+    def test_existing_tag_is_refused(self):
+        for mode, version in (("rehearse", REHEARSAL), ("publish", "1.5.0")):
+            for tags in ([(f"v{version}", RUN_SHA)], [(f"v{version}", OTHER), (f"v{version}^{{}}", RUN_SHA)]):
+                with self.subTest(tags=tags, mode=mode):
+                    self.assertRefused(self.check(mode=mode, version=version, tags=tags), "already exists")
+        # A tag of a longer version is not this tag.
+        self.assertAccepted(self.check(tags=[("v1.5.0-rc.1", OTHER), ("v1.5.00", OTHER)]))
+
+    def test_unreadable_tags_or_releases_are_refused(self):
+        self.assertRefused(self.check(markers=["ls-fails"]), "Could not read the remote tags")
+        self.assertRefused(self.check(markers=["gh-fails"]), "Could not read the releases")
+
+    def test_existing_published_release_is_refused_and_a_draft_is_not(self):
+        for mode, version in (("rehearse", REHEARSAL), ("publish", "1.5.0")):
+            with self.subTest(mode=mode):
+                self.assertRefused(self.check(mode=mode, version=version, releases=[release(f"v{version}", False)]),
+                                   f"A published Release for 'v{version}' already exists")
+        self.assertAccepted(self.check(releases=[release("v1.5.0", True)]))
+
+    def test_version_already_on_nuget_is_refused(self):
+        for package_id in PACKAGE_IDS:
+            with self.subTest(package_id=package_id):
+                self.assertRefused(self.check(nuget=[f"{package_id} 1.5.0"]), "already on NuGet.org")
+        self.assertRefused(self.check(mode="rehearse", version=REHEARSAL, nuget=[f"Vouchfx.Sdk {REHEARSAL}"]),
+                           "already on NuGet.org")
+        self.assertRefused(self.check(markers=["nuget-fails"]), "Could not check")
+
+    def test_publish_requires_release_notes_it_can_use(self):
+        empty = FIXTURE_CHANGELOG.format("1.5.0").replace("### Added\n\n- Feature for 1.5.0.\n", "")
+        long = FIXTURE_CHANGELOG.format("1.5.0").replace("- Feature for 1.5.0.", "x" * 100_001)
+        for label, text in (("empty section", empty), ("section too long", long)):
+            with self.subTest(case=label):
+                result = self.check(changelog_text=text)
+                self.assertRefused(result, "The CHANGELOG.md section for 1.5.0 cannot be used as the Release notes")
+                self.assertIn("python3 scripts/release_metadata.py notes --changelog CHANGELOG.md --version 1.5.0",
+                              result[3])
+        result = self.check(changelog_text=long)
+        self.assertIn("characters; the limit is 100000", result[1])
+        # Rehearse and validate do not read the notes.
+        for mode, version in (("rehearse", REHEARSAL), ("validate", "1.5.0")):
+            with self.subTest(mode=mode):
+                result = self.check(mode=mode, version=version, changelog_text=empty)
+                self.assertAccepted(result, version, mode)
+                self.assertNotIn("release_metadata.py notes", result[3])
+
+    def test_publish_requires_the_changelog_and_props_to_be_prepared(self):
+        self.assertRefused(self.check(changelog="1.4.9"), "Merge the release pull request")
+        self.assertRefused(self.check(props="1.4.9"), "Merge the release pull request")
+        # Rehearse and validate do not read them.
+        self.assertAccepted(self.check(mode="rehearse", version=REHEARSAL, changelog="1.4.9", props="1.4.9"),
+                            REHEARSAL, "rehearse")
+
+    def test_rehearsal_versions_of_the_reserved_form_are_accepted(self):
+        for version in ("0.0.0-rehearsal.1", "0.0.0-rehearsal.12"):
+            with self.subTest(version=version):
+                result = self.check(mode="rehearse", version=version)
+                self.assertAccepted(result, version, "rehearse")
+                self.assertIn("git ls-remote --tags origin\n", result[3])
+
+    def test_rehearsal_with_any_other_version_is_refused_before_any_lookup(self):
+        for version in ("1.5.0", "1.5.0-rc.1", "0.0.0-test", "0.0.0-rehearsal", "0.0.0-rehearsal.x",
+                        "0.0.1-rehearsal.1", "0.0.0-rehearsal.1.2", "0.0.0-rehearsal.1-x",
+                        "0.0.0-Rehearsal.1"):
+            with self.subTest(version=version):
+                result = self.check(mode="rehearse", version=version)
+                self.assertRefused(result, "A rehearsal must use a version of the form 0.0.0-rehearsal.N")
+                self.assertEqual("", result[3], "no lookup before the rehearsal version is checked")
+
+    def test_publish_refuses_versions_reserved_for_validation_and_rehearsal(self):
+        for version in ("0.0.0-test", "0.0.0-rehearsal.1", "0.0.0-anything"):
+            with self.subTest(version=version):
+                result = self.check(mode="publish", version=version, changelog=version, props=version)
+                self.assertRefused(result, "reserved for validation and rehearsal")
+                self.assertEqual("", result[3], "no lookup before the reserved version is refused")
+        # Only the 0.0.0- prefix is reserved.
+        self.assertAccepted(self.check(version="0.0.1-rc.1", changelog="0.0.1-rc.1", props="0.0.1-rc.1"),
+                            "0.0.1-rc.1")
+
+    def test_validate_keeps_the_default_version(self):
+        self.assertAccepted(self.check(mode="validate", version="0.0.0-test"), "0.0.0-test", "validate")
+
+
+class PublishReleaseScriptTests(unittest.TestCase):
+    """Runs publish-release's actual steps in order, with fixture commands.
+
+    `uses:` steps are emulated: the checkout and downloads by the prepared working
+    directory, NuGet/login by success or failure. A step's `if` is evaluated only
+    when it is one of the exact strings the structure tests pin; any other string
+    fails the test. Step `env` expressions are resolved from a fixed table.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.job = workflow(ROOT / ".github/workflows/release.yml")["jobs"]["publish-release"]
+
+    def run_job(self, mode="publish", version="1.5.0", login_fails=False, signing_mode=None, **fixture):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        f = Fixture(scratch.name, changelog=version, props=version, **fixture)
+        for name in (f"vouchfx.{version}.nupkg", f"Vouchfx.Sdk.{version}.nupkg", f"vouchfx-{version}-linux-x64.tar.gz"):
+            (f.work / "release-upload").mkdir(exist_ok=True)
+            (f.work / "release-upload" / name).write_text("x", encoding="utf-8")
+        (f.work / "signing-material/nuget").mkdir(parents=True)
+        (f.work / "signing-material/signing-mode").write_text((signing_mode or mode) + "\n", encoding="utf-8")
+        if mode == "publish":
+            (f.work / f"signing-material/nuget/vouchfx.{version}.nupkg.cosign.bundle").write_text("x", encoding="utf-8")
+        base = f.env(MODE=mode, VERSION=version, TAG=f"v{version}")
+        outputs = {"state": {}, "create": {}}
+        failed, ran, log = False, [], ""
+        for step in self.job["steps"]:
+            condition = step.get("if")
+            if condition is None:
+                runs = not failed
+            elif condition == MODE_PUBLISH:
+                runs = not failed and mode == "publish"
+            elif condition == REHEARSAL_CLEANUP_IF:
+                runs = mode == "rehearse" and outputs["state"].get("state") == "none"
+            else:
+                self.fail(f"unexpected condition {condition!r}")
+            if not runs:
+                continue
+            ran.append(step["name"])
+            if "uses" in step:
+                if step["uses"].startswith("NuGet/login@") and login_fails:
+                    failed = True
+                continue
+            if step["name"] == "Test the release helper scripts":
+                continue  # the unit tests run on their own
+            # A step's outputs are taken even when it failed, as GitHub is expected
+            # to process the output file of a failed step.
+            table = {"${{ github.token }}": "fixture", "${{ github.repository }}": REPOSITORY,
+                     "${{ steps.state.outputs.state }}": outputs["state"].get("state", ""),
+                     "${{ steps.state.outputs.draft_id }}": outputs["state"].get("draft_id", ""),
+                     "${{ steps.create.outputs.created }}": outputs["create"].get("created", ""),
+                     "${{ steps.nuget-login.outputs.NUGET_API_KEY }}": "fixture-key"}
+            env = dict(base, **{k: table[v] for k, v in step.get("env", {}).items()})
+            code, output, step_outputs = f.run(step["run"], env)
+            log += f"--- {step['name']} (exit {code})\n{output}"
+            if "id" in step:
+                outputs[step["id"]] = step_outputs
+            if code:
+                failed = True
+        self.assertEqual("", f.unexpected, "a call the fixtures do not know\n" + log)
+        bodies = f.dir / "bodies"
+        return {"failed": failed, "ran": ran, "log": log, "calls": f.calls, "releases": f.releases,
+                "tags": f.tags, "bodies": bodies.read_text(encoding="utf-8") if bodies.exists() else ""}
+
+    def calls_in_order(self, result, *needles):
+        positions = [result["calls"].find(n) for n in needles]
+        self.assertNotIn(-1, positions, result["calls"])
+        self.assertEqual(sorted(positions), positions, result["calls"])
+
+    def test_publish_from_nothing_drafts_pushes_publishes_and_verifies_in_that_order(self):
+        result = self.run_job()
+        self.assertFalse(result["failed"], result["log"])
+        self.calls_in_order(result, "gh release create v1.5.0 --draft --target " + RUN_SHA,
+                            "gh release upload v1.5.0", "dotnet nuget push release-upload/",
+                            "gh release edit v1.5.0 --draft=false --target " + RUN_SHA + " --latest",
+                            "gh api repos/tomas-rampas/vouchfx/releases/tags/v1.5.0 --jq .draft")
+        # The tags are read three times: to classify, just before the edit, and to verify.
+        listing = "git ls-remote --tags origin\n"
+        self.assertEqual(3, result["calls"].count(listing), result["calls"])
+        second = result["calls"].find(listing, result["calls"].find(listing) + 1)
+        self.assertLess(result["calls"].find("dotnet nuget push release-upload/"), second)
+        self.assertLess(second, result["calls"].find("gh release edit v1.5.0"))
+        [published] = result["releases"]
+        self.assertIs(False, published["draft"])
+        self.assertEqual(RUN_SHA, published["target_commitish"])
+        self.assertIs(False, published["prerelease"])
+        self.assertIs(True, published["generate_notes"])
+        self.assertEqual("### Added\n\n- Feature for 1.5.0.\n", published["body"])
+        self.assertEqual(["Vouchfx.Sdk.1.5.0.nupkg", "vouchfx-1.5.0-linux-x64.tar.gz", "vouchfx.1.5.0.nupkg",
+                          "vouchfx.1.5.0.nupkg.cosign.bundle"], published["assets"])
+        self.assertNotIn("signing-mode", published["assets"])
+        self.assertEqual(f"{RUN_SHA}\trefs/tags/v1.5.0\n", result["tags"])
+
+    def test_pre_release_is_marked_and_never_latest(self):
+        result = self.run_job(version="1.5.0-rc.1")
+        self.assertFalse(result["failed"], result["log"])
+        self.assertIn("--generate-notes --prerelease\n", result["calls"])
+        self.assertIn("--target " + RUN_SHA + " --latest=false\n", result["calls"])
+        self.assertIs(True, result["releases"][0]["prerelease"])
+
+    def test_existing_draft_at_the_run_commit_is_deleted_and_made_again(self):
+        old = dict(release("v1.5.0", True, rid=42, assets=["stale.zip", "vouchfx.1.5.0.nupkg"]),
+                   body="Old notes.", title="Old title", prerelease=True)
+        result = self.run_job(releases=[old], nuget=["vouchfx 1.5.0"])
+        self.assertFalse(result["failed"], result["log"])
+        self.calls_in_order(result, ID_READ + "42 --jq " + ID_READ_FILTER + "\n",
+                            "gh api -X DELETE repos/tomas-rampas/vouchfx/releases/42\n",
+                            "gh release create v1.5.0 --draft --target " + RUN_SHA,
+                            "gh release upload v1.5.0", "dotnet nuget push", "gh release edit v1.5.0")
+        self.assertIn("Deleted the earlier draft 42 for v1.5.0; this run replaces it with a new draft.",
+                      result["log"])
+        [published] = result["releases"]
+        self.assertNotEqual(42, published["id"])
+        self.assertEqual(run_assets(), published["assets"])
+        self.assertEqual(("### Added\n\n- Feature for 1.5.0.\n", "v1.5.0", False),
+                         (published["body"], published["title"], published["prerelease"]))
+        # A draft means "continue": a package already on NuGet.org does not stop it.
+        self.assertNotIn("check_nuget_presence.py --id", result["calls"])
+
+    def assertDraftKeptAfterRead(self, result, text, kept):
+        # The read of the release by id happened, and nothing was changed after it.
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn(f"::error::{text}", result["log"])
+        self.assertEqual(CREATE_STEP, result["ran"][-1])
+        self.assertIn(ID_READ + "42 --jq ", result["calls"])
+        for absent in ("-X DELETE", "gh release create", "gh release upload", "gh release edit", "dotnet"):
+            self.assertNotIn(absent, result["calls"])
+        self.assertEqual(kept, result["releases"])
+        self.assertEqual("", result["tags"])
+
+    def test_draft_made_a_release_since_the_classification_is_not_deleted(self):
+        old = release("v1.5.0", True, rid=42)
+        now = release("v1.5.0", False, rid=42)
+        result = self.run_job(releases=[old], late_releases=[now], nuget=["vouchfx 1.5.0"])
+        self.assertDraftKeptAfterRead(result, STALE_DRAFT, [now])
+
+    def test_draft_whose_target_or_tag_changed_since_the_classification_is_not_deleted(self):
+        for label, now in (("target", release("v1.5.0", True, target=OTHER, rid=42)),
+                           ("target now null", release("v1.5.0", True, target=None, rid=42)),
+                           ("tag", release("v1.5.1", True, rid=42)),
+                           ("release gone", release("v1.5.0", True, rid=43))):
+            with self.subTest(case=label):
+                result = self.run_job(releases=[release("v1.5.0", True, rid=42)], late_releases=[now])
+                self.assertDraftKeptAfterRead(result, STALE_DRAFT, [now])
+
+    def test_unreadable_draft_is_not_deleted(self):
+        draft = release("v1.5.0", True, rid=42)
+        result = self.run_job(releases=[draft], markers=["release-read-fails"])
+        self.assertDraftKeptAfterRead(result, STALE_DRAFT, [draft])
+
+    def test_notes_failure_leaves_the_earlier_draft_in_place(self):
+        draft = release("v1.5.0", True, rid=42)
+        result = self.run_job(releases=[draft], changelog_text="# Changelog\n\n## [Unreleased]\n")
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual(CREATE_STEP, result["ran"][-1])
+        self.assertIn("python3 scripts/release_metadata.py notes", result["calls"])
+        for absent in ("-X DELETE", ID_READ, "gh release create", "gh release upload", "dotnet"):
+            self.assertNotIn(absent, result["calls"])
+        self.assertEqual([draft], result["releases"])
+
+    def test_draft_without_a_usable_id_is_refused_before_anything_is_changed(self):
+        for rid in ("abc", "1 2", "-1"):
+            with self.subTest(rid=rid):
+                result = self.run_job(releases=[release("v1.5.0", True, rid=rid)])
+                self.assertTrue(result["failed"])
+                self.assertIn("has no usable id", result["log"])
+                for absent in ("-X DELETE", "gh release create", "dotnet"):
+                    self.assertNotIn(absent, result["calls"])
+
+    def test_draft_with_a_null_target_is_refused_as_another_commit(self):
+        # jq's @tsv prints a null target as an empty field.
+        for mode, version in (("publish", "1.5.0"), ("rehearse", REHEARSAL)):
+            with self.subTest(mode=mode):
+                result = self.run_job(mode=mode, version=version, releases=[release(f"v{version}", True, target=None)])
+                self.assertStoppedAtClassify(result, f"The draft for 'v{version}' targets '', not this run's commit")
+
+    def test_published_at_the_run_commit_completes_without_changing_the_release(self):
+        result = self.run_job(releases=[release("v1.5.0", False, assets=run_assets())], tags=[("v1.5.0", RUN_SHA)],
+                              nuget=["vouchfx.1.5.0.nupkg", "Vouchfx.Sdk.1.5.0.nupkg"])
+        self.assertFalse(result["failed"], result["log"])
+        for absent in ("gh release create", "gh release upload", "gh release edit", "dotnet nuget push", "-X DELETE"):
+            self.assertNotIn(absent, result["calls"])
+        self.assertIn("releases/tags/v1.5.0 --jq .assets[].name", result["calls"])
+        self.assertIn("releases/tags/v1.5.0 --jq .draft", result["calls"])
+        self.assertIn("already published with an asset of each name this run would upload", result["log"])
+        self.assertNotIn("uploaded before publication", result["log"])
+
+    def test_published_release_without_this_runs_assets_stops_before_nuget(self):
+        for label, assets in (("no assets", []), ("one missing", run_assets()[1:]),
+                              ("one extra", run_assets() + ["other.zip"]),
+                              ("one renamed", run_assets()[1:] + ["Vouchfx.Sdk.1.5.0.nupkg.old"])):
+            with self.subTest(case=label):
+                result = self.run_job(releases=[release("v1.5.0", False, assets=assets)], tags=[("v1.5.0", RUN_SHA)])
+                self.assertTrue(result["failed"])
+                self.assertIn("::error::The published Release v1.5.0 does not hold this run's assets", result["log"])
+                self.assertEqual(CREATE_STEP, result["ran"][-1])
+                for absent in ("gh release upload", "gh release edit", "dotnet", "-X DELETE"):
+                    self.assertNotIn(absent, result["calls"])
+
+    def test_unreadable_assets_of_a_published_release_stop_before_nuget(self):
+        result = self.run_job(releases=[release("v1.5.0", False, assets=run_assets())], tags=[("v1.5.0", RUN_SHA)],
+                              markers=["tag-endpoint-fails"])
+        self.assertTrue(result["failed"])
+        self.assertIn("::error::Could not read the assets of the published Release v1.5.0.", result["log"])
+        self.assertEqual(CREATE_STEP, result["ran"][-1])
+        self.assertNotIn("dotnet", result["calls"])
+
+    def test_higher_stable_release_stops_a_stable_publication(self):
+        for label, version, other in (("minor", "1.5.0", "v1.6.0"), ("numeric, not text", "1.9.0", "v1.10.0"),
+                                      ("major", "1.5.0", "v2.0.0"), ("patch", "1.5.0", "v1.5.1")):
+            for state, fixture in (("none", {}), ("draft", {"releases": [release(f"v{version}", True)]})):
+                with self.subTest(case=label, state=state):
+                    releases = fixture.get("releases", []) + [release(other, False, OTHER, rid=3)]
+                    result = self.run_job(version=version, releases=releases, tags=[(other, OTHER)])
+                    self.assertStoppedAtClassify(
+                        result, f"::error::Refusing to publish 'v{version}': the published Release '{other}' is "
+                                f"a higher stable version")
+
+    def test_highest_of_several_stable_releases_is_found_numerically(self):
+        # With one published Release a text sort and a numeric sort agree; with several they do not.
+        releases = [release("v1.9.0", False, OTHER, rid=3), release("v1.10.0", False, OTHER, rid=4),
+                    release("v1.0.0", False, OTHER, rid=5)]
+        result = self.run_job(version="1.9.5", releases=releases)
+        self.assertStoppedAtClassify(result, "the published Release 'v1.10.0' is a higher stable version")
+
+    def test_lower_pre_release_or_draft_releases_do_not_stop_a_publication(self):
+        for label, version, others in (
+                ("lower stable", "1.5.0", [release("v1.4.0", False, OTHER, rid=3)]),
+                ("lower by number", "1.10.0", [release("v1.9.0", False, OTHER, rid=3)]),
+                ("higher pre-release", "1.5.0", [release("v1.6.0-rc.1", False, OTHER, rid=3)]),
+                ("higher draft", "1.5.0", [release("v1.6.0", True, OTHER, rid=3)]),
+                ("higher non-version tag", "1.5.0", [release("v9.0.0.1", False, OTHER, rid=3)]),
+                ("pre-release publication", "1.5.0-rc.1", [release("v1.6.0", False, OTHER, rid=3)])):
+            with self.subTest(case=label):
+                result = self.run_job(version=version, releases=others)
+                self.assertFalse(result["failed"], result["log"])
+                self.assertIn(f"gh release edit v{version}", result["calls"])
+
+    def test_package_already_on_nuget_with_no_draft_stops_before_the_draft(self):
+        for package_id in PACKAGE_IDS:
+            with self.subTest(package_id=package_id):
+                result = self.run_job(nuget=[f"{package_id} 1.5.0"])
+                self.assertStoppedAtClassify(
+                    result, f"::error::{package_id} 1.5.0 is already on NuGet.org, but no draft or Release exists "
+                            "for 'v1.5.0'.")
+        result = self.run_job(markers=["nuget-fails"])
+        self.assertStoppedAtClassify(result, "::error::Could not check vouchfx 1.5.0 on NuGet.org.")
+        # Every package ID is checked when none is present.
+        calls = self.run_job()["calls"]
+        for package_id in PACKAGE_IDS:
+            self.assertIn(f"python3 scripts/check_nuget_presence.py --id {package_id} --version 1.5.0\n", calls)
+
+    def test_rehearse_does_not_check_nuget_or_newer_releases_in_classify(self):
+        result = self.run_job(mode="rehearse", version=REHEARSAL, nuget=[f"vouchfx {REHEARSAL}"],
+                              releases=[release("v9.0.0", False, OTHER, rid=3)])
+        self.assertFalse(result["failed"], result["log"])
+        self.assertNotIn("check_nuget_presence", result["calls"])
+
+    def assertStoppedAtClassify(self, result, text):
+        self.assertTrue(result["failed"])
+        self.assertIn(text, result["log"])
+        self.assertEqual("Classify the release state", result["ran"][-1])
+        for absent in ("gh release create", "gh release upload", "gh release edit", "dotnet", "-X DELETE"):
+            self.assertNotIn(absent, result["calls"])
+
+    def test_tag_or_release_at_another_commit_fails_before_anything_is_changed(self):
+        for mode in ("publish", "rehearse"):
+            for label, fixture, text in (
+                    ("tag elsewhere", {"tags": [("v1.5.0", OTHER)]}, "resolves to " + OTHER),
+                    ("annotated tag peels elsewhere", {"tags": [("v1.5.0", RUN_SHA), ("v1.5.0^{}", OTHER)]},
+                     "resolves to " + OTHER),
+                    ("published elsewhere", {"tags": [("v1.5.0", OTHER)], "releases": [release("v1.5.0", False, OTHER)]},
+                     "resolves to " + OTHER),
+                    ("draft targets a branch", {"releases": [release("v1.5.0", True, "main")]}, "targets 'main'"),
+                    ("draft targets another commit", {"releases": [release("v1.5.0", True, OTHER)]}, "targets '" + OTHER),
+                    ("published without a tag", {"releases": [release("v1.5.0", False)]}, "its tag cannot be found"),
+                    ("two drafts", {"releases": [release("v1.5.0", True, rid=1), release("v1.5.0", True, rid=2)]},
+                     "2 releases or drafts")):
+                with self.subTest(mode=mode, case=label):
+                    self.assertStoppedAtClassify(self.run_job(mode=mode, **fixture), text)
+
+    def test_unreadable_state_fails_closed(self):
+        self.assertStoppedAtClassify(self.run_job(markers=["ls-fails"]), "Could not read the remote tags")
+        self.assertStoppedAtClassify(self.run_job(markers=["gh-fails"]), "Could not read the releases")
+
+    def test_rehearse_drafts_uploads_logs_in_and_deletes_the_draft_without_pushing_or_publishing(self):
+        result = self.run_job(mode="rehearse", version="0.0.0-rehearsal.1")
+        self.assertFalse(result["failed"], result["log"])
+        self.calls_in_order(result, "gh release create v0.0.0-rehearsal.1 --draft --target " + RUN_SHA,
+                            "gh release upload v0.0.0-rehearsal.1", "gh api -X DELETE")
+        self.assertIn("NuGet login (OIDC → short-lived API key)", result["ran"])
+        for step in (PUSH_STEP, PUBLISH_STEP, VERIFY_STEP):
+            self.assertNotIn(step, result["ran"])
+        for absent in ("dotnet", "gh release edit", "releases/tags/"):
+            self.assertNotIn(absent, result["calls"])
+        self.assertEqual([], result["releases"])
+        self.assertEqual("", result["tags"])
+
+    def test_rehearse_notes_are_a_placeholder(self):
+        result = self.run_job(mode="rehearse", version="0.0.0-rehearsal.1")
+        self.assertFalse(result["failed"], result["log"])
+        self.assertEqual("Rehearsal draft made by the release workflow. It is deleted when the rehearsal ends "
+                         "and is never published.\n", result["bodies"])
+
+    def test_rehearse_deletes_its_draft_when_a_later_step_fails(self):
+        for label, kwargs in (("login fails", {"login_fails": True}),
+                              ("upload fails", {"markers": ["upload-fails"]})):
+            with self.subTest(case=label):
+                result = self.run_job(mode="rehearse", version="0.0.0-rehearsal.1", **kwargs)
+                self.assertTrue(result["failed"])
+                self.assertIn(CLEANUP_STEP, result["ran"])
+                self.assertIn("gh api -X DELETE", result["calls"])
+                self.assertEqual([], result["releases"])
+
+    def test_rehearse_refuses_an_existing_draft_and_leaves_it_alone(self):
+        draft = release("v0.0.0-rehearsal.1", True)
+        result = self.run_job(mode="rehearse", version="0.0.0-rehearsal.1", releases=[draft])
+        self.assertStoppedAtClassify(result, "A rehearsal needs no existing tag, draft or Release")
+        self.assertNotIn(CLEANUP_STEP, result["ran"])
+        self.assertEqual([draft], result["releases"])
+
+    def test_rehearse_refuses_an_existing_tag_at_the_run_commit(self):
+        result = self.run_job(mode="rehearse", version=REHEARSAL, tags=[(f"v{REHEARSAL}", RUN_SHA)])
+        self.assertStoppedAtClassify(result, "A rehearsal needs no existing tag, draft or Release")
+        self.assertNotIn(CLEANUP_STEP, result["ran"])
+
+    def test_rehearsal_clean_up_fails_when_it_cannot_read_the_releases(self):
+        # The first list is the classification; the clean-up's own list fails.
+        result = self.run_job(mode="rehearse", version=REHEARSAL, list_fails_after=1)
+        self.assertTrue(result["failed"])
+        self.assertIn(f"--- {CLEANUP_STEP} (exit 1)", result["log"])
+        self.assertIn(f"::error::Could not read the releases; delete the rehearsal draft for 'v{REHEARSAL}' by hand.",
+                      result["log"])
+
+    def test_rehearsal_clean_up_lists_again_after_the_deletion(self):
+        for label, kwargs, text in (
+                ("deletion did not take", {"markers": ["delete-ignored"]},
+                 f"::error::A release or draft for 'v{REHEARSAL}' remains after the deletion. Delete it by hand."),
+                ("second list unreadable", {"list_fails_after": 2},
+                 "::error::Could not read the releases after the deletion; check by hand that no draft for "
+                 f"'v{REHEARSAL}' remains.")):
+            with self.subTest(case=label):
+                result = self.run_job(mode="rehearse", version=REHEARSAL, **kwargs)
+                self.assertTrue(result["failed"])
+                self.assertIn(f"--- {CLEANUP_STEP} (exit 1)", result["log"])
+                self.assertIn(text, result["log"])
+                self.assertEqual(3, result["calls"].count("gh api --paginate"), result["calls"])
+
+    def test_rehearsal_clean_up_fails_when_its_own_draft_is_not_listed(self):
+        result = self.run_job(mode="rehearse", version=REHEARSAL, markers=["list-hides-drafts"])
+        self.assertTrue(result["failed"])
+        self.assertIn(f"::error::This job created a rehearsal draft for 'v{REHEARSAL}', but the list of releases "
+                      "does not show it. Look for the draft by hand and delete it.", result["log"])
+        # When the draft step made no draft, an empty list is the expected answer.
+        result = self.run_job(mode="rehearse", version=REHEARSAL, markers=["create-fails"])
+        self.assertTrue(result["failed"])
+        self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
+        self.assertIn(f"No rehearsal draft for v{REHEARSAL} to delete.", result["log"])
+
+    def test_failed_push_leaves_only_the_draft(self):
+        result = self.run_job(markers=["push-fails"])
+        self.assertTrue(result["failed"])
+        self.assertIn("dotnet nuget push", result["calls"])
+        self.assertNotIn("gh release edit", result["calls"])
+        self.assertIs(True, result["releases"][0]["draft"])
+        self.assertEqual("", result["tags"])
+
+    def assertStoppedBeforeEdit(self, result, text):
+        self.assertTrue(result["failed"])
+        self.assertIn(text, result["log"])
+        self.assertEqual(PUBLISH_STEP, result["ran"][-1])
+        self.assertNotIn("gh release edit", result["calls"])
+        self.assertIs(True, result["releases"][0]["draft"])
+        self.assertEqual("", result["tags"])
+
+    def test_tag_made_at_another_commit_after_classification_stops_the_publication(self):
+        for state, fixture in (("none", {}), ("draft", {"releases": [release("v1.5.0", True)]})):
+            for label, late in (("tag elsewhere", [("v1.5.0", OTHER)]),
+                                ("annotated tag peels elsewhere", [("v1.5.0", RUN_SHA), ("v1.5.0^{}", OTHER)])):
+                with self.subTest(state=state, case=label):
+                    result = self.run_job(late_tags=late, **fixture)
+                    self.assertStoppedBeforeEdit(result, f"Tag 'v1.5.0' now resolves to {OTHER}, not to this run's commit {RUN_SHA}")
+                    self.assertIn("dotnet nuget push", result["calls"])
+                    self.assertEqual(2, result["calls"].count("git ls-remote --tags origin\n"))
+
+    def test_unreadable_tags_just_before_the_publication_stop_it(self):
+        result = self.run_job(markers=["late-ls-fails"])
+        self.assertStoppedBeforeEdit(result, "Could not read the remote tags; nothing was published.")
+
+    def test_late_tag_at_the_run_commit_or_no_tag_lets_the_publication_continue(self):
+        for label, late in (("no tag", []), ("tag at the run commit", [("v1.5.0", RUN_SHA)]),
+                            ("another version's tag", [("v1.5.0-rc.1", OTHER), ("v1.5.00", OTHER)])):
+            with self.subTest(case=label):
+                result = self.run_job(late_tags=late)
+                # The fixture shows the late listing to the verification step too, so
+                # only the publication step is judged here.
+                self.assertIn("--- Publish the draft release (exit 0)", result["log"])
+                self.assertIn("gh release edit v1.5.0", result["calls"])
+
+    def test_already_published_state_does_not_read_the_tags_again_in_the_publication_step(self):
+        result = self.run_job(releases=[release("v1.5.0", False, assets=run_assets())], tags=[("v1.5.0", RUN_SHA)],
+                              nuget=["vouchfx.1.5.0.nupkg", "Vouchfx.Sdk.1.5.0.nupkg"])
+        self.assertFalse(result["failed"], result["log"])
+        # Classify and verify read the tags; the publication step exits early.
+        self.assertEqual(2, result["calls"].count("git ls-remote --tags origin\n"), result["calls"])
+
+    def test_verification_fails_when_the_tag_lands_on_another_commit(self):
+        result = self.run_job(markers=["tag-lands-elsewhere"])
+        self.assertTrue(result["failed"])
+        self.assertEqual(VERIFY_STEP, result["ran"][-1])
+        self.assertIn("not to this run's commit", result["log"])
+
+    def test_verification_fails_when_the_release_is_still_a_draft(self):
+        # GitHub's tag endpoint gives a 404 for a draft; the second case reaches the
+        # script's own `.draft` comparison, as a second line of defence.
+        for markers in (["edit-keeps-draft"], ["edit-keeps-draft", "tags-endpoint-shows-drafts"]):
+            with self.subTest(markers=markers):
+                result = self.run_job(markers=markers)
+                self.assertTrue(result["failed"])
+                self.assertEqual(VERIFY_STEP, result["ran"][-1])
+                self.assertIn(f"--- {VERIFY_STEP} (exit 1)", result["log"])
+                self.assertIn("::error::The Release v1.5.0 is not published.", result["log"])
+
+    def test_presence_check_error_refuses_the_push(self):
+        # A draft, so that the classification does not read NuGet.org itself.
+        result = self.run_job(releases=[release("v1.5.0", True)], markers=["nuget-fails"])
+        self.assertTrue(result["failed"])
+        self.assertEqual(PUSH_STEP, result["ran"][-1])
+        self.assertIn("::error::Presence check failed for release-upload/", result["log"])
+        self.assertNotIn("dotnet nuget push", result["calls"])
+        self.assertNotIn("gh release edit", result["calls"])
+
+    def test_signing_material_from_another_mode_is_refused_before_the_draft(self):
+        result = self.run_job(signing_mode="validate")
+        self.assertTrue(result["failed"])
+        self.assertIn("made for another mode", result["log"])
+        self.assertNotIn("gh release create", result["calls"])
 
 
 class ReleaseSbomTests(unittest.TestCase):
@@ -270,7 +1506,7 @@ class ReleaseSbomTests(unittest.TestCase):
     def test_generator_sets_version_and_validates_before_upload(self):
         steps = workflow(ROOT / ".github/workflows/release.yml")["jobs"]["build-dotnet"]["steps"]
         step = next(s for s in steps if s.get("name") == "Generate SBOM (CycloneDX JSON, spec 1.7)")
-        self.assertEqual({"VERSION": "${{ steps.version.outputs.version }}"}, step["env"])
+        self.assertEqual({"VERSION": "${{ needs.prepare.outputs.version }}"}, step["env"])
         self.assertIn('--set-version "$VERSION"', step["run"])
         self.assertIn('python scripts/check_release_sbom.py "artifacts/sbom/vouchfx-${VERSION}.bom.json" --version "$VERSION"', step["run"])
         self.assertLess(steps.index(step), next(i for i, s in enumerate(steps) if s.get("name") == "Upload SBOM"))
@@ -345,9 +1581,19 @@ class MoveFloatingTagStructureTests(unittest.TestCase):
                 self.assertEqual("string", spec["type"])
         self.assertEqual({"tag"}, set(self.move["on"]["workflow_dispatch"]["inputs"]))
 
-    def test_only_release_yml_triggers_on_release(self):
-        triggering = {path.name for path in workflow_files() if "release" in triggers_of(workflow(path))}
-        self.assertEqual({"release.yml"}, triggering)
+    def test_no_workflow_triggers_on_a_release_or_a_tag_push(self):
+        for path in workflow_files():
+            data = workflow(path)
+            with self.subTest(workflow=path.name):
+                self.assertNotIn("release", triggers_of(data))
+                trigger = data["on"]
+                push = trigger.get("push") if isinstance(trigger, dict) else None
+                if "push" in triggers_of(data):
+                    # A bare `push` (or one with no branch or tag filter) also fires on tags.
+                    self.assertIsInstance(push, dict, "a bare push trigger fires on tag pushes")
+                    self.assertTrue({"tags", "tags-ignore"}.isdisjoint(push))
+                    self.assertTrue({"branches", "branches-ignore"} & set(push),
+                                    "a push trigger without a branch filter fires on tag pushes")
 
     def test_only_release_yml_calls_the_called_workflow(self):
         callers = set()
@@ -360,14 +1606,14 @@ class MoveFloatingTagStructureTests(unittest.TestCase):
     def test_release_job_calls_it_last_behind_publication(self):
         job = self.release["jobs"]["move-floating-tag"]
         self.assertEqual(MOVE_PATH, job["uses"])
-        self.assertTrue({"publish-release", "publish-marketplace", "build-dotnet"} <= needs_of(job))
-        self.assertEqual({"tag": "${{ needs.build-dotnet.outputs.tag }}",
+        self.assertTrue({"publish-release", "publish-marketplace", PREPARE} <= needs_of(job))
+        self.assertEqual({"tag": "${{ needs.prepare.outputs.tag }}",
                           "expected_sha": "${{ github.sha }}"}, job["with"])
         # The same tag value `publish-release` publishes under.
-        self.assertEqual("${{ needs.build-dotnet.outputs.tag }}",
+        self.assertEqual("${{ needs.prepare.outputs.tag }}",
                          self.release["jobs"]["publish-release"]["env"]["TAG"])
         self.assertEqual({"contents": "write"}, job["permissions"])
-        self.assertEqual("github.event_name != 'workflow_dispatch'", job["if"])
+        self.assertEqual(MOVE_TAG_IF, job["if"])
         self.assertIsNone(DEFEATS_NEEDS.search(job["if"]))
         for key in ("secrets", "continue-on-error", "strategy", "concurrency", "steps", "runs-on"):
             self.assertNotIn(key, job)
@@ -597,8 +1843,8 @@ esac
         self.assertLeftAlone(self.run_job("v1.4.9", EXPECTED_SHA, tags), "v1.4.10")
 
     def test_called_path_compares_versions_numerically_and_ignores_build_metadata(self):
-        # release.yml's own version check refuses a `+build` release tag, so only a
-        # `+build` tag in the listing can reach this path from a release run.
+        # release.yml's `prepare` refuses a `+build` version, so only a `+build` tag in
+        # the listing can reach this path from a release run.
         for tag, on_floating, moves in (
                 ("v1.4.9", "v1.4.10", False), ("v1.4.10", "v1.4.9", True),
                 ("v1.9.0", "v1.10.0", False), ("v1.10.0", "v1.9.0", True),
