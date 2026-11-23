@@ -1805,15 +1805,17 @@ jobs:
 
           # This job makes the draft before it pushes to NuGet.org, so packages
           # of this version on NuGet.org with no draft or Release mean that a
-          # draft was deleted after a partial push. Publishing now could pair
-          # another commit's packages with this commit's Release. Only exit 3
+          # draft was deleted after a partial push, or that a re-run deleted
+          # its own draft and failed before making a new one. Publishing now
+          # could pair another commit's packages with this commit's Release.
+          # Only exit 3
           # means absent; any other failure stops the run.
           if [[ "$MODE" == "publish" && "$state" == "none" ]]; then
             for package in vouchfx Vouchfx.Sdk Vouchfx.Sdk.Testing Vouchfx.Engine.Abstractions Vouchfx.Engine.Authoring Vouchfx.Engine.Compilation; do
               rc=0
               python3 scripts/check_nuget_presence.py --id "$package" --version "$VERSION" || rc=$?
               if [[ "$rc" -eq 0 ]]; then
-                echo "::error::$package $VERSION is already on NuGet.org, but no draft or Release exists for '$TAG'. An earlier run probably pushed it before its draft was deleted; release a new version."
+                echo "::error::$package $VERSION is already on NuGet.org, but no draft or Release exists for '$TAG'. Either an earlier run pushed it and its draft was deleted, or a re-run deleted its own draft and failed before making a new one (see RELEASING.md, case 7)."
                 exit 1
               elif [[ "$rc" -ne 3 ]]; then
                 echo "::error::Could not check $package $VERSION on NuGet.org."
@@ -1978,6 +1980,27 @@ jobs:
           gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" \
             --notes-file "$notes" --generate-notes "${prerelease[@]}"
           echo "created=true" >> "$GITHUB_OUTPUT"
+
+          # Read the new draft back before anything is uploaded or pushed. The
+          # classification can compare a draft's target with this run's commit
+          # only on a later attempt. This proves the round trip in a rehearsal,
+          # before any NuGet push. That GitHub returns the full SHA for a draft
+          # made with a full SHA as its target is expected, not observed.
+          if ! readback="$(gh api --paginate "repos/${GH_REPO}/releases?per_page=100" --jq '.[] | [.tag_name, (.draft | tostring), (.id | tostring), .target_commitish] | @tsv')"; then
+            echo "::error::Could not read the releases back after creating the draft for $TAG. Nothing was uploaded and nothing was pushed to NuGet.org."
+            exit 1
+          fi
+          readback_matches="$(awk -F'\t' -v tag="$TAG" '$1 == tag' <<<"$readback")"
+          readback_count="$(grep -c . <<<"$readback_matches" || true)"
+          readback_draft=""
+          readback_target=""
+          if [[ "$readback_count" -eq 1 ]]; then
+            IFS=$'\t' read -r _ readback_draft _ readback_target <<<"$readback_matches"
+          fi
+          if [[ "$readback_count" -ne 1 || "$readback_draft" != "true" || "$readback_target" != "$GITHUB_SHA" ]]; then
+            echo "::error::The new draft for $TAG did not read back as expected: entries found for the tag: $readback_count, draft flag '$readback_draft', target '$readback_target'; expected exactly one draft with target $GITHUB_SHA. Nothing was uploaded and nothing was pushed to NuGet.org."
+            exit 1
+          fi
           echo "Uploading ${#files[@]} files to the draft $TAG..."
           gh release upload "$TAG" "${files[@]}" --clobber
           echo "Done."

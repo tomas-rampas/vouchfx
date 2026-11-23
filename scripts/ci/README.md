@@ -78,7 +78,9 @@ the recovery states: an existing draft at the run's commit, which is deleted and
 replaced by a new one; a published Release that holds other assets than the run
 would upload; a higher stable version that is already published; a package on
 NuGet with no draft; a tag or draft at another commit; and a failed push that
-leaves only the draft. They cover the clean-up of a rehearsal draft, also after a
+leaves only the draft. They cover the read-back of a new draft (another target, a
+second draft, an unreadable list), release files that are missing or share a
+name, and the clean-up of a rehearsal draft, also after a
 failed step, including its second list of the releases. The test image has no `gh`
 or `jq` here either: the fixture `gh` emulates six `--jq` filters (three list
 filters, the read of one release by its id, and the tag endpoint's `.draft` and

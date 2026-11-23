@@ -736,13 +736,19 @@ elif len(args) == 4 and args[0] == "api" and args[1].startswith(repo + "releases
 elif args[:2] == ["release", "create"]:
     if (d / "create-fails").exists():
         sys.exit(1)
+    # `create-target` holds the target that GitHub is made to report for the new draft,
+    # whatever `--target` said. `create-adds-draft` makes a second draft for the tag.
+    target = ((d / "create-target").read_text(encoding="utf-8") if (d / "create-target").exists()
+              else flag("--target") or "main")
     releases.append({"id": max([r["id"] for r in releases] + [100]) + 1, "tag_name": args[2],
-                     "draft": "--draft" in args, "target_commitish": flag("--target") or "main",
+                     "draft": "--draft" in args, "target_commitish": target,
                      "prerelease": "--prerelease" in args, "title": flag("--title"),
                      "generate_notes": "--generate-notes" in args,
                      "body": Path(flag("--notes-file")).read_text(encoding="utf-8"), "assets": []})
     with open(d / "bodies", "a", encoding="utf-8") as bodies:
         bodies.write(releases[-1]["body"])
+    if (d / "create-adds-draft").exists():
+        releases.append(dict(releases[-1], id=releases[-1]["id"] + 1))
     save()
 elif args[:2] == ["release", "upload"]:
     if (d / "upload-fails").exists():
@@ -796,7 +802,8 @@ class Fixture:
     """A scratch working directory with fixture commands and remote state."""
 
     def __init__(self, scratch, tags=(), releases=(), nuget=(), markers=(), changelog="1.5.0", props="1.5.0",
-                 late_tags=None, changelog_text=None, list_fails_after=None, late_releases=None):
+                 late_tags=None, changelog_text=None, list_fails_after=None, late_releases=None,
+                 create_target=None):
         self.root = Path(scratch)
         self.dir = self.root / "fixture"
         self.bin = self.dir / "bin"
@@ -817,6 +824,8 @@ class Fixture:
             (self.dir / "late-releases.json").write_text(json.dumps(list(late_releases)), encoding="utf-8")
         for marker in markers:
             (self.dir / marker).write_text("", encoding="utf-8")
+        if create_target is not None:
+            (self.dir / "create-target").write_text(create_target, encoding="utf-8")
         if list_fails_after is not None:
             (self.dir / "list-fails-after").write_text(str(list_fails_after), encoding="utf-8")
         self.work = self.root / "work"
@@ -981,6 +990,16 @@ class PrepareScriptTests(unittest.TestCase):
                                    f"A published Release for 'v{version}' already exists")
         self.assertAccepted(self.check(releases=[release("v1.5.0", True)]))
 
+    def test_published_release_of_a_longer_tag_does_not_stop_the_version(self):
+        # `v1.5.0-rc.1` contains `v1.5.0`; only a whole-line match is this tag.
+        self.assertAccepted(self.check(releases=[release("v1.5.0-rc.1", False, OTHER)],
+                                       tags=[("v1.5.0-rc.1", OTHER)]))
+        self.assertRefused(self.check(releases=[release("v1.5.0", False, OTHER)]),
+                           "A published Release for 'v1.5.0' already exists")
+        self.assertRefused(self.check(releases=[release("v1.5.0-rc.1", False, OTHER), release("v1.5.0", False, OTHER)],
+                                      tags=[("v1.5.0-rc.1", OTHER)]),
+                           "A published Release for 'v1.5.0' already exists")
+
     def test_version_already_on_nuget_is_refused(self):
         for package_id in PACKAGE_IDS:
             with self.subTest(package_id=package_id):
@@ -1057,16 +1076,23 @@ class PublishReleaseScriptTests(unittest.TestCase):
     def setUpClass(cls):
         cls.job = workflow(ROOT / ".github/workflows/release.yml")["jobs"]["publish-release"]
 
-    def run_job(self, mode="publish", version="1.5.0", login_fails=False, signing_mode=None, **fixture):
+    def run_job(self, mode="publish", version="1.5.0", login_fails=False, signing_mode=None, no_files=False,
+                duplicate_asset=False, **fixture):
+        # `no_files` prepares no release files at all; `duplicate_asset` adds a second
+        # file named like the first, in another directory.
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         f = Fixture(scratch.name, changelog=version, props=version, **fixture)
-        for name in (f"vouchfx.{version}.nupkg", f"Vouchfx.Sdk.{version}.nupkg", f"vouchfx-{version}-linux-x64.tar.gz"):
-            (f.work / "release-upload").mkdir(exist_ok=True)
+        (f.work / "release-upload").mkdir(exist_ok=True)
+        for name in (() if no_files else (f"vouchfx.{version}.nupkg", f"Vouchfx.Sdk.{version}.nupkg",
+                                          f"vouchfx-{version}-linux-x64.tar.gz")):
             (f.work / "release-upload" / name).write_text("x", encoding="utf-8")
+        if duplicate_asset:
+            (f.work / "release-upload/other").mkdir()
+            (f.work / "release-upload/other" / f"vouchfx.{version}.nupkg").write_text("y", encoding="utf-8")
         (f.work / "signing-material/nuget").mkdir(parents=True)
         (f.work / "signing-material/signing-mode").write_text((signing_mode or mode) + "\n", encoding="utf-8")
-        if mode == "publish":
+        if mode == "publish" and not no_files:
             (f.work / f"signing-material/nuget/vouchfx.{version}.nupkg.cosign.bundle").write_text("x", encoding="utf-8")
         base = f.env(MODE=mode, VERSION=version, TAG=f"v{version}")
         outputs = {"state": {}, "create": {}}
@@ -1106,8 +1132,19 @@ class PublishReleaseScriptTests(unittest.TestCase):
                 failed = True
         self.assertEqual("", f.unexpected, "a call the fixtures do not know\n" + log)
         bodies = f.dir / "bodies"
-        return {"failed": failed, "ran": ran, "log": log, "calls": f.calls, "releases": f.releases,
+        return {"failed": failed, "ran": ran, "log": log, "calls": f.calls, "releases": f.releases, "outputs": outputs,
                 "tags": f.tags, "bodies": bodies.read_text(encoding="utf-8") if bodies.exists() else ""}
+
+    def assertReadBackBetweenCreateAndUpload(self, result, tag):
+        # The classification lists the releases first. The read-back is a second list,
+        # after the create and before the upload.
+        calls = result["calls"]
+        create = calls.find(f"gh release create {tag} ")
+        upload = calls.find(f"gh release upload {tag} ")
+        self.assertNotIn(-1, (create, upload), calls)
+        readback = calls.find("gh api --paginate", create)
+        self.assertNotEqual(-1, readback, calls)
+        self.assertLess(readback, upload, calls)
 
     def calls_in_order(self, result, *needles):
         positions = [result["calls"].find(n) for n in needles]
@@ -1121,6 +1158,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
                             "gh release upload v1.5.0", "dotnet nuget push release-upload/",
                             "gh release edit v1.5.0 --draft=false --target " + RUN_SHA + " --latest",
                             "gh api repos/tomas-rampas/vouchfx/releases/tags/v1.5.0 --jq .draft")
+        self.assertReadBackBetweenCreateAndUpload(result, "v1.5.0")
         # The tags are read three times: to classify, just before the edit, and to verify.
         listing = "git ls-remote --tags origin\n"
         self.assertEqual(3, result["calls"].count(listing), result["calls"])
@@ -1289,7 +1327,8 @@ class PublishReleaseScriptTests(unittest.TestCase):
                 result = self.run_job(nuget=[f"{package_id} 1.5.0"])
                 self.assertStoppedAtClassify(
                     result, f"::error::{package_id} 1.5.0 is already on NuGet.org, but no draft or Release exists "
-                            "for 'v1.5.0'.")
+                            "for 'v1.5.0'. Either an earlier run pushed it and its draft was deleted, or a re-run "
+                            "deleted its own draft and failed before making a new one (see RELEASING.md, case 7).")
         result = self.run_job(markers=["nuget-fails"])
         self.assertStoppedAtClassify(result, "::error::Could not check vouchfx 1.5.0 on NuGet.org.")
         # Every package ID is checked when none is present.
@@ -1335,6 +1374,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertFalse(result["failed"], result["log"])
         self.calls_in_order(result, "gh release create v0.0.0-rehearsal.1 --draft --target " + RUN_SHA,
                             "gh release upload v0.0.0-rehearsal.1", "gh api -X DELETE")
+        self.assertReadBackBetweenCreateAndUpload(result, "v0.0.0-rehearsal.1")
         self.assertIn("NuGet login (OIDC → short-lived API key)", result["ran"])
         for step in (PUSH_STEP, PUBLISH_STEP, VERIFY_STEP):
             self.assertNotIn(step, result["ran"])
@@ -1372,8 +1412,9 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertNotIn(CLEANUP_STEP, result["ran"])
 
     def test_rehearsal_clean_up_fails_when_it_cannot_read_the_releases(self):
-        # The first list is the classification; the clean-up's own list fails.
-        result = self.run_job(mode="rehearse", version=REHEARSAL, list_fails_after=1)
+        # The first list is the classification and the second is the read-back after
+        # the create; the clean-up's own list fails.
+        result = self.run_job(mode="rehearse", version=REHEARSAL, list_fails_after=2)
         self.assertTrue(result["failed"])
         self.assertIn(f"--- {CLEANUP_STEP} (exit 1)", result["log"])
         self.assertIn(f"::error::Could not read the releases; delete the rehearsal draft for 'v{REHEARSAL}' by hand.",
@@ -1383,7 +1424,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
         for label, kwargs, text in (
                 ("deletion did not take", {"markers": ["delete-ignored"]},
                  f"::error::A release or draft for 'v{REHEARSAL}' remains after the deletion. Delete it by hand."),
-                ("second list unreadable", {"list_fails_after": 2},
+                ("second list unreadable", {"list_fails_after": 3},
                  "::error::Could not read the releases after the deletion; check by hand that no draft for "
                  f"'v{REHEARSAL}' remains.")):
             with self.subTest(case=label):
@@ -1391,7 +1432,8 @@ class PublishReleaseScriptTests(unittest.TestCase):
                 self.assertTrue(result["failed"])
                 self.assertIn(f"--- {CLEANUP_STEP} (exit 1)", result["log"])
                 self.assertIn(text, result["log"])
-                self.assertEqual(3, result["calls"].count("gh api --paginate"), result["calls"])
+                # Classify, read-back, and the clean-up's two lists.
+                self.assertEqual(4, result["calls"].count("gh api --paginate"), result["calls"])
 
     def test_rehearsal_clean_up_fails_when_its_own_draft_is_not_listed(self):
         result = self.run_job(mode="rehearse", version=REHEARSAL, markers=["list-hides-drafts"])
@@ -1476,6 +1518,91 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertIn("::error::Presence check failed for release-upload/", result["log"])
         self.assertNotIn("dotnet nuget push", result["calls"])
         self.assertNotIn("gh release edit", result["calls"])
+
+    def assertReadBackRefused(self, result, found, tag="v1.5.0"):
+        # The draft was made and `created` was reported, then the read-back refused it:
+        # nothing was uploaded, pushed or published.
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual("true", result["outputs"]["create"].get("created"))
+        self.assertIn(f"::error::The new draft for {tag} did not read back as expected: entries found for the "
+                      f"tag: {found}; expected exactly one draft with target {RUN_SHA}. Nothing was uploaded and "
+                      "nothing was pushed to NuGet.org.", result["log"])
+        self.assertIn(f"gh release create {tag} ", result["calls"])
+        for absent in ("gh release upload", "gh release edit", "dotnet", "releases/tags/"):
+            self.assertNotIn(absent, result["calls"])
+        for step in (PUSH_STEP, PUBLISH_STEP, VERIFY_STEP):
+            self.assertNotIn(step, result["ran"])
+
+    def test_draft_that_reads_back_with_another_target_stops_before_the_upload(self):
+        for target in ("main", RUN_SHA[:7]):
+            with self.subTest(target=target):
+                result = self.run_job(create_target=target)
+                self.assertReadBackRefused(result, f"1, draft flag 'true', target '{target}'")
+                self.assertEqual(CREATE_STEP, result["ran"][-1])
+                self.assertNotIn("-X DELETE", result["calls"])
+                [draft] = result["releases"]
+                self.assertEqual(target, draft["target_commitish"])
+                self.assertEqual([], draft["assets"])
+                self.assertEqual("", result["tags"])
+
+    def test_read_back_failure_in_a_rehearsal_still_deletes_the_draft(self):
+        for label, fixture, found in (
+                ("another target", {"create_target": "main"}, "1, draft flag 'true', target 'main'"),
+                ("a second draft", {"markers": ["create-adds-draft"]}, "2, draft flag '', target ''")):
+            with self.subTest(case=label):
+                result = self.run_job(mode="rehearse", version=REHEARSAL, **fixture)
+                self.assertReadBackRefused(result, found, tag=f"v{REHEARSAL}")
+                self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
+                self.assertIn("gh api -X DELETE", result["calls"])
+                self.assertEqual([], result["releases"])
+
+    def test_a_second_draft_at_the_read_back_stops_before_the_upload(self):
+        result = self.run_job(markers=["create-adds-draft"])
+        self.assertReadBackRefused(result, "2, draft flag '', target ''")
+        self.assertEqual(2, len(result["releases"]))
+
+    def test_unreadable_list_at_the_read_back_fails_closed(self):
+        # The first list is the classification; the read-back list fails.
+        result = self.run_job(list_fails_after=1)
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual(CREATE_STEP, result["ran"][-1])
+        self.assertIn("::error::Could not read the releases back after creating the draft for v1.5.0. Nothing was "
+                      "uploaded and nothing was pushed to NuGet.org.", result["log"])
+        for absent in ("gh release upload", "gh release edit", "dotnet", "-X DELETE"):
+            self.assertNotIn(absent, result["calls"])
+        # In a rehearsal the clean-up still runs (and fails on its own unreadable list).
+        result = self.run_job(mode="rehearse", version=REHEARSAL, list_fails_after=1)
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn(CLEANUP_STEP, result["ran"])
+        self.assertNotIn("gh release upload", result["calls"])
+
+    def test_draft_state_is_read_back_too(self):
+        draft = release("v1.5.0", True, rid=42)
+        result = self.run_job(releases=[draft], create_target="main")
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn("did not read back as expected", result["log"])
+        self.assertIn("-X DELETE repos/tomas-rampas/vouchfx/releases/42", result["calls"])
+        self.assertNotIn("gh release upload", result["calls"])
+        self.assertNotIn("dotnet", result["calls"])
+
+    def test_two_release_files_with_one_name_are_refused_before_the_draft(self):
+        result = self.run_job(duplicate_asset=True)
+        self.assertTrue(result["failed"], result["log"])
+        self.assertEqual(CREATE_STEP, result["ran"][-1])
+        self.assertIn("::error::Two assets share a name: vouchfx.1.5.0.nupkg", result["log"])
+        for absent in ("gh release create", "gh release upload", "dotnet", "-X DELETE"):
+            self.assertNotIn(absent, result["calls"])
+        self.assertEqual([], result["releases"])
+
+    def test_no_release_files_are_refused_before_the_draft(self):
+        for mode, version in (("publish", "1.5.0"), ("rehearse", REHEARSAL)):
+            with self.subTest(mode=mode):
+                result = self.run_job(mode=mode, version=version, no_files=True)
+                self.assertTrue(result["failed"], result["log"])
+                self.assertIn("::error::No release files were found.", result["log"])
+                for absent in ("gh release create", "gh release upload", "dotnet"):
+                    self.assertNotIn(absent, result["calls"])
+                self.assertEqual([], result["releases"])
 
     def test_signing_material_from_another_mode_is_refused_before_the_draft(self):
         result = self.run_job(signing_mode="validate")
