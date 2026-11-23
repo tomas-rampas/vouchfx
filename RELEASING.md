@@ -65,7 +65,7 @@ request before anything is built. A refusal is an error line in that job's log.
   provider whose minimum engine version is higher than its own version (by
   SemVer precedence). So for `validate` and `rehearse` use the next release
   version as `X.Y.Z` (for example `1.5.0-validate.1` and `1.5.0-rehearsal.1`).
-  A pre-release sorts below its release, so `1.5.0-rehearsal.1` is older than
+  A pre-release sorts below its release, so `1.5.0-rehearsal.1` is lower than
   `1.5.0`. If a provider requires the release version itself, use a higher
   `X.Y.Z`, for example `1.5.1-rehearsal.1`. A version below a provider's
   minimum, such as `0.0.0-test` or `0.0.0-rehearsal.1`, passes `prepare` and
@@ -549,13 +549,19 @@ Releases page, or rehearse the next number (for example `1.5.0-rehearsal.2`).
 
 ### First runs: what only GitHub can show
 
-Nothing of this flow has run on GitHub yet. The contract tests
+Only the start of this flow has run on GitHub. The first `validate` run, on
+`main`, passed the request check, the TLS lanes, the Docker lane and the builds,
+and failed the packaged-tool smoke test because its version, `0.0.0-test`, was
+below a provider's minimum engine version. Signing and the publishing job have
+not run. The contract tests
 (`scripts/ci/test_release_workflow.py`) check the workflow file and run its step
 scripts with fixture commands; they cannot show the points below. Work through
 them in order, and correct this document where a run shows something different.
 
-The first `validate` run, from a feature branch, must show:
+A `validate` run, on `main` and from a feature branch, must show:
 
+- [ ] The packaged-tool smoke test passes with the version given to the run.
+- [ ] `sign-and-attest` runs and makes no attestation and no signature.
 - [ ] The run is green, and `publish-release`, `publish-marketplace` and
   `move-floating-tag` show as skipped.
 
