@@ -110,14 +110,15 @@ To release:
    `Verify the tag and the published release` ends with
    `Verified: v<version> is at <commit> and its Release is published.` Check
    that the packages are on NuGet.org; after the first pre-release it listed
-   the last of them about a quarter of an hour after the push. After each
-   release, also read the `Full Changelog` link at the end of the Release
-   notes. It should start at
-   the newest earlier stable release. For the first pre-release GitHub started
-   it at an older stable release, and it is expected to do the same for the
-   next pre-release (see [First runs](#first-runs-what-only-github-can-show)).
-   If the link starts at another release, correct the generated part of the
-   notes on the Release page by hand.
+   the last of them, the tool package, about 17 minutes after its push. After
+   each release, also read the `Full Changelog` link at the end of the Release
+   notes. It should start at the newest earlier stable release. For the first
+   pre-release GitHub started it at an older stable release, and GitHub is
+   expected to do the same for the next pre-release (see
+   [First runs](#first-runs-what-only-github-can-show)). If the link starts at
+   another release, correct the generated part of the notes on the Release
+   page by hand. A request to GitHub's endpoint for generated notes that names
+   the starting tag (`previous_tag_name`) returns the right text.
 8. Work through the [documentation checklist](#release-time-documentation-checklist).
 
 A newer run does not cancel an existing run (`cancel-in-progress: false`);
@@ -145,9 +146,9 @@ In `publish` mode the order is:
 5. `publish-release` creates a private draft Release whose target is the run's
    full commit SHA, and uploads all assets to it.
 6. `publish-release` pushes the NuGet packages.
-7. `publish-release` publishes the draft. That creates the
-   lightweight tag `v<version>` at the tested commit. A version with a `-` suffix is marked as a
-   pre-release and is not marked "latest".
+7. `publish-release` publishes the draft. That creates the lightweight tag
+   `v<version>` at the tested commit. A version with a `-` suffix is marked as
+   a pre-release and is not marked "latest".
 8. `publish-release` checks that the tag points at the tested commit.
 9. The Marketplace job (`publish-marketplace`).
 10. `move-floating-tag`.
@@ -628,10 +629,10 @@ Releases page, or rehearse the next number (for example `1.5.0-rehearsal.2`).
 
 This flow has run on GitHub in all three modes, but not every path of it has.
 The first `validate` run, on `main`, passed the request check, the TLS lanes,
-the Docker lane and the builds, and
-failed the packaged-tool smoke test because its version, `0.0.0-test`, was below
-a provider's minimum engine version. A second `validate` run on `main`, with a
-version of the form `1.5.0-validate.1`, was green. The first `rehearse` run, on
+the Docker lane and the builds, and failed the packaged-tool smoke test because
+its version, `0.0.0-test`, was below a provider's minimum engine version. A
+second `validate` run on `main`, with a version of the form
+`1.5.0-validate.1`, was green. The first `rehearse` run, on
 `main`, reached the publishing job and failed in the read-back of the new
 draft: GitHub's list of releases lags behind a write, and it showed no draft
 about a second after the draft was made. The clean-up step then found the draft
@@ -658,18 +659,19 @@ publication read the tag and the Release on the first attempt. The Release was
 marked as a pre-release, and the newest stable release stayed "latest". The
 Marketplace job checked the `.vsix` and published nothing, because the
 Marketplace takes no version with a pre-release suffix, and `move-floating-tag`
-moved nothing. The run also showed that no Marketplace token is configured, so a
-stable release publishes nothing to the Marketplace either until one is.
+moved nothing. The run also showed that no Marketplace token was configured at
+the time, so a stable release is expected to publish nothing to the Marketplace
+until one is.
 
 One thing was wrong in that run: the generated part of the notes started at an
 older stable release, not at the newest one, so it also listed pull requests
 that the newest stable release had already shipped. The run does not name the
 starting release; GitHub chooses it, and for the tag of a pre-release it chose
-wrongly. A request by hand to GitHub's endpoint for generated notes, at the same
-commit, started at the same older release for the name of the next pre-release,
-and at the newest stable release for a stable tag name. So the notes of a
-pre-release are expected to start at the wrong release again, and the notes of a
-stable release at the right one.
+wrongly. Requests by hand to GitHub's endpoint for generated notes, at the same
+commit, started at the same older release for other pre-release tag names, and
+at the newest stable release for stable tag names. So the notes of a pre-release
+are expected to start at the wrong release again, and the notes of a stable
+release at the right one.
 
 The contract tests (`scripts/ci/test_release_workflow.py`) check the workflow
 file and run its step scripts with fixture commands; they cannot show the points
@@ -744,8 +746,9 @@ The first stable release must also show:
 - [ ] The Release is marked "latest".
 - [ ] The generated notes start at the newest earlier stable release, not at a
   pre-release or an older stable release.
-- [ ] The Marketplace job publishes the extension (where its token is
-  configured), and `move-floating-tag` moves `v1`.
+- [ ] The Marketplace job publishes the extension, if its token has been
+  configured by then.
+- [ ] `move-floating-tag` moves `v1`.
 
 ---
 
