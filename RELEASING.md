@@ -107,12 +107,17 @@ To release:
    approve it.
 7. Wait for `publish-release`, the Marketplace job and the `move-floating-tag`
    job. In the log of `publish-release`, the step
-   `Verify the tag and the published release` is expected to end with
+   `Verify the tag and the published release` ends with
    `Verified: v<version> is at <commit> and its Release is published.` Check
-   that the packages are on NuGet.org. After a pre-release, also read the
-   `Full Changelog` link at the end of the Release notes: for the first
-   pre-release GitHub started the generated notes at the wrong release (see
-   [First runs](#first-runs-what-only-github-can-show)).
+   that the packages are on NuGet.org; after the first pre-release it listed
+   the last of them about a quarter of an hour after the push. After each
+   release, also read the `Full Changelog` link at the end of the Release
+   notes. It should start at
+   the newest earlier stable release. For the first pre-release GitHub started
+   it at an older stable release, and it is expected to do the same for the
+   next pre-release (see [First runs](#first-runs-what-only-github-can-show)).
+   If the link starts at another release, correct the generated part of the
+   notes on the Release page by hand.
 8. Work through the [documentation checklist](#release-time-documentation-checklist).
 
 A newer run does not cancel an existing run (`cancel-in-progress: false`);
@@ -122,7 +127,7 @@ run at once, and GitHub keeps at most one pending run in a group: a third
 `rehearse` or `publish` dispatch on `main` is expected to replace the one still
 pending. Every other run has a group of its own. That includes a `validate` run
 and a `rehearse` or `publish` dispatch from another branch, which `prepare`
-refuses, so neither can take the place of a waiting release run.
+refuses, so neither can take the place of a pending release run.
 
 ### Order of publication
 
@@ -140,7 +145,7 @@ In `publish` mode the order is:
 5. `publish-release` creates a private draft Release whose target is the run's
    full commit SHA, and uploads all assets to it.
 6. `publish-release` pushes the NuGet packages.
-7. `publish-release` publishes the draft. That is expected to create the
+7. `publish-release` publishes the draft. That creates the
    lightweight tag `v<version>` at the tested commit. A version with a `-` suffix is marked as a
    pre-release and is not marked "latest".
 8. `publish-release` checks that the tag points at the tested commit.
@@ -622,8 +627,8 @@ Releases page, or rehearse the next number (for example `1.5.0-rehearsal.2`).
 ### First runs: what only GitHub can show
 
 This flow has run on GitHub in all three modes, but not every path of it has.
-The first `validate` run, on `main`,
-passed the request check, the TLS lanes, the Docker lane and the builds, and
+The first `validate` run, on `main`, passed the request check, the TLS lanes,
+the Docker lane and the builds, and
 failed the packaged-tool smoke test because its version, `0.0.0-test`, was below
 a provider's minimum engine version. A second `validate` run on `main`, with a
 version of the form `1.5.0-validate.1`, was green. The first `rehearse` run, on
@@ -638,31 +643,38 @@ and the NuGet login passed. The clean-up deleted the draft, the list showed
 nothing for the tag on the first read after the deletion, and no tag was left.
 The run cannot show the state of the policy on NuGet.org. The table in
 [NuGet.org publish](#nugetorg-publish-trusted-publishing) recorded no
-environment in the policy at the time of that run. The first `publish` run, on
-`main`, was for a pre-release and was green. The list showed the new draft on
-the second read, and the release tool found it on the first. The run uploaded 40
-files (the 20 release files and a cosign bundle for each), pushed six packages
-and five symbol packages to NuGet.org, and published the draft, which created
-the tag at the tested commit. The check after publication read the tag and the
-Release on the first attempt. The Release was marked as a pre-release, and the
-newest stable release stayed "latest". The Marketplace job checked the `.vsix`
-and published nothing, because the Marketplace takes no pre-release version, and
-`move-floating-tag` moved nothing. One thing was wrong: the generated part of
-the notes started at an older stable release, not at the newest one, so it also
-listed pull requests that the newest stable release had already shipped. The run
-does not name the starting release; GitHub chooses it, and for the tag of a
-pre-release it chose wrongly. A request by hand to GitHub's endpoint for
-generated notes, for a stable tag name at the same commit, started at the newest
-stable release, so the notes of a stable release are expected to start at the
-right one.
-Before the second rehearsal, a check by hand with a maintainer's token, not the
-job's token, showed the same lag (nothing listed 1.4 seconds after the creation,
-the draft listed 4 seconds after it), the full commit as the draft's target, the
-release tool finding the draft by its tag with the same id, and an upload by
-tag. The contract tests (`scripts/ci/test_release_workflow.py`) check the
-workflow file and run its step scripts with fixture commands; they cannot show
-the points below. Work through them in order, and correct this document where a
-run shows something different.
+environment in the policy at the time of that run. Before the second rehearsal,
+a check by hand with a maintainer's token, not the job's token, showed the same
+lag (nothing listed 1.4 seconds after the creation, the draft listed 4 seconds
+after it), the full commit as the draft's target, the release tool finding the
+draft by its tag with the same id, and an upload by tag.
+
+The first `publish` run, on `main`, was for a pre-release and was green. The
+list showed the new draft on the second read, and the release tool found it on
+the first. The run uploaded 40 files (the 20 release files and a cosign bundle
+for each), pushed six packages and five symbol packages to NuGet.org, and
+published the draft, which created the tag at the tested commit. The check after
+publication read the tag and the Release on the first attempt. The Release was
+marked as a pre-release, and the newest stable release stayed "latest". The
+Marketplace job checked the `.vsix` and published nothing, because the
+Marketplace takes no version with a pre-release suffix, and `move-floating-tag`
+moved nothing. The run also showed that no Marketplace token is configured, so a
+stable release publishes nothing to the Marketplace either until one is.
+
+One thing was wrong in that run: the generated part of the notes started at an
+older stable release, not at the newest one, so it also listed pull requests
+that the newest stable release had already shipped. The run does not name the
+starting release; GitHub chooses it, and for the tag of a pre-release it chose
+wrongly. A request by hand to GitHub's endpoint for generated notes, at the same
+commit, started at the same older release for the name of the next pre-release,
+and at the newest stable release for a stable tag name. So the notes of a
+pre-release are expected to start at the wrong release again, and the notes of a
+stable release at the right one.
+
+The contract tests (`scripts/ci/test_release_workflow.py`) check the workflow
+file and run its step scripts with fixture commands; they cannot show the points
+below. Work through them in order, and correct this document where a run shows
+something different.
 
 A `validate` run, on `main` and from a feature branch, must show the points
 below. The first three have been shown on `main`; the fourth, a run from a
@@ -714,8 +726,7 @@ request; the stable release that follows needs another.
   was 1. Correct this figure if a later run shows a higher one.
 - [x] A pre-release is not marked "latest".
 - [x] The notes are the `CHANGELOG.md` section followed by the generated notes.
-- [ ] The generated notes start at the release before this one. For the first
-  pre-release they started at an older stable release.
+  The generated notes started at the wrong release, as described above.
 - [x] The cosign signing identity reads `release.yml@refs/heads/main`, with the
   trigger `workflow_dispatch`.
 - [x] The stricter commands in [Verifying artifacts](#verifying-artifacts) pass
@@ -731,6 +742,8 @@ request; the stable release that follows needs another.
 The first stable release must also show:
 
 - [ ] The Release is marked "latest".
+- [ ] The generated notes start at the newest earlier stable release, not at a
+  pre-release or an older stable release.
 - [ ] The Marketplace job publishes the extension (where its token is
   configured), and `move-floating-tag` moves `v1`.
 
@@ -772,7 +785,7 @@ gh attestation verify vouchfx.1.2.3.nupkg \
 
 Replace the filename with the artifact you want to verify.  A successful
 verification prints the workflow that built the artifact and the ref it ran on.
-For a release made by the current flow, that is expected to be `release.yml` on
+For a release made by the current flow, that is `release.yml` on
 `refs/heads/main`, started by `workflow_dispatch`. A release made before this
 change names its tag (`…@refs/tags/v<version>`) instead.
 
@@ -785,7 +798,7 @@ so a test artefact from that time can pass this command.
 
 Only the `publish` mode of the release run attests artifacts. An artifact taken
 from the run artefacts of a `validate` or `rehearse` run has no attestation, and
-this command is expected to fail for it.
+this command fails for it.
 
 **Stricter command for a release made by the current flow.** Pin the signing
 workflow, the ref and the commit that the release tag points at. Replace
