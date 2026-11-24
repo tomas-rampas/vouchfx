@@ -213,6 +213,34 @@ public sealed class HttpRestStructuredBodyReferenceTests
     }
 
     /// <summary>
+    /// The exact bytes of an escaped resolved value. Every character the serialiser escapes is
+    /// in the value: <c>+ &lt; &gt; &amp; ' "</c>, the backtick, a backslash, DEL, the control
+    /// characters with a short escape, one without, and a non-ASCII letter. Letters, digits and
+    /// the other printable ASCII characters beside them are left as they are.
+    /// </summary>
+    [Fact]
+    public async Task PlaceholderValueHoldingEveryEscapedCharacter_IsSentAsTheExactEscapedBytes()
+    {
+        const string value = "+<>&'\"`\\\u007F\n\r\t\b\f\u0001é Az09-_./:@#=%~!$(){}[]*,;?^|";
+
+        var run = await RunAsync(
+            "body:\n  t: 'p{p}q'\n",
+            vars: new Dictionary<string, object?> { ["p"] = value });
+
+        Assert.Equal(Verdict.Pass, run.Outcome.Verdict);
+        Assert.Equal(
+            "{\"t\":\"p"
+            + "\\u002B\\u003C\\u003E\\u0026\\u0027\\u0022\\u0060"
+            + "\\\\"
+            + "\\u007F"
+            + "\\n\\r\\t\\b\\f\\u0001"
+            + "\\u00E9"
+            + " Az09-_./:@#=%~!$(){}[]*,;?^|"
+            + "q\"}",
+            run.Received);
+    }
+
+    /// <summary>
     /// A missing secret in a structured body that is sent as parts is the step's
     /// EnvironmentError: nothing is sent, and the observation names the reference but holds
     /// no value, not even the placeholder's resolved beside it.

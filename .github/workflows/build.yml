@@ -183,11 +183,11 @@ jobs:
   build:
     name: Build & unit tests
     runs-on: ubuntu-latest
-    # The job is green in about 15 minutes. The ZEB-49 failures were the hosted runner
-    # losing communication mid-test (runs 43707738732, 44070514767), which leaves no log.
+    # The job is green in about 15 minutes. Two earlier failures were the hosted runner
+    # losing communication mid-test, which leaves no log.
     # This bound ends a stuck job sooner; it does not preserve the log once the runner is
     # starved: the compatibility job hit its 30-minute bound in the same step on
-    # 15 November 2026 (runs 43735628400, 43758635481) and has no log either.
+    # 15 November 2026, in two runs, and has no log either.
     timeout-minutes: 40
 
     steps:
@@ -218,7 +218,7 @@ jobs:
       # ubuntu-26.04 (now behind ubuntu-latest) ships fs.inotify.max_user_instances=128.
       # Each IConfiguration JSON source with reloadOnChange opens a FileSystemWatcher, so
       # test hosts exhaust it and fail with "The configured user limit (128) on the number
-      # of inotify instances has been reached" (run 41217231299). Raise instances and
+      # of inotify instances has been reached" (seen on a hosted run). Raise instances and
       # watches to common CI values before any test host starts.
       - name: Raise inotify limits (ubuntu-26.04 defaults to 128 instances)
         run: |
@@ -253,7 +253,7 @@ jobs:
       #
       # LogFilePrefix, NOT LogFileName, and the difference is load-bearing here.  A
       # fixed LogFileName is one path per RUN, while `dotnet test <solution>` starts one
-      # test host per project — 37 of them overlapping on run 33904509538, per the note
+      # test host per project — 37 of them overlapping on one measured run, per the note
       # in docker-integration.yml's integration job — so every assembly would write the same file and
       # the last to finish would win.  MEASURED locally over two projects: with
       # LogFileName=unit.trx the results directory held ONE trx carrying only the second
@@ -263,7 +263,7 @@ jobs:
       # #550: LogFilePrefix alone still carried no PROJECT component, only a
       # second-resolution timestamp, so two hosts starting in the same second could still
       # collide — inferred, not measured, at the time this comment first shipped. Checked
-      # rather than assumed on PR #546's own first CI run (job 106123840813): all 37
+      # rather than assumed on the first CI run of the change that added the prefix: all 37
       # `Results File:` lines it printed name 37 DISTINCT paths, so the gap stayed
       # theoretical there too — including for Vouchfx.Cli.Tests, whose own line
       # (unit_net8.0_20260920181339.trx, identified by the Passed! summary naming
@@ -302,7 +302,7 @@ jobs:
       #
       # --blame-hang makes the test host name a test that runs longer than 10 minutes and
       # then terminates it, instead of the job going silent. A hang on 17 November 2026
-      # left no log and no test name (ZEB-49). No non-Docker test legitimately runs that
+      # left no log and no test name. No non-Docker test legitimately runs that
       # long, and --blame-hang-dump-type none records the test name in Sequence_*.xml
       # under TestResults/ without writing a dump.
       - name: Unit tests (requires!=docker)
@@ -490,7 +490,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/docker-integration.yml
     with:
-      reviewed_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      reviewed_sha: ${{ github.sha }}
 
   # The repository's ruleset requires the check `Integration tests — Docker / Aspire`.
   # A job that calls a reusable workflow reports as "<caller> / <called job>", and a

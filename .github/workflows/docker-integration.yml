@@ -52,9 +52,9 @@ jobs:
   # aids diagnosis of #378-class intermittencies without demoting failures.
   integration:
     name: Aspire topology and provider tests
-    # Job-level bound. The lane passed in 75 minutes on main (run 45019168197:
-    # about 2 minutes of pre-pull and 71 in the integration-test step), so 120
-    # leaves 45 minutes of headroom, and a hang ends at 120 minutes instead of
+    # Job-level bound. The lane passed in 75 minutes on main (about 2 minutes of
+    # pre-pull and 71 in the integration-test step), so 120 leaves 45 minutes of
+    # headroom, and a hang ends at 120 minutes instead of
     # GitHub's 360-minute default. Only the pre-pull step (25 minutes) and three
     # diagnostic steps (2 + 3 + 2) carry their own budgets; the integration-test
     # step has none, so this bound is what stops a hung test run. A run whose
@@ -64,7 +64,8 @@ jobs:
     # the release's signing and publication just as a failure does.
     timeout-minutes: 120
     # MongoDB 7.0.45 exits on kernels >=6.19; ubuntu-latest supplied kernel 7.0.
-    # Native evidence: actions/runs/39501778120. Keep images and test gates intact.
+    # Seen in an isolated MongoDB start-up diagnostic on a GitHub-hosted ubuntu-latest
+    # runner. Keep images and test gates intact.
     runs-on: ubuntu-22.04
     env:
       VOUCHFX_TOPOLOGY_PR_HEAD_SHA: ${{ inputs.reviewed_sha }}
@@ -107,7 +108,7 @@ jobs:
       # ubuntu-26.04 (now behind ubuntu-latest) ships fs.inotify.max_user_instances=128.
       # Each IConfiguration JSON source with reloadOnChange opens a FileSystemWatcher, so
       # test hosts exhaust it and fail with "The configured user limit (128) on the number
-      # of inotify instances has been reached" (run 41217231299). Raise instances and
+      # of inotify instances has been reached". Raise instances and
       # watches to common CI values before any test host starts. This lane is pinned to
       # ubuntu-22.04 today; the step is a no-op there and keeps a future move safe.
       - name: Raise inotify limits (ubuntu-26.04 defaults to 128 instances)
@@ -287,9 +288,9 @@ jobs:
       #               from #580, where MinIO withdrew image distribution
       #               outright: quay.io answered "unauthorized: access to the
       #               requested resource is not authorized" to `docker pull` of
-      #               the then-current quay.io/minio/minio pin (MEASURED in CI run
-      #               36105356989); a Docker engine using the containerd image
-      #               store words the same quay.io answer as "failed to resolve
+      #               the then-current quay.io/minio/minio pin (MEASURED in CI);
+      #               a Docker engine using the containerd image store words
+      #               the same quay.io answer as "failed to resolve
       #               reference … 401 Unauthorized" (measured locally on Docker
       #               29.6); and "requested access to the resource is denied" is
       #               Docker Hub's registry-level answer for the withdrawn
@@ -533,7 +534,7 @@ jobs:
           # exists to replace.
           #
           # 120s is chosen from MEASURED data, not intuition. In the last fully
-          # green run of this lane (34883024632, 2026-09-14), the whole step took
+          # green run of this lane (2026-09-14), the whole step took
           # 165s for all 18 images then on the list from a cold cache, and the slowest SINGLE pull
           # was confluentinc/cp-schema-registry:7.6.1 at 28.9s — not the SQL Server
           # image, which was third at 19.1s behind elasticsearch's 21.1s. 120s is
@@ -553,7 +554,7 @@ jobs:
           # this file: a REFUSED attempt costs ~1s (the registry answers 4xx
           # immediately). So a fail-fast image costs 3 x 1s + 15s + 30s = 48s, and a
           # STALLING image costs 3 x 120s + 45s = 405s. A full cold sweep of all 18
-          # HEALTHY images is 165s, MEASURED on run 34883024632 against the PRE-#580
+          # HEALTHY images is 165s, MEASURED on that run against the PRE-#580
           # list (minio still `quay.io/minio/minio`), of which the 4 non-Hub images
           # on THAT list accounted for 30.2s (mssql 19.1 + servicebus 5.3 +
           # node-exporter 2.0 + minio 3.8). #580 moved minio onto the unqualified
@@ -947,8 +948,8 @@ jobs:
       # CROSS-ASSEMBLY OVERLAP OCCURRED without an MSBuild scheduling bound. This comment used to claim the opposite —
       # that under the pinned .NET 8 SDK `dotnet test <solution>` runs one test host
       # per project SEQUENTIALLY, so assemblies never overlap — and flagged its own
-      # expiry condition. That condition had already fired. MEASURED on run
-      # 33904509538 (2026-09-04, this job — the run behind issue #489): 37 test hosts
+      # expiry condition. That condition had already fired. MEASURED on
+      # a run of this job on 2026-09-04 (the run behind issue #489): 37 test hosts
       # announced "Test run for ..." between 18:22:01.481Z and 18:23:09.437Z, a
       # 68-second span. Durations below carry their KIND, because the two kinds
       # differ by a minute:
