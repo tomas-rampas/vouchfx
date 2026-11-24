@@ -48,7 +48,8 @@
   <!--
     Package is the WiX v4 root element (replaces v3 Product + Package split).
     Version is injected via -d Version=M.N.P on the wix build command line.
-    MSI version must be W.X.Y[.Z] with no pre-release suffix.
+    MSI version must be W.X.Y[.Z] with no pre-release suffix; release.yml
+    passes W.X.Y, so a pre-release has the number of its stable release.
     UpgradeCode is the stable product family identifier. Never change it.
   -->
   <Package
@@ -64,8 +65,19 @@
       Replace any previous version before installing the new one.
       DowngradeErrorMessage is shown when installing an older version over
       a newer one that is already present.
+
+      AllowSameVersionUpgrades="yes": an MSI with the same three-part version
+      (and another product code: each build makes a new one) replaces the
+      installed product instead of installing beside it. A pre-release MSI
+      carries the number of its stable release (1.5.0-rc.1 is built as
+      1.5.0), so without this the stable MSI would install as a second
+      product in the same folder. The price: an MSI of the same number always
+      replaces the installed one, so a pre-release MSI run after the stable
+      MSI of the same number replaces the stable one. Windows Installer
+      ignores a fourth version field, so it cannot be used to tell them apart.
     -->
     <MajorUpgrade
+      AllowSameVersionUpgrades="yes"
       DowngradeErrorMessage="A newer version of [ProductName] is already installed. Uninstall it first, then run this installer." />
 
     <!-- Embed the CAB inside the MSI for a single distributable file. -->

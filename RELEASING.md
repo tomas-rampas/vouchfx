@@ -425,11 +425,12 @@ Four rules apply to every case:
       changed the draft during the run. This is not lag, so the step fails at
       once. Do not re-run until you understand it. If the draft now targets
       another commit, a re-run stops in the classification; delete the draft
-      by hand (case 1). If the Release is now published, a re-run is expected
-      not to replace it: it compares only the asset names (case 8), then
-      pushes to NuGet.org, moves the floating tag where one tracks the version
-      and, for a stable version, publishes to the Marketplace. First compare
-      each asset's `digest` with the run's artefacts, as in case 4.
+      by hand (case 1). In `publish` mode, if the Release is now published, a
+      re-run is expected not to replace it: it compares only the asset names
+      (case 8), then pushes to NuGet.org, moves the floating tag where one
+      tracks the version and, for a stable version, publishes to the
+      Marketplace. First compare each asset's `digest` with the run's
+      artefacts, as in case 4, and re-run only if they match.
     - `has no usable id`: a defect in the workflow. Do not re-run before it is
       understood.
 
@@ -906,6 +907,28 @@ expected to show:
   publishing call logs the same line, and the publication follows.
 - [ ] `publish-release` ends well within its limit of 30 minutes.
 
+The installers of a pre-release changed after the first pre-release (see
+[Secondary: self-contained executables and installers](#secondary-self-contained-executables-and-installers)).
+The contract tests run the `.deb` build step with a fixture `dpkg-deb`, and a
+local container check installed packages built by that step. A `validate` run
+from the branch of that change, with the version `1.5.0-validate.1`, has shown
+the two ticked items; the last one is still to show:
+
+- [x] In a `validate` run, `build-msi` builds the MSI with
+  `AllowSameVersionUpgrades`, with no warning in the `wix build` log, and its
+  install check passes. The run used WiX 4.0.6; the install log names
+  `ProductVersion = 1.5.0`, and the MSI was installed on the runner and
+  removed again.
+- [x] In a `validate` run, the `.deb` of the version given carries
+  `Version: 1.5.0~validate.1`, and its install check passes; its file name
+  keeps the full version (`vouchfx-1.5.0-validate.1-linux-x64.deb`).
+- [ ] The first stable release after the change: the stable MSI replaces an
+  installed pre-release MSI of the same number, leaving one entry in
+  **Installed apps** and one PATH entry. No job of the release workflow
+  installs two MSIs, so this needs a manual check on Windows: a person's
+  machine, or a one-off job on a hosted Windows runner outside the release
+  workflow.
+
 ---
 
 ## Artifact inventory
@@ -1142,6 +1165,52 @@ live Docker topology with an empty user cache, checks the JUnit results and
 rejects new Docker residue or a restored Aspire orchestration package. Both
 jobs gate `publish-release`. Investigate the failing gate's logs before
 retrying; a retry is not evidence that a portability defect is resolved.
+
+**Installer versions of a pre-release:** the file names always carry the full
+release version (`vouchfx-1.5.0-rc.1-linux-x64.deb`,
+`vouchfx-1.5.0-rc.1-win-x64.msi`). The version inside the package differs:
+
+- *Debian package.* The `Version:` field of a stable release is `X.Y.Z`; that
+  of a pre-release is `X.Y.Z~<pre-release>`, for example `1.5.0~rc.1`. A
+  hyphen inside the pre-release is written as `.` (`1.5.0-rc-1` gives
+  `1.5.0~rc.1`), because a hyphen in that field starts a Debian revision; so
+  two pre-releases that differ only in `-` and `.` give the same Debian version,
+  and should not both be released. Likewise keep to the dotted pre-release
+  forms (`alpha.N`, `rc.N`): mixed forms such as `rc1` and `rc.1` can order
+  differently in Debian than in SemVer. In Debian's ordering `~` sorts before the
+  end of the string. Checked with `dpkg --compare-versions` in Ubuntu 24.04 and
+  Debian 12 containers, not on GitHub: `1.5.0` is above `1.5.0~rc.1`,
+  `1.5.0~rc.2` above `1.5.0~rc.1`, and `1.5.0~rc.10` above `1.5.0~rc.9`. In
+  the same containers, packages built by the workflow's own step with a
+  stand-in payload installed in the order `rc.1`, `rc.2`, stable as upgrades
+  with `dpkg -i`, and `apt-get install ./<file>` reported the stable package as
+  an upgrade of `rc.1`. A pre-release installed after the stable release of the
+  same number is a downgrade: `apt` asks for confirmation, and with `-y`
+  refuses it without `--allow-downgrades`.
+  `1.5.0-rc.1` was published before this change, and its package says
+  `1.5.0`, the same as the stable package; see the entry in `CHANGELOG.md`.
+- *Windows MSI.* Windows Installer takes only a numeric version and compares
+  only its first three fields, so the MSI of a pre-release is built with the
+  number of its stable release (`1.5.0-rc.1` gives `1.5.0`). `vouchfx.wxs`
+  sets `AllowSameVersionUpgrades="yes"` on `MajorUpgrade`, so an MSI with the
+  same number (each build has a new product code) is expected to replace the
+  installed product, not to install beside it. What this is expected to mean,
+  from the WiX and Windows Installer documentation and not yet seen on a
+  Windows machine: the stable MSI replaces an installed pre-release MSI of the
+  same number; a second pre-release MSI replaces the first; the same MSI file
+  run twice finds its own product installed and does not install a second
+  copy; and **a pre-release MSI run after the stable MSI of the same number
+  replaces the stable release**. That last point is the price of the
+  attribute: Windows Installer cannot tell `1.5.0-rc.1` from `1.5.0`, so do not
+  install a pre-release MSI over the stable release of the same number unless
+  you mean to. The MSI of a `validate` or `rehearse` run carries that number
+  too. An MSI of a lower number is still refused with the downgrade
+  message. The WiX build (the `wix` .NET tool, 4.0.x in this workflow) does
+  not run the ICE validation, so ICE61's warning about removing an equal
+  version is not expected in the build log; the WiX 4.0.6 compiler source has
+  no warning for the attribute. The `build-msi` job of a `validate` run has
+  shown the build, with no warning, and the install check of one MSI (see
+  First runs); it does not install one MSI over another.
 
 **Single-file executables are NOT produced** (e.g. `PublishSingleFile=true`
 is not used).  The Roslyn compiler in the engine uses `Assembly.Location` to

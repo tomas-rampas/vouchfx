@@ -2853,6 +2853,112 @@ class ReleaseSbomTests(unittest.TestCase):
                 self.check(self.fixture(), version, expected)
 
 
+# Release version -> the Version field of its .deb. The forms the release run
+# dispatches (a stable version, rc.N, rehearsal.N, validate.N) and a pre-release
+# with hyphens inside it, which `prepare` accepts.
+DEB_VERSIONS = {
+    "1.5.0": "1.5.0",
+    "1.5.0-rc.1": "1.5.0~rc.1",
+    "1.5.0-rc.10": "1.5.0~rc.10",
+    "1.5.0-rc-1": "1.5.0~rc.1",
+    "1.5.0-x-y.2-z": "1.5.0~x.y.2.z",
+    "1.5.1-rehearsal.1": "1.5.1~rehearsal.1",
+    "1.5.0-validate.1": "1.5.0~validate.1",
+}
+# A fixture dpkg-deb: keeps the control file it is given and makes the package file.
+FIXTURE_DPKG_DEB = """#!/bin/sh
+set -eu
+[ "$#" -eq 3 ] && [ "$1" = "--build" ] || { echo "unexpected dpkg-deb call: $*" >&2; exit 3; }
+cp "$2/DEBIAN/control" "$FIXTURE_DIR/control"
+: > "$3"
+"""
+
+
+class NativeInstallerVersionTests(unittest.TestCase):
+    """The version each native installer of a pre-release carries."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.jobs = workflow(ROOT / ".github/workflows/release.yml")["jobs"]
+
+    def job_step(self, job, name):
+        matches = [s for s in self.jobs[job]["steps"] if s.get("name") == name]
+        self.assertEqual(1, len(matches), f"one step {name!r} in {job}")
+        return matches[0]
+
+    def build_deb(self, version):
+        """Run the actual `Build .deb package` step with a stand-in payload and a fixture dpkg-deb."""
+        script = self.job_step("build-deb", "Build .deb package")["run"]
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            fixture, work = root / "fixture", root / "work"
+            (fixture / "bin").mkdir(parents=True)
+            (fixture / "bin/dpkg-deb").write_text(FIXTURE_DPKG_DEB, encoding="utf-8", newline="\n")
+            (fixture / "bin/dpkg-deb").chmod(0o755)
+            (work / "publish/linux-x64/dcp").mkdir(parents=True)
+            (work / "publish/linux-x64/vouchfx").write_text("inert host", encoding="utf-8")
+            (work / "publish/linux-x64/dcp/dcp").write_text("inert dcp", encoding="utf-8")
+            env = dict(os.environ, VERSION=version, FIXTURE_DIR=fixture.as_posix())
+            result = subprocess.run([BASH, "--noprofile", "--norc", "-c",
+                                     'export PATH="$FIXTURE_DIR/bin:$PATH"\n' + script],
+                                    cwd=work, env=env, capture_output=True, timeout=60)
+            output = (result.stdout + result.stderr).decode(errors="replace")
+            self.assertEqual(0, result.returncode, output)
+            built = sorted(p.name for p in (work / "artifacts/installer").iterdir())
+            fields = {}
+            for line in (fixture / "control").read_text(encoding="utf-8").splitlines():
+                if line[:1].strip():
+                    key, _, value = line.partition(":")
+                    fields[key] = value.strip()
+            return built, fields
+
+    def test_deb_version_field_of_each_release_form(self):
+        for version, expected in DEB_VERSIONS.items():
+            with self.subTest(version=version):
+                built, fields = self.build_deb(version)
+                self.assertEqual(expected, fields["Version"])
+                self.assertEqual(("vouchfx", "amd64"), (fields["Package"], fields["Architecture"]))
+                # The file name keeps the full release version.
+                self.assertEqual([f"vouchfx-{version}-linux-x64.deb"], built)
+
+    def test_installer_check_expects_the_version_the_deb_step_writes(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("check_native_installer",
+                                                      ROOT / "scripts/check_native_installer.py")
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        for version, expected in DEB_VERSIONS.items():
+            with self.subTest(version=version):
+                self.assertEqual(expected, checker.debian_version(version))
+
+    def test_msi_version_stays_three_part_and_the_file_name_keeps_the_full_version(self):
+        script = self.job_step("build-msi", "Build MSI (wix build)")["run"]
+        lines = [line.strip() for line in script.splitlines()]
+        self.assertIn("$msiVersion = $env:VERSION -replace '-.*$', ''", lines)
+        self.assertIn('"-d" "Version=$msiVersion" `', lines)
+        self.assertIn('-o "artifacts\\installer\\vouchfx-$env:VERSION-win-x64.msi"', lines)
+        self.assertEqual(1, script.count("Version="))
+        # A Python model of the pinned -replace line: every dispatched form leaves a
+        # three-part number. The line itself is pinned above.
+        for version in DEB_VERSIONS:
+            with self.subTest(version=version):
+                self.assertEqual(version.split("-", 1)[0], re.sub(r"-.*$", "", version))
+                self.assertRegex(re.sub(r"-.*$", "", version), r"^[0-9]+\.[0-9]+\.[0-9]+$")
+
+    def test_msi_of_the_same_three_part_version_is_a_major_upgrade(self):
+        import xml.etree.ElementTree as ElementTree
+        namespace = "{http://wixtoolset.org/schemas/v4/wxs}"
+        package = ElementTree.parse(ROOT / "installer/windows/vouchfx.wxs").getroot().find(namespace + "Package")
+        self.assertEqual("$(var.Version)", package.get("Version"))
+        upgrades = package.findall(namespace + "MajorUpgrade")
+        self.assertEqual(1, len(upgrades))
+        self.assertEqual("yes", upgrades[0].get("AllowSameVersionUpgrades"))
+        # WiX refuses AllowSameVersionUpgrades together with AllowDowngrades, and a
+        # downgrade must still be refused with a message.
+        self.assertIsNone(upgrades[0].get("AllowDowngrades"))
+        self.assertTrue(upgrades[0].get("DowngradeErrorMessage"))
+
+
 MOVE_WORKFLOW = ROOT / ".github/workflows/move-floating-tag.yml"
 MOVE_PATH = "./.github/workflows/move-floating-tag.yml"
 EXPECTED_SHA = "a" * 40
