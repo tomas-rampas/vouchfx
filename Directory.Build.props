@@ -15,7 +15,7 @@
          ledger sample's custom runner, never consult this stamp, so it does not affect
          them. -->
     <VouchfxEngineVersion Condition="'$(Version)' != ''">$(Version)</VouchfxEngineVersion>
-    <VouchfxEngineVersion Condition="'$(VouchfxEngineVersion)' == ''">1.4.0</VouchfxEngineVersion>
+    <VouchfxEngineVersion Condition="'$(VouchfxEngineVersion)' == ''">1.5.0-rc.1</VouchfxEngineVersion>
     <!-- The engine, providers, CLI, tests and examples target .NET 10 (LTS). The
          published library closure that external providers compile against
          (Vouchfx.Sdk, Vouchfx.Sdk.Testing, Vouchfx.Engine.Abstractions, .Authoring and
