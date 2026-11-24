@@ -71,7 +71,7 @@ The tests also run the actual step scripts of `prepare` and `publish-release` un
 Bash, with fixture `git`, `gh`, `python3` and `dotnet` commands, for each mode. They
 cover the refusal of a malformed version, a rehearsal version that is not of the
 form `X.Y.Z-rehearsal.N`, a reserved version in `publish` mode (a pre-release whose
-first identifier is `rehearsal` or `validate`, or a `0.0.0-` version), a wrong ref, a commit that is not the run's
+first identifier is `rehearsal` or `validate`), a `0.0.0-` version in every mode, a wrong ref, a commit that is not the run's
 commit, another repository, an existing tag or published Release, a version already
 on NuGet and an unprepared changelog, and the order and result of the draft, the
 upload, the NuGet push, the publication and the check of the tag. They also cover
@@ -83,9 +83,9 @@ leaves only the draft. They cover the read-back of a new draft (another target, 
 second draft, an unreadable list), release files that are missing or share a
 name, and the clean-up of a rehearsal draft, also after a
 failed step, including its second list of the releases. The test image has no `gh`
-or `jq` here either: the fixture `gh` emulates six `--jq` filters (three list
-filters, the read of one release by its id, and the tag endpoint's `.draft` and
-`.assets[].name`). A call that the
+or `jq` here either: the fixture `gh` emulates eight `--jq` filters (three list
+filters, two reads of one release by its id, the tag endpoint's `.draft` and
+`.assets[].name`, and the release tool's view of the draft). A call that the
 fixtures do not know is recorded and fails the test. The real `gh` and the jq
 expressions are not run.
 

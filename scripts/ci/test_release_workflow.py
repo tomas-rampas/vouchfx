@@ -65,7 +65,8 @@ PUBLISH_RELEASE_STEPS = [
       "ATTEMPTED": "${{ steps.create.outputs.attempted }}"}),
     ("Publish nupkg to NuGet.org — Trusted Publishing", {"name", "if", "env", "run"},
      {"NUGET_API_KEY": "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"}),
-    ("Publish the draft release", {"name", "if", "env", "run"}, GH_STATE_ENV),
+    ("Publish the draft release", {"name", "if", "env", "run"},
+     {**GH_STATE_ENV, "NEW_DRAFT_ID": "${{ steps.create.outputs.new_draft_id }}"}),
     ("Verify the tag and the published release", {"name", "if", "env", "run"}, GH_ENV),
 ]
 CREATE_STEP, CLEANUP_STEP, PUSH_STEP, PUBLISH_STEP, VERIFY_STEP = (
@@ -106,6 +107,8 @@ PUBLISH_RELEASE_GH_FORMS = {
     LIST_RELEASES + ".[] | [.tag_name, (.draft | tostring), (.id | tostring), .target_commitish] | @tsv",
     LIST_RELEASES + ".[] | [.tag_name, (.draft | tostring), (.id | tostring)] | @tsv",
     "gh api repos/${GH_REPO}/releases/${DRAFT_ID} --jq [.tag_name, (.draft | tostring), .target_commitish] | @tsv",
+    "gh api repos/${GH_REPO}/releases/${new_draft_id} --jq "
+    "([.tag_name, (.draft | tostring), .target_commitish] | @tsv), .assets[].name",
     "gh api -X DELETE repos/${GH_REPO}/releases/${DRAFT_ID}",
     "gh api -X DELETE repos/${GH_REPO}/releases/${id}",
     "gh api repos/${GH_REPO}/releases/tags/${TAG} --jq .assets[].name",
@@ -461,7 +464,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         # otherwise override MODE, VERSION or TAG). A step cannot gain an `if`, a
         # `continue-on-error`, an `env` or a neighbour without failing this test.
         job = self.jobs["publish-release"]
-        self.assertEqual({"name", "runs-on", "needs", "if", "environment", "permissions", "env", "steps"}, set(job))
+        self.assertEqual({"name", "runs-on", "needs", "if", "environment", "timeout-minutes", "permissions", "env",
+                          "steps"}, set(job))
+        # A bound on a call that hangs, many times the longest run of the job so far.
+        self.assertEqual(30, job["timeout-minutes"])
         self.assertEqual({"MODE", "VERSION", "TAG", "RELEASE_READ_ATTEMPTS", "RELEASE_READ_DELAY_SECONDS"},
                          set(job["env"]))
         steps = job["steps"]
@@ -482,13 +488,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
                          by_name["Download signing material (cosign bundles, GPG signatures)"]["with"]["path"])
 
     def test_release_reads_after_a_write_try_again_within_the_job_bounds(self):
-        # GitHub's list of releases lags behind a write, so the three steps that read
-        # straight after one poll, with the bounds the job sets once.
+        # GitHub's list of releases lags behind a write, so the four steps that read
+        # after one poll, with the bounds the job sets once.
         job = self.jobs["publish-release"]
         self.assertEqual({"RELEASE_READ_ATTEMPTS": "12", "RELEASE_READ_DELAY_SECONDS": "5"},
                          {k: v for k, v in job["env"].items() if k.startswith("RELEASE_READ_")})
         by_name = {s["name"]: s for s in job["steps"]}
-        for name in (CREATE_STEP, CLEANUP_STEP, VERIFY_STEP):
+        for name in (CREATE_STEP, CLEANUP_STEP, PUBLISH_STEP, VERIFY_STEP):
             with self.subTest(step=name):
                 # The comments name both variables, so only the code lines count. That
                 # the loops follow the bound is proved by the behaviour tests that set
@@ -612,9 +618,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
 # be checked against real gh). Publishing a draft creates its tag at the draft's
 # target, as GitHub is expected to. `python3` answers the NuGet presence check from
 # $FIXTURE_DIR/nuget and runs anything else with the real interpreter. `dotnet`
-# records pushes. Every call is logged to $FIXTURE_DIR/calls. A call the fixtures
-# do not know is also written to $FIXTURE_DIR/unexpected, and the tests fail when
-# that file exists, even if the step script ignored the exit code.
+# records pushes. `sleep` waits for nothing and records each wait in
+# $FIXTURE_DIR/sleeps. Every other call is logged to $FIXTURE_DIR/calls. A call
+# the fixtures do not know is also written to $FIXTURE_DIR/unexpected, and the
+# tests fail when that file exists, even if the step script ignored the exit code.
 FIXTURE_GIT = """#!/usr/bin/env bash
 echo "git $*" >> "$FIXTURE_DIR/calls"
 [[ "$*" == "ls-remote --tags origin" ]] || { echo "git $*" >> "$FIXTURE_DIR/unexpected"; exit 97; }
@@ -649,6 +656,9 @@ FIXTURE_DOTNET = """#!/usr/bin/env bash
 echo "dotnet $*" >> "$FIXTURE_DIR/calls"
 [[ -f "$FIXTURE_DIR/push-fails" ]] && exit 1
 exit 0
+"""
+FIXTURE_SLEEP = """#!/usr/bin/env bash
+echo "sleep $*" >> "$FIXTURE_DIR/sleeps"
 """
 FIXTURE_GH = '''
 import json, os, sys
@@ -691,10 +701,18 @@ FILTERS = {
     ".[] | [.tag_name, (.draft | tostring), (.id | tostring)] | @tsv":
         lambda rs: [tsv(r["tag_name"], json.dumps(r["draft"]), str(r["id"])) for r in rs],
 }
-# The one filter the workflow uses to read a release by its id.
+# The two filters the workflow uses to read a release by its id: before the
+# deletion of an earlier draft, and to check the draft's assets after the upload
+# and again just before the publication (that one also lists the asset names,
+# one per line, after the first line). GitHub lists the assets in an order of its
+# own, which is not the order of `sort`, so this read lists them in the reverse of
+# the order they are stored in (sorted, as an upload stores them).
+FINAL_READ_FILTER = "([.tag_name, (.draft | tostring), .target_commitish] | @tsv), .assets[].name"
 ID_FILTERS = {
     "[.tag_name, (.draft | tostring), .target_commitish] | @tsv":
         lambda r: [tsv(r["tag_name"], json.dumps(r["draft"]), r["target_commitish"])],
+    FINAL_READ_FILTER:
+        lambda r: [tsv(r["tag_name"], json.dumps(r["draft"]), r["target_commitish"])] + list(reversed(r["assets"])),
 }
 # The one filter the workflow uses with `gh release view`.
 VIEW_FILTERS = {
@@ -766,7 +784,24 @@ elif (len(args) == 4 and args[0] == "api" and args[1].startswith(repo + "release
     found = [r for r in releases if str(r["id"]) == args[1][len(repo + "releases/"):]]
     if not found:
         sys.exit(1)  # GitHub answers 404
-    for line in ID_FILTERS[args[3]](found[0]):
+    answer = found[0]
+    # `draft-reads.json` scripts the answers to the read that checks the draft's
+    # assets (after the upload, and again just before the publication), one entry
+    # per call in order; the last entry also answers every later call. An entry is
+    # "fail", null (the release as it is), or fields that replace the release's own
+    # (the release changed, or the API lags behind the upload).
+    if args[3] == FINAL_READ_FILTER:
+        n_path = d / "draft-read-count"
+        n = int(n_path.read_text(encoding="utf-8")) + 1 if n_path.exists() else 1
+        n_path.write_text(str(n), encoding="utf-8")
+        if (d / "draft-reads.json").exists():
+            sequence = json.loads((d / "draft-reads.json").read_text(encoding="utf-8"))
+            scripted = sequence[min(n, len(sequence)) - 1]
+            if scripted == "fail":
+                sys.exit(1)
+            if scripted is not None:
+                answer = dict(answer, **scripted)
+    for line in ID_FILTERS[args[3]](answer):
         print(line)
 elif len(args) == 4 and args[0] == "api" and args[1].startswith(repo + "releases/tags/"):
     if args[2] != "--jq" or args[3] not in TAG_FILTERS:
@@ -846,6 +881,12 @@ elif args[:2] == ["release", "create"]:
 elif args[:2] == ["release", "upload"]:
     if (d / "upload-fails").exists():
         sys.exit(1)
+    # `upload-elsewhere`: the tool resolves the tag to another release than the one
+    # `release view` found, and the files go there; the draft gets none of them.
+    if (d / "upload-elsewhere").exists():
+        with open(d / "uploaded-elsewhere", "a", encoding="utf-8") as elsewhere:
+            elsewhere.write(" ".join(a for a in args[3:] if a != "--clobber") + "\\n")
+        sys.exit(0)
     release = by_tag(args[2])
     release["assets"] = sorted(set(release["assets"]) | {Path(a).name for a in args[3:] if a != "--clobber"})
     save()
@@ -864,6 +905,8 @@ elif args[:2] == ["release", "edit"]:
 else:
     unexpected(98)
 '''
+# The filter of the read by id that checks the draft's assets, as the fixture `gh` knows it.
+FINAL_READ_FILTER_TEXT = "([.tag_name, (.draft | tostring), .target_commitish] | @tsv), .assets[].name"
 RUN_SHA = "c" * 40
 ID_READ = "gh api repos/tomas-rampas/vouchfx/releases/"
 ID_READ_FILTER = "[.tag_name, (.draft | tostring), .target_commitish] | @tsv"
@@ -897,13 +940,13 @@ class Fixture:
     def __init__(self, scratch, tags=(), releases=(), nuget=(), markers=(), changelog="1.5.0", props="1.5.0",
                  late_tags=None, changelog_text=None, list_fails_after=None, late_releases=None,
                  create_target=None, list_overrides=None, ls_overrides=None, tag_endpoint_fails_until=None,
-                 view_fails_first=None, view_answer=None):
+                 view_fails_first=None, view_answer=None, draft_reads=None):
         self.root = Path(scratch)
         self.dir = self.root / "fixture"
         self.bin = self.dir / "bin"
         self.bin.mkdir(parents=True)
         for name, text in (("git", FIXTURE_GIT), ("python3", FIXTURE_PYTHON), ("dotnet", FIXTURE_DOTNET),
-                           ("gh", f"#!{sys.executable}\n" + FIXTURE_GH)):
+                           ("sleep", FIXTURE_SLEEP), ("gh", f"#!{sys.executable}\n" + FIXTURE_GH)):
             (self.bin / name).write_text(text, encoding="utf-8", newline="\n")
             (self.bin / name).chmod(0o755)
         (self.dir / "tags").write_text("".join(f"{sha}\trefs/tags/{name}\n" for name, sha in tags),
@@ -934,6 +977,8 @@ class Fixture:
             (self.dir / "view-fails-first").write_text(str(view_fails_first), encoding="utf-8")
         if view_answer is not None:
             (self.dir / "view-answer.json").write_text(json.dumps(view_answer), encoding="utf-8")
+        if draft_reads is not None:
+            (self.dir / "draft-reads.json").write_text(json.dumps(list(draft_reads)), encoding="utf-8")
         if tag_endpoint_fails_until is not None:
             (self.dir / "tag-endpoint-fails-until").write_text(str(tag_endpoint_fails_until), encoding="utf-8")
         if list_fails_after is not None:
@@ -983,6 +1028,11 @@ class Fixture:
         return (self.dir / "tags").read_text(encoding="utf-8")
 
     @property
+    def sleeps(self):
+        path = self.dir / "sleeps"
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    @property
     def unexpected(self):
         path = self.dir / "unexpected"
         return path.read_text(encoding="utf-8") if path.exists() else ""
@@ -998,6 +1048,27 @@ def run_assets(version="1.5.0"):
     return sorted([f"Vouchfx.Sdk.{version}.nupkg", f"vouchfx-{version}-linux-x64.tar.gz",
                    f"vouchfx.{version}.nupkg", f"vouchfx.{version}.nupkg.cosign.bundle"])
 
+
+# The form a `validate` run uses, as `RELEASING.md` gives it.
+VALIDATE_FORM = "the next release version followed by -validate.N, for example 1.5.0-validate.1"
+LATEST_RULE_BEGIN = "# BEGIN rule: a stable version is not below a published stable Release"
+LATEST_RULE_END = "# END rule"
+
+
+def marked_block(script, begin_marker, end_marker):
+    """The block between two marker lines, both included, each line without its indentation."""
+    lines = [line.strip() for line in script.splitlines()]
+    if lines.count(begin_marker) != 1 or lines.count(end_marker) != 1:
+        raise AssertionError(f"'{begin_marker}' is not marked exactly once")
+    begin, end = lines.index(begin_marker), lines.index(end_marker)
+    if end < begin:
+        raise AssertionError(f"'{end_marker}' comes before '{begin_marker}'")
+    return "\n".join(lines[begin:end + 1])
+
+
+def latest_rule(script):
+    """The marked block of the rule on stable versions, each line without its indentation."""
+    return marked_block(script, LATEST_RULE_BEGIN, LATEST_RULE_END)
 
 class PrepareScriptTests(unittest.TestCase):
     """Runs the actual `prepare` check with fixture `git`, `gh` and `python3`."""
@@ -1048,9 +1119,28 @@ class PrepareScriptTests(unittest.TestCase):
                     result = self.check(mode=mode, version=version, changelog=version, props=version)
                     self.assertRefused(result, "is not MAJOR.MINOR.PATCH")
                     self.assertEqual("", result[3], "no lookup before the version is valid")
+        # The value is shown shell-quoted.
+        for version, shown in (("1.2.3.4", "1.2.3.4"), ("", "''"), ("1.2.3 ", "1.2.3\\ "), ("1.2.3\n", "$'1.2.3\\n'")):
+            with self.subTest(shown=shown):
+                self.assertRefused(self.check(mode="validate", version=version),
+                                   f"::error::Refusing to release: version {shown} is not MAJOR.MINOR.PATCH with an "
+                                   "optional '-' pre-release (the value is shown shell-quoted).")
+
+    def test_a_version_cannot_put_a_workflow_command_into_the_log(self):
+        # A newline in the value would start a line of its own, which the runner reads
+        # as a workflow command; the shell-quoted form keeps it on the error line.
+        for version in ("1.2.3\n::warning::injected", "1.2.3\r\n::add-mask::x", "\n::error::forged"):
+            for mode in ("validate", "rehearse", "publish"):
+                with self.subTest(version=version, mode=mode):
+                    result = self.check(mode=mode, version=version)
+                    self.assertRefused(result, "is not MAJOR.MINOR.PATCH")
+                    commands = [line for line in result[1].splitlines() if line.startswith("::")]
+                    self.assertEqual(1, len(commands), result[1])
+                    self.assertTrue(commands[0].startswith("::error::Refusing to release: version $'"), commands)
+                    self.assertNotIn("\r", result[1])
 
     def test_well_formed_versions_are_accepted(self):
-        for version in ("0.0.0-test", "1.2.3", "1.0.0-alpha.4", "1.5.0-rc.1", "10.20.30-x-y.0",
+        for version in ("0.0.1-test", "1.2.3", "1.0.0-alpha.4", "1.5.0-rc.1", "10.20.30-x-y.0",
                         "1.2.3-0", "1.2.3-0a", "1.2.3-01a", "1.2.3-rc.0", "1.2.3--", "1.2.3-0-1", "1.2.3-x.10"):
             with self.subTest(version=version):
                 self.assertAccepted(self.check(mode="validate", version=version), version, "validate")
@@ -1077,6 +1167,23 @@ class PrepareScriptTests(unittest.TestCase):
             for commit in ("", OTHER, RUN_SHA[:12], RUN_SHA.upper(), RUN_SHA + " ", " " + RUN_SHA, RUN_SHA + "\n"):
                 with self.subTest(mode=mode, commit=commit):
                     self.assertRefused(self.check(mode=mode, version=version, commit=commit), "must be the full SHA")
+            # The value is shown shell-quoted.
+            with self.subTest(mode=mode, shown="shell-quoted"):
+                self.assertRefused(self.check(mode=mode, version=version, commit=RUN_SHA + "\n"),
+                                   f"::error::Input commit $'{RUN_SHA}\\n' must be the full SHA of this run's "
+                                   f"commit, {RUN_SHA} (the head of main when the run started; the value is shown "
+                                   "shell-quoted).")
+
+    def test_a_commit_cannot_put_a_workflow_command_into_the_log(self):
+        # As for the version: the shell-quoted form keeps a newline on the error line.
+        for commit in (RUN_SHA + "\n::warning::x", "\n::warning::x"):
+            for mode, version in (("rehearse", REHEARSAL), ("publish", "1.5.0")):
+                with self.subTest(commit=commit, mode=mode):
+                    result = self.check(mode=mode, version=version, commit=commit)
+                    self.assertRefused(result, "must be the full SHA")
+                    commands = [line for line in result[1].splitlines() if line.startswith("::")]
+                    self.assertEqual(1, len(commands), result[1])
+                    self.assertTrue(commands[0].startswith("::error::Input commit $'"), commands)
 
     def test_other_repository_is_refused(self):
         self.assertRefused(self.check(mode="rehearse", version=REHEARSAL, repository="someone/vouchfx"), "runs only in")
@@ -1144,18 +1251,16 @@ class PrepareScriptTests(unittest.TestCase):
                             REHEARSAL, "rehearse")
 
     def test_rehearsal_versions_of_the_reserved_form_are_accepted(self):
-        # The form is right for 0.0.0-rehearsal.1; the smoke test, not prepare, is what that version fails.
         for version in ("1.5.0-rehearsal.1", "1.5.0-rehearsal.12", "1.5.0-rehearsal.0", "10.20.30-rehearsal.1",
-                        "0.0.0-rehearsal.1"):
+                        "1.5.1-rehearsal.1", "0.0.1-rehearsal.1"):
             with self.subTest(version=version):
                 result = self.check(mode="rehearse", version=version)
                 self.assertAccepted(result, version, "rehearse")
                 self.assertIn("git ls-remote --tags origin\n", result[3])
 
     def test_rehearsal_with_any_other_version_is_refused_before_any_lookup(self):
-        for version in ("1.5.0", "1.5.0-rc.1", "0.0.0-test", "1.5.0-rehearsal", "1.5.0-rehearsal.x",
-                        "1.5.0-rehearsal.1.2", "1.5.0-rehearsal.1-x",
-                        "1.5.0-Rehearsal.1", "1.5.0-validate.1",
+        for version in ("1.5.0", "1.5.0-rc.1", "0.0.1-test", "1.5.0-rehearsal", "1.5.0-rehearsal.x",
+                        "1.5.0-rehearsal.1.2", "1.5.0-rehearsal.1-x", "1.5.0-validate.1",
                         # Forms that publish accepts: rehearse must refuse each of them, or a
                         # leftover rehearsal draft could be released.
                         "1.5.0-x.1.2.3-rehearsal.1", "1.5.0-rehearsal-x.1", "1.5.0-rehearsals.1",
@@ -1172,12 +1277,11 @@ class PrepareScriptTests(unittest.TestCase):
         self.assertEqual("", result[3], "no lookup before the version is valid")
 
     def test_publish_refuses_versions_reserved_for_validation_and_rehearsal(self):
-        for version in ("0.0.0-test", "0.0.0-anything", "1.5.0-rehearsal.1", "1.5.0-rehearsal",
-                        "1.5.0-validate.1", "1.5.0-validate"):
+        for version in ("1.5.0-rehearsal.1", "1.5.0-rehearsal", "1.5.0-validate.1", "1.5.0-validate"):
             with self.subTest(version=version):
                 result = self.check(mode="publish", version=version, changelog=version, props=version)
-                self.assertRefused(result, "-rehearsal or -validate pre-release, and versions that start with 0.0.0-, "
-                                           "are reserved for rehearsal and validation")
+                self.assertRefused(result, f"Refusing to publish '{version}': versions with a -rehearsal or -validate "
+                                           "pre-release are reserved for rehearsal and validation.")
                 self.assertEqual("", result[3], "no lookup before the reserved version is refused")
 
     def test_publish_accepts_versions_that_are_not_reserved(self):
@@ -1198,10 +1302,93 @@ class PrepareScriptTests(unittest.TestCase):
                 publish = self.check(mode="publish", version=version, changelog=version, props=version)
                 self.assertFalse(rehearse[0] == 0 and publish[0] == 0, "accepted by both modes")
 
-    def test_validate_accepts_any_semver_including_the_validate_and_rehearsal_forms(self):
-        for version in ("1.5.0-validate.1", "0.0.0-test", "1.5.0-rehearsal.1"):
+    def test_validate_accepts_the_validate_and_rehearsal_forms(self):
+        for version in ("1.5.0-validate.1", "1.5.1-validate.1", "1.5.0-rehearsal.1", "1.5.0-rc.1", "1.5.0"):
             with self.subTest(version=version):
                 self.assertAccepted(self.check(mode="validate", version=version), version, "validate")
+
+    # Upper-case letters in the pre-release. The .NET tool store keeps the version in
+    # lower case, so the smoke tests would look in the wrong place after the build.
+    UPPER_CASE = ("1.5.0-RC.1", "1.5.0-rc.A", "1.5.0-Rc.1", "1.5.0-rehearsal.1-X", "1.5.0-Rehearsal.1",
+                  "1.5.0-VALIDATE.1", "1.5.0-rc-X.1", "1.5.0-Z")
+
+    def test_upper_case_pre_release_is_refused_in_every_mode_before_any_lookup(self):
+        for version in self.UPPER_CASE:
+            for mode in ("validate", "rehearse", "publish"):
+                with self.subTest(version=version, mode=mode):
+                    result = self.check(mode=mode, version=version, changelog=version, props=version)
+                    self.assertRefused(result, f"::error::Refusing '{version}': its pre-release has upper-case "
+                                               f"letters. Use '{version.lower()}' instead.")
+                    self.assertEqual("", result[3], "no lookup before the version is checked")
+
+    def test_lower_case_forms_of_the_refused_upper_case_versions_are_accepted(self):
+        for version in ("1.5.0-rc.1", "1.5.0-rc.a", "1.5.0-z"):
+            with self.subTest(version=version):
+                self.assertAccepted(self.check(mode="validate", version=version), version, "validate")
+                self.assertAccepted(self.check(version=version, changelog=version, props=version), version)
+        self.assertAccepted(self.check(mode="rehearse", version="1.5.0-rehearsal.1"), "1.5.0-rehearsal.1", "rehearse")
+
+    def test_zero_versions_are_refused_in_every_mode_with_the_form_to_use(self):
+        for version in ("0.0.0-test", "0.0.0-rehearsal.1", "0.0.0-validate.1", "0.0.0-0", "0.0.0-rc.1"):
+            for mode in ("validate", "rehearse", "publish"):
+                with self.subTest(version=version, mode=mode):
+                    result = self.check(mode=mode, version=version, changelog=version, props=version)
+                    self.assertRefused(result, f"::error::Refusing '{version}': a 0.0.0- version is below every "
+                                               "provider's minimum engine version")
+                    self.assertIn(VALIDATE_FORM, result[1])
+                    self.assertEqual("", result[3], "no lookup before the version is checked")
+        # The plain 0.0.0 and versions just above it are not this rule's.
+        for version in ("0.0.1-test", "0.1.0-rc.1"):
+            with self.subTest(version=version):
+                self.assertAccepted(self.check(mode="validate", version=version), version, "validate")
+
+    def test_the_validate_form_is_the_same_in_the_input_the_refusal_and_the_runbook(self):
+        data = workflow(ROOT / ".github/workflows/release.yml")
+        description = data["on"]["workflow_dispatch"]["inputs"]["version"]["description"]
+        self.assertIn("validate: " + VALIDATE_FORM + ".", description)
+        self.assertIn("For validate use " + VALIDATE_FORM + ";", self.script)
+        runbook = " ".join((ROOT / "RELEASING.md").read_text(encoding="utf-8").split())
+        self.assertIn("`version` to the next release version followed by `-validate.N`, for example "
+                      "`1.5.0-validate.1`", runbook)
+
+    # A stable version below a published stable Release: refused in `prepare`, before
+    # the build, as well as in `publish-release` for a late re-run.
+    def test_stable_version_below_a_published_stable_release_is_refused_in_publish(self):
+        for label, version, other in (("minor", "1.5.0", "v1.6.0"), ("numeric, not text", "1.9.0", "v1.10.0"),
+                                      ("major", "1.5.0", "v2.0.0"), ("patch of an older line", "1.4.1", "v1.5.0")):
+            with self.subTest(case=label):
+                result = self.check(version=version, changelog=version, props=version,
+                                    releases=[release(other, False, OTHER, rid=3)], tags=[(other, OTHER)])
+                self.assertRefused(result, f"::error::Refusing to publish 'v{version}': the published Release "
+                                           f"'{other}' is a higher stable version, and 'v{version}' would be marked "
+                                           f"Latest in its place. Release a stable version above {other[1:]} "
+                                           "instead (see RELEASING.md, case 9).")
+                self.assertNotIn("check_nuget_presence", result[3], "refused before the NuGet lookups")
+        # The highest of several is found numerically.
+        releases = [release("v1.9.0", False, OTHER, rid=3), release("v1.10.0", False, OTHER, rid=4),
+                    release("v1.0.0", False, OTHER, rid=5)]
+        self.assertRefused(self.check(version="1.9.5", changelog="1.9.5", props="1.9.5", releases=releases),
+                           "the published Release 'v1.10.0' is a higher stable version")
+
+    def test_versions_that_the_latest_rule_does_not_stop(self):
+        for label, mode, version, others in (
+                ("higher stable", "publish", "1.5.1", [release("v1.5.0", False, OTHER, rid=3)]),
+                ("lower by number", "publish", "1.10.0", [release("v1.9.0", False, OTHER, rid=3)]),
+                ("higher pre-release", "publish", "1.5.0", [release("v1.6.0-rc.1", False, OTHER, rid=3)]),
+                ("higher draft", "publish", "1.5.0", [release("v1.6.0", True, OTHER, rid=3)]),
+                ("higher non-version tag", "publish", "1.5.0", [release("v9.0.0.1", False, OTHER, rid=3)]),
+                ("pre-release publication", "publish", "1.4.1-rc.1", [release("v1.5.0", False, OTHER, rid=3)]),
+                ("rehearsal", "rehearse", "1.4.1-rehearsal.1", [release("v1.5.0", False, OTHER, rid=3)])):
+            with self.subTest(case=label):
+                result = self.check(mode=mode, version=version, changelog=version, props=version, releases=others)
+                self.assertAccepted(result, version, mode)
+
+    def test_the_latest_rule_is_one_text_in_prepare_and_in_the_classification(self):
+        jobs = workflow(ROOT / ".github/workflows/release.yml")["jobs"]
+        classify = next(s for s in jobs["publish-release"]["steps"] if s.get("id") == "state")["run"]
+        blocks = [latest_rule(self.script), latest_rule(classify)]
+        self.assertIn("Refusing to publish", blocks[0])
+        self.assertEqual(blocks[0], blocks[1], "the two copies of the rule differ")
 
 
 class PublishReleaseScriptTests(unittest.TestCase):
@@ -1218,9 +1405,11 @@ class PublishReleaseScriptTests(unittest.TestCase):
         cls.job = workflow(ROOT / ".github/workflows/release.yml")["jobs"]["publish-release"]
 
     def run_job(self, mode="publish", version="1.5.0", login_fails=False, signing_mode=None, no_files=False,
-                duplicate_asset=False, attempts=None, delay=None, step_env=None, **fixture):
+                duplicate_asset=False, sdk_bundle=False, attempts=None, delay=None, step_env=None, **fixture):
         # `no_files` prepares no release files at all; `duplicate_asset` adds a second
-        # file named like the first, in another directory.
+        # file named like the first, in another directory. `sdk_bundle` adds, in
+        # publish mode, a signing-material file whose name sorts before a name in
+        # release-upload/, so that the upload order is not the order of `sort`.
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         f = Fixture(scratch.name, changelog=version, props=version, **fixture)
@@ -1235,6 +1424,9 @@ class PublishReleaseScriptTests(unittest.TestCase):
         (f.work / "signing-material/signing-mode").write_text((signing_mode or mode) + "\n", encoding="utf-8")
         if mode == "publish" and not no_files:
             (f.work / f"signing-material/nuget/vouchfx.{version}.nupkg.cosign.bundle").write_text("x", encoding="utf-8")
+            if sdk_bundle:
+                (f.work / f"signing-material/nuget/Vouchfx.Sdk.{version}.nupkg.cosign.bundle").write_text(
+                    "x", encoding="utf-8")
         # The job's own bounds, except that the tests never wait between attempts.
         # `attempts` and `delay` replace the bounds for a test that counts attempts or
         # tries values that are not usable (a string, used as given). `step_env` maps
@@ -1274,6 +1466,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
                      "${{ steps.state.outputs.draft_id }}": outputs["state"].get("draft_id", ""),
                      "${{ steps.create.outputs.created }}": outputs["create"].get("created", ""),
                      "${{ steps.create.outputs.attempted }}": outputs["create"].get("attempted", ""),
+                     "${{ steps.create.outputs.new_draft_id }}": outputs["create"].get("new_draft_id", ""),
                      "${{ steps.nuget-login.outputs.NUGET_API_KEY }}": "fixture-key"}
             env = dict(base, **{k: table[v] for k, v in step.get("env", {}).items()})
             env.update((step_env or {}).get(step["name"], {}))
@@ -1286,7 +1479,8 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertEqual("", f.unexpected, "a call the fixtures do not know\n" + log)
         bodies = f.dir / "bodies"
         return {"failed": failed, "ran": ran, "log": log, "calls": f.calls, "releases": f.releases, "outputs": outputs,
-                "tags": f.tags, "bodies": bodies.read_text(encoding="utf-8") if bodies.exists() else ""}
+                "tags": f.tags, "bodies": bodies.read_text(encoding="utf-8") if bodies.exists() else "",
+                "sleeps": f.sleeps, "fixture": f.dir.as_posix()}
 
     def assertReadBackBetweenCreateAndUpload(self, result, tag):
         # The classification lists the releases first. The read-back is a second list,
@@ -1762,7 +1956,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertEqual(CREATE_STEP, result["ran"][-1])
         self.assertIn(f"::error::The list of releases did not show the new draft for v1.5.0 after {attempts} "
                       "attempts. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode the "
-                      "draft may exist: wait a few minutes, check that the Releases page lists one draft for "
+                      "draft may exist: wait a few minutes, check that the Releases page lists exactly one draft for "
                       "v1.5.0, then \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the "
                       "clean-up step.", result["log"])
         self.assertNotIn("The list of releases shows the new draft for", result["log"])
@@ -1798,8 +1992,8 @@ class PublishReleaseScriptTests(unittest.TestCase):
     def test_upload_waits_for_the_tool_within_the_job_bounds_and_gives_up_without_uploading(self):
         message = ("::error::The tool did not find the draft for v1.5.0 after {} attempts, although the list of "
                    "releases shows it. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode "
-                   "the draft is left in place: wait a few minutes, check that the Releases page lists one draft "
-                   "for v1.5.0, then \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the "
+                   "the draft is left in place: wait a few minutes, check that the Releases page lists exactly one "
+                   "draft for v1.5.0, then \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the "
                    "clean-up step.")
         for attempts in (12, 3):
             with self.subTest(attempts=attempts):
@@ -2303,6 +2497,278 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertIn(not_shown, result["log"])
         self.assertNotIn(could_not, result["log"])
         self.assertEqual(2 + 12, result["calls"].count("gh api --paginate"), result["calls"])
+
+    # The NuGet step refuses, before any upload to NuGet.org, a mode other than
+    # publish or a version reserved for validation or rehearsal: a second line of
+    # defence behind `prepare` and the step's own `if`.
+    def run_nuget_step(self, mode, version):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        f = Fixture(scratch.name)
+        (f.work / "release-upload").mkdir()
+        for name in (f"vouchfx.{version}.nupkg", f"Vouchfx.Sdk.{version}.nupkg", f"Vouchfx.Sdk.{version}.snupkg"):
+            (f.work / "release-upload" / name).write_text("x", encoding="utf-8")
+        script = next(s for s in self.job["steps"] if s["name"] == PUSH_STEP)["run"]
+        code, output, _ = f.run(script, f.env(MODE=mode, VERSION=version, TAG=f"v{version}",
+                                              NUGET_API_KEY="fixture-key"))
+        self.assertEqual("", f.unexpected, "a call the fixtures do not know")
+        return code, output, f.calls
+
+    def test_nuget_step_refuses_another_mode_or_a_reserved_version_before_anything(self):
+        for mode, version in (("rehearse", REHEARSAL), ("validate", "1.5.0-validate.1"), ("rehearse", "1.5.0"),
+                              ("validate", "1.5.0"), ("", "1.5.0"), ("Publish", "1.5.0"),
+                              ("publish", REHEARSAL), ("publish", "1.5.0-rehearsal"), ("publish", "1.5.0-validate"),
+                              ("publish", "1.5.0-validate.1"), ("publish", "1.5.0-Validate.2"),
+                              ("publish", "1.5.0-REHEARSAL.1"), ("publish", "0.0.0-test"), ("publish", "0.0.0-rc.1")):
+            with self.subTest(mode=mode, version=version):
+                code, output, calls = self.run_nuget_step(mode, version)
+                self.assertEqual(1, code, output)
+                self.assertIn(f"::error::Refusing to push mode '{mode}', version '{version}': only publish mode "
+                              "pushes, and never a version reserved for validation or rehearsal. Nothing was "
+                              "pushed to NuGet.org.", output)
+                self.assertEqual("", calls, "nothing is checked or sent")
+
+    def test_nuget_step_sends_the_packages_in_publish_mode_for_a_version_that_is_not_reserved(self):
+        for version in ("1.5.0", "1.5.0-rc.1", "1.5.0-rehearsed.1", "1.5.0-rc.rehearsal.1", "0.0.1-rc.1"):
+            with self.subTest(version=version):
+                code, output, calls = self.run_nuget_step("publish", version)
+                self.assertEqual(0, code, output)
+                self.assertNotIn("Refusing to push", output)
+                for name in (f"vouchfx.{version}.nupkg", f"Vouchfx.Sdk.{version}.nupkg",
+                             f"Vouchfx.Sdk.{version}.snupkg"):
+                    self.assertIn(f"dotnet nuget push release-upload/{name} ", calls)
+
+    # The draft is read by its id once the upload has ended (in both modes, before
+    # any NuGet push), and again just before the publishing call. Both copies of
+    # the check try a failed read, or asset names that are a strict subset of the
+    # uploaded ones, again within the job's bounds, and stop at once otherwise.
+    DRAFT_READ = "gh api repos/tomas-rampas/vouchfx/releases/101 --jq " + FINAL_READ_FILTER_TEXT + "\n"
+    RECOVERY = ("Nothing was published to GitHub Releases. The packages of 1.5.0 may already be on NuGet.org: see "
+                "RELEASING.md, case 4.")
+    UPLOAD_RECOVERY = ("Nothing was pushed to NuGet.org. In publish mode the draft is left in place: look at it on "
+                       "the Releases page before you use \"Re-run failed jobs\" (see RELEASING.md); it replaces a "
+                       "draft, not a published Release. A rehearsal deletes its draft in the clean-up step.")
+    MOVED = ("::error::Release 101 is no longer the draft for v1.5.0 at this run's commit: it reads (tag, draft "
+             "flag, target) '{}' where 'v1.5.0 true " + RUN_SHA + "' was expected. ")
+    FOREIGN = "::error::The draft 101 for v1.5.0 holds asset names that this run did not upload ({} of them). "
+    LACKS = ("::error::The draft 101 for v1.5.0 still lacks assets this run uploaded after {} attempts: it has {} "
+             "of the 4 asset names. ")
+    UNREADABLE = "::error::Could not read the draft 101 for v1.5.0 on the last of {} attempts. "
+    CHECKED = "Release 101 is the draft for v1.5.0 at this run's commit, with the 4 uploaded assets, on attempt {} of {}."
+    CHECK_BEGIN = "# BEGIN check: the draft holds the assets this run uploaded"
+    CHECK_END = "# END check"
+    # Where the check runs: the answers to the read of the other copy come first
+    # (null: the draft as it is), and the place's own stop is asserted.
+    PLACES = ("after the upload", "before the publication")
+
+    def reads_for(self, place, *answers):
+        return list(answers) if place == self.PLACES[0] else [None, *answers]
+
+    def assertStoppedAfterUpload(self, result, text):
+        self.assertTrue(result["failed"])
+        self.assertIn(text, result["log"])
+        self.assertIn(f"--- {CREATE_STEP} (exit 1)", result["log"])
+        self.assertEqual(CREATE_STEP, result["ran"][-1])
+        self.assertNotIn("dotnet nuget", result["calls"])
+        self.assertNotIn("check_nuget_presence.py release-upload/", result["calls"])
+        self.assertNotIn("gh release edit", result["calls"])
+        self.assertIs(True, result["releases"][0]["draft"])
+        self.assertEqual("", result["tags"])
+
+    def assertStoppedAt(self, place, result, text):
+        if place == self.PLACES[0]:
+            self.assertStoppedAfterUpload(result, text + self.UPLOAD_RECOVERY)
+        else:
+            self.assertStoppedBeforeEdit(result, text + self.RECOVERY)
+            self.assertIn("dotnet nuget push", result["calls"])
+            self.assertNotIn(VERIFY_STEP, result["ran"])
+
+    def test_draft_is_read_by_id_after_the_upload_and_again_just_before_the_publication(self):
+        for state, fixture in (("none", {}), ("draft", {"releases": [release("v1.5.0", True, rid=42)],
+                                                         "nuget": ["vouchfx 1.5.0"]})):
+            with self.subTest(state=state):
+                result = self.run_job(**fixture)
+                self.assertFalse(result["failed"], result["log"])
+                calls = result["calls"]
+                self.assertEqual(2, calls.count(self.DRAFT_READ), calls)
+                first = calls.find(self.DRAFT_READ)
+                second = calls.find(self.DRAFT_READ, first + 1)
+                last_listing = calls.rfind("git ls-remote", 0, second)
+                # Upload, the first read, the NuGet step, the tags, the second read, the edit.
+                positions = [calls.find("gh release upload v1.5.0"), first, calls.find("dotnet nuget"),
+                             last_listing, second, calls.find("gh release edit v1.5.0 --draft=false --target " + RUN_SHA)]
+                self.assertNotIn(-1, positions, calls)
+                self.assertEqual(sorted(positions), positions, calls)
+                self.assertEqual(2, result["log"].count(self.CHECKED.format(1, 12)), result["log"])
+                self.assertEqual("101", result["outputs"]["create"].get("new_draft_id"))
+
+    def test_the_draft_check_does_not_depend_on_the_order_of_the_asset_names(self):
+        # On GitHub neither the read of the draft nor the upload lists the names in
+        # the order of `sort`. The fixture's read lists them in reverse, and the
+        # extra bundle in signing-material/ sorts before a name in release-upload/,
+        # which the upload sends first.
+        result = self.run_job(sdk_bundle=True)
+        self.assertFalse(result["failed"], result["log"])
+        upload = next(line for line in result["calls"].splitlines() if line.startswith("gh release upload "))
+        names = [Path(a).name for a in upload.split()[4:] if a != "--clobber"]
+        self.assertIn("Vouchfx.Sdk.1.5.0.nupkg.cosign.bundle", names)
+        self.assertNotEqual(sorted(names), names, upload)
+        self.assertEqual(sorted(names), result["releases"][0]["assets"])
+        self.assertEqual(2, result["log"].count("Release 101 is the draft for v1.5.0 at this run's commit, with the 5 "
+                                                "uploaded assets, on attempt 1 of 12."), result["log"])
+
+    def test_a_correct_run_does_not_wait(self):
+        for mode, version, checks in (("publish", "1.5.0", 2), ("rehearse", REHEARSAL, 1)):
+            with self.subTest(mode=mode):
+                result = self.run_job(mode=mode, version=version)
+                self.assertFalse(result["failed"], result["log"])
+                self.assertEqual(checks, result["calls"].count(FINAL_READ_FILTER_TEXT), result["calls"])
+                self.assertEqual("", result["sleeps"])
+
+    def test_rehearsal_reads_the_draft_by_id_after_the_upload_and_still_deletes_it(self):
+        result = self.run_job(mode="rehearse", version=REHEARSAL)
+        self.assertFalse(result["failed"], result["log"])
+        self.assertEqual(1, result["calls"].count(self.DRAFT_READ), result["calls"])
+        self.calls_in_order(result, f"gh release upload v{REHEARSAL}", self.DRAFT_READ, "gh api -X DELETE")
+        self.assertNotIn("dotnet", result["calls"])
+        self.assertIn(f"Release 101 is the draft for v{REHEARSAL} at this run's commit, with the 3 uploaded assets, "
+                      "on attempt 1 of 12.", result["log"])
+        self.assertEqual([], result["releases"])
+        # A check that stops the step still leaves the clean-up to delete the draft.
+        result = self.run_job(mode="rehearse", version=REHEARSAL, draft_reads=[{"assets": ["other.zip"]}])
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn(f"--- {CREATE_STEP} (exit 1)", result["log"])
+        self.assertIn(f"::error::The draft 101 for v{REHEARSAL} holds asset names that this run did not upload "
+                      "(1 of them). " + self.UPLOAD_RECOVERY, result["log"])
+        self.assertIn(f"--- {CLEANUP_STEP} (exit 0)", result["log"])
+        self.assertEqual([], result["releases"])
+
+    def test_draft_that_changed_is_not_lag_and_stops_at_once(self):
+        for place in self.PLACES:
+            for label, answer, text in (
+                    ("published by someone", {"draft": False}, self.MOVED.format(f"v1.5.0 false {RUN_SHA}")),
+                    ("another target", {"target_commitish": OTHER}, self.MOVED.format(f"v1.5.0 true {OTHER}")),
+                    ("another tag", {"tag_name": "v1.5.1"}, self.MOVED.format(f"v1.5.1 true {RUN_SHA}")),
+                    ("one asset more", {"assets": run_assets() + ["other.zip"]}, self.FOREIGN.format(1)),
+                    ("one asset renamed", {"assets": run_assets()[1:] + ["Vouchfx.Sdk.1.5.0.nupkg.old"]},
+                     self.FOREIGN.format(1)),
+                    ("only foreign assets", {"assets": ["a.zip", "b.zip"]}, self.FOREIGN.format(2)),
+                    ("one asset twice", {"assets": run_assets() + run_assets()[:1]}, self.FOREIGN.format(1))):
+                with self.subTest(place=place, case=label):
+                    # The answer would last for every later read: one read means no retry.
+                    result = self.run_job(draft_reads=self.reads_for(place, answer))
+                    self.assertStoppedAt(place, result, text)
+                    self.assertEqual(self.PLACES.index(place) + 1, result["calls"].count(self.DRAFT_READ),
+                                     result["calls"])
+
+    def test_draft_read_that_fails_is_tried_again_within_the_bounds(self):
+        for place in self.PLACES:
+            with self.subTest(place=place, case="passes on the third attempt"):
+                result = self.run_job(draft_reads=self.reads_for(place, "fail", "fail", None))
+                self.assertFalse(result["failed"], result["log"])
+                self.assertEqual(4, result["calls"].count(self.DRAFT_READ), result["calls"])
+                self.assertIn(self.CHECKED.format(3, 12), result["log"])
+                self.assertIn("gh release edit v1.5.0 --draft=false", result["calls"])
+                # A wait before each attempt after the first, and none elsewhere.
+                self.assertEqual("sleep 0\n" * 2, result["sleeps"])
+            for attempts in (12, 3):
+                with self.subTest(place=place, attempts=attempts):
+                    result = self.run_job(attempts=attempts, draft_reads=self.reads_for(place, "fail"))
+                    self.assertStoppedAt(place, result, self.UNREADABLE.format(attempts))
+                    self.assertEqual(self.PLACES.index(place) + attempts, result["calls"].count(self.DRAFT_READ),
+                                     result["calls"])
+                    self.assertEqual("sleep 0\n" * (attempts - 1), result["sleeps"])
+
+    def test_draft_with_some_assets_still_missing_is_read_again_until_it_holds_them_all(self):
+        subset = run_assets()[1:]
+        for place in self.PLACES:
+            for label, answers, attempt in (("one missing", ({"assets": subset}, None), 2),
+                                            ("none, then some", ({"assets": []}, {"assets": subset}, None), 3)):
+                with self.subTest(place=place, case=label):
+                    result = self.run_job(draft_reads=self.reads_for(place, *answers))
+                    self.assertFalse(result["failed"], result["log"])
+                    self.assertIn(self.CHECKED.format(attempt, 12), result["log"])
+                    self.assertEqual(attempt + 1, result["calls"].count(self.DRAFT_READ), result["calls"])
+            for attempts in (12, 3):
+                with self.subTest(place=place, attempts=attempts):
+                    result = self.run_job(attempts=attempts, draft_reads=self.reads_for(place, {"assets": subset}))
+                    self.assertStoppedAt(place, result, self.LACKS.format(attempts, 3))
+                    self.assertEqual(self.PLACES.index(place) + attempts, result["calls"].count(self.DRAFT_READ),
+                                     result["calls"])
+        # The last read decides the message: a failed read after missing assets.
+        result = self.run_job(attempts=2, draft_reads=[{"assets": subset}, "fail"])
+        self.assertStoppedAfterUpload(result, self.UNREADABLE.format(2) + self.UPLOAD_RECOVERY)
+
+    def test_draft_without_a_usable_id_is_not_read(self):
+        defect = "This is a defect in the workflow: do not re-run before it is understood. "
+        # The publishing step's copy, with the id that the upload step reported replaced.
+        for value in ("", "abc", "1 2"):
+            with self.subTest(place=self.PLACES[1], value=value):
+                result = self.run_job(step_env={PUBLISH_STEP: {"NEW_DRAFT_ID": value}})
+                self.assertStoppedBeforeEdit(result, f"::error::The draft for v1.5.0 has no usable id ('{value}'), "
+                                                     "so it cannot be read again. " + defect + self.RECOVERY)
+                self.assertEqual(1, result["calls"].count(self.DRAFT_READ), result["calls"])
+        # The upload step's copy: the list and the tool report an id that is not a number.
+        with self.subTest(place=self.PLACES[0]):
+            result = self.run_job(list_overrides={2: [release("v1.5.0", True, rid="x")]}, view_answer={"id": "x"})
+            self.assertStoppedAfterUpload(result, "::error::The draft for v1.5.0 has no usable id ('x'), so it "
+                                                  "cannot be read again. " + defect + self.UPLOAD_RECOVERY)
+            self.assertIn("gh release upload v1.5.0", result["calls"])
+            self.assertNotIn(FINAL_READ_FILTER_TEXT, result["calls"])
+
+    def test_upload_that_the_tool_sends_to_another_release_stops_the_job_before_any_push(self):
+        # `release view` finds the draft that was read back, and `release upload`
+        # resolves the tag to another release: the draft holds none of the files.
+        # That looks like lag, so the read is tried within the bounds, and then the
+        # step stops before the NuGet step.
+        result = self.run_job(markers=["upload-elsewhere"])
+        self.assertTrue((Path(result["fixture"]) / "uploaded-elsewhere").exists())
+        self.assertEqual([], result["releases"][0]["assets"])
+        self.assertStoppedAfterUpload(result, self.LACKS.format(12, 0) + self.UPLOAD_RECOVERY)
+        self.assertEqual(12, result["calls"].count(self.DRAFT_READ), result["calls"])
+
+    def test_publish_step_with_bounds_that_are_not_usable_fails_before_any_call(self):
+        for bounds in self.BAD_BOUNDS:
+            with self.subTest(bounds=bounds):
+                step_env = {PUBLISH_STEP: {"RELEASE_READ_" + ("ATTEMPTS" if "attempts" in bounds else "DELAY_SECONDS"):
+                                           next(iter(bounds.values()))}}
+                result = self.run_job(step_env=step_env)
+                self.assertStoppedBeforeEdit(result, "::error::The read bounds are not usable: "
+                                             + self.bounds_text(bounds) + " " + self.RECOVERY)
+                self.assertIn(f"--- {PUBLISH_STEP} (exit 1)", result["log"])
+                # Only the classification read the tags, and only the upload step read the draft.
+                self.assertEqual(1, result["calls"].count("git ls-remote --tags origin\n"), result["calls"])
+                self.assertEqual(1, result["calls"].count(self.DRAFT_READ), result["calls"])
+        # On a re-run after publication too, the check comes first.
+        result = self.run_job(releases=[release("v1.5.0", False, assets=run_assets())], tags=[("v1.5.0", RUN_SHA)],
+                              step_env={PUBLISH_STEP: {"RELEASE_READ_ATTEMPTS": "0"}})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn(f"--- {PUBLISH_STEP} (exit 1)", result["log"])
+        self.assertNotIn("is already published.", result["log"].split(f"--- {PUBLISH_STEP}")[1])
+
+    def test_the_draft_check_is_one_text_after_the_upload_and_before_the_publication(self):
+        by_name = {s["name"]: s["run"] for s in self.job["steps"] if "run" in s}
+        blocks = [marked_block(by_name[name], self.CHECK_BEGIN, self.CHECK_END) for name in (CREATE_STEP, PUBLISH_STEP)]
+        self.assertIn("gh api", blocks[0])
+        self.assertEqual(blocks[0], blocks[1], "the two copies of the draft check differ")
+        # In the upload step the check follows the upload; in the publishing step it
+        # comes before the publishing call.
+        create, publish = by_name[CREATE_STEP], by_name[PUBLISH_STEP]
+        self.assertLess(create.index("gh release upload"), create.index(self.CHECK_BEGIN))
+        self.assertLess(publish.index(self.CHECK_END), publish.index("gh release edit"))
+
+    def test_rehearsal_clean_up_refuses_a_published_release_for_the_tag_and_deletes_nothing(self):
+        # Lists: 1 classify, 2 read-back, 3 the clean-up's first, which shows the
+        # release published (someone published the rehearsal draft).
+        tag = f"v{REHEARSAL}"
+        result = self.run_job(mode="rehearse", version=REHEARSAL, list_overrides={3: [release(tag, False, rid=101)]})
+        self.assertTrue(result["failed"], result["log"])
+        self.assertIn(f"--- {CLEANUP_STEP} (exit 1)", result["log"])
+        self.assertIn(f"::error::A published Release for '{tag}' exists; a rehearsal never publishes. Investigate.",
+                      result["log"])
+        self.assertNotIn("does not show it", result["log"])
+        self.assertNotIn("-X DELETE", result["calls"])
+        self.assertEqual(3, result["calls"].count("gh api --paginate"), result["calls"])
 
     def test_two_release_files_with_one_name_are_refused_before_the_draft(self):
         result = self.run_job(duplicate_asset=True)

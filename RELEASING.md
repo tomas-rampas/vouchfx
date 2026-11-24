@@ -43,10 +43,26 @@ request before anything is built. A refusal is an error line in that job's log.
 - In every mode, `version` must be strict semver: `1.2.3` or `1.2.3-rc.1`. A
   `+build` suffix or a fourth dotted part (`1.2.3.4`) is refused. A numeric
   pre-release part may not have a leading zero: `1.2.3-01` is refused.
+- In every mode, the pre-release may not hold an upper-case letter:
+  `1.5.0-RC.1` is refused, and the message names `1.5.0-rc.1` instead. The
+  .NET tool store keeps the version in lower case. A probe on Linux with the
+  .NET 10 SDK installed a tool packed as `1.0.0-RC.1` under
+  `.store/<tool>/1.0.0-rc.1/`, so the smoke tests, which build that path from
+  the version as given, are expected to fail after the build on Linux. NuGet
+  compares versions without regard to case, so nothing is lost.
+- In every mode, a version that starts with `0.0.0-` is refused. It is below
+  every provider's minimum engine version, so the packaged-tool smoke test
+  would fail it after the build. The message names the form to use instead.
 - In `rehearse` and `publish`, the run must be on `main`; `commit` must be the
   full 40-character commit of the run; the repository must be the canonical one;
   no tag `v<version>` may exist; no published Release may exist for it; and none
   of the NuGet package IDs may already have that version.
+- In `publish` only, a stable version may not be below a published stable
+  Release: `1.4.1` is refused once `v1.5.0` is published, because it would be
+  marked "latest" in its place (see case 9 in
+  [Recovering a publication that stopped part-way](#recovering-a-publication-that-stopped-part-way)).
+  A pre-release is not affected. The publishing job applies the same rule again
+  for a late re-run of an old run.
 - In `publish` only, the newest version heading in `CHANGELOG.md` and the
   engine version fallback in `Directory.Build.props` (`VouchfxEngineVersion`)
   must both equal `version`. The `CHANGELOG.md` section for `version` must also
@@ -57,20 +73,30 @@ request before anything is built. A refusal is an error line in that job's log.
 - `rehearse` accepts only a version of the form `X.Y.Z-rehearsal.N` (`N` a
   number), for example `1.5.0-rehearsal.1`. `publish` refuses any version with
   a pre-release whose first identifier is `rehearsal` or `validate` (for example
-  `1.5.0-rehearsal.1` or `1.5.0-validate`), and any version that starts with
-  `0.0.0-`. Those versions are reserved for rehearsal and validation, so a
-  rehearsal version can never be released later.
+  `1.5.0-rehearsal.1` or `1.5.0-validate`). Those versions are reserved for
+  rehearsal and validation, so a rehearsal version can never be released
+  later; `0.0.0-` versions are refused in every mode. The step of the publishing
+  job that pushes to NuGet.org also refuses them, and any mode but `publish`,
+  before it pushes anything.
 - The version becomes the engine version of the packaged tool. The
   packaged-tool smoke test runs that tool, and the engine refuses to load any
   provider whose minimum engine version is higher than its own version (by
-  SemVer precedence). So for `validate` and `rehearse` use the next release
+  SemVer precedence). Apart from the `0.0.0-` versions, `prepare` does not
+  compare a version with the providers' minimums: a lower one, such as
+  `0.0.1-test` or `0.0.0` in `validate`, passes `prepare` and then fails the
+  packaged-tool smoke test. So for `validate` and `rehearse` use the next release
   version as `X.Y.Z` (for example `1.5.0-validate.1` and `1.5.0-rehearsal.1`).
-  A pre-release sorts below its release, so `1.5.0-rehearsal.1` is lower than
-  `1.5.0`. If a provider requires the release version itself, use a higher
-  `X.Y.Z`, for example `1.5.1-rehearsal.1`. A version below a provider's
-  minimum, such as `0.0.0-test` or `0.0.0-rehearsal.1`, passes `prepare` and
-  then fails the packaged-tool smoke test, so the run fails. In `rehearse` mode
-  that failure also skips the publishing job.
+  A pre-release sorts below its release, so `1.5.0-rehearsal.1` and
+  `1.5.0-rc.1` are lower than `1.5.0`. If a release raises a provider's
+  minimum engine version to the release version itself, its rehearsals and its
+  release candidates fail the packaged-tool smoke test, and so does a
+  `validate` run of the form above. For a rehearsal or a `validate` run, use a
+  higher `X.Y.Z`, for example `1.5.1-rehearsal.1` or `1.5.1-validate.1`. A
+  release candidate cannot do that, because its version is the one it
+  releases: give the provider a minimum that the candidate meets, or release
+  the stable version without a candidate. `prepare` does not check
+  this; the smoke test fails after the build, and in `rehearse` and `publish`
+  mode that failure also skips the publishing job.
 
 To release:
 
@@ -144,14 +170,22 @@ In `publish` mode the order is:
    approval does not protect it: the approval protects the draft Release and the
    NuGet push, not the signing identity.
 5. `publish-release` creates a private draft Release whose target is the run's
-   full commit SHA, and uploads all assets to it.
+   full commit SHA, and uploads all assets to it. It then reads the draft by
+   its id: it must be the draft for the tag, at the tested commit, with the
+   asset name of each uploaded file and no other. If not, the job stops before
+   anything is pushed to NuGet.org (see the last rule before the cases below).
+   A `rehearse` run makes the same check.
 6. `publish-release` pushes the NuGet packages.
-7. `publish-release` publishes the draft. That creates the lightweight tag
+7. `publish-release` reads the tag again, and then the draft again by its id,
+   with the same check as in step 5. The tag must be absent or at the tested
+   commit. If either is wrong, the job stops and publishes nothing to GitHub
+   Releases (see case 4 below).
+8. `publish-release` publishes the draft. That creates the lightweight tag
    `v<version>` at the tested commit. A version with a `-` suffix is marked as
    a pre-release and is not marked "latest".
-8. `publish-release` checks that the tag points at the tested commit.
-9. The Marketplace job (`publish-marketplace`).
-10. `move-floating-tag`.
+9. `publish-release` checks that the tag points at the tested commit.
+10. The Marketplace job (`publish-marketplace`).
+11. `move-floating-tag`.
 
 NuGet goes before the publication of the Release because it is the step most
 likely to fail, and a draft is not public. The Release title is the tag. Nothing
@@ -159,8 +193,32 @@ in the run pushes a tag with git: the tag appears when the draft is published.
 Attestations, cosign signatures and the GPG signature of the package are made
 only in `publish` mode, because each is a permanent public record.
 
+The draft is published by its tag (`gh release edit v<version> --draft=false
+--target <commit>`), not by its id. Publishing by id was considered and left
+as it is: the call by tag is the one the first release used, and a call by id
+could not be tried before the next real release. The read of the draft by its
+id just before that call narrows the time in which the tag could name another
+release; it does not close it.
+
+Each read of the draft by its id is made up to 12 times in all, 5 seconds
+apart, while the read fails or the draft lists only some of the uploaded asset
+names: GitHub may lag behind the upload. A draft that is no longer a draft, has
+another tag or target commit, or lists an asset name that this run did not
+upload is not lag, and the job stops at once.
+
+`publish-release` has a limit of 30 minutes, against GitHub's default of 360,
+so that a call that hangs ends the job. The wait for approval of the `release`
+environment comes before the job starts and is not counted. The limit is many
+times the longest run of the job so far. If the job stops at its limit, find
+the last step that started in its log and follow the case for a failure of
+that step (upload: case 1; NuGet pushes: case 2 or 3; publication or
+verification: cases 4 to 6). How GitHub reports a job that reached its limit,
+and whether **Re-run failed jobs** picks it up, has not been seen: a timed-out
+job is expected to show as failed and to be re-run like any other failed job.
+
 The first pre-release made by this flow went through these steps in this order
-on GitHub. For what that run showed and what is still to show, see
+on GitHub, except the two reads of the draft by its id in steps 5 and 7, which
+were added after it. For what that run showed and what is still to show, see
 [First runs](#first-runs-what-only-github-can-show).
 
 ### The Docker integration gate
@@ -303,11 +361,13 @@ Four rules apply to every case:
   the step deleted itself is left out of the count. The step then asks the
   release tool for the release of the tag, again up to 12 times, until the tool
   finds it, and checks that it is the very draft that was read back. Only then
-  does it upload the assets, once. Nothing has been pushed to NuGet.org when
+  does it upload the assets, once. After the upload it reads the draft by its
+  id, again up to 12 times, until the draft lists every uploaded asset name;
+  a `rehearse` run does this too. Nothing has been pushed to NuGet.org when
   any of these failures happens. If the command that creates the draft fails,
   a draft may still have been stored: look at the drafts for the tag on the
   Releases page before you re-run. After the draft is created, the step fails
-  in one of six ways:
+  in one of seven ways:
   - The list shows more than one entry for the tag, or one entry that is not a
     draft or not at the tested commit. The message says that the new draft
     `did not read back as expected` and what it found. This is not lag, so the
@@ -317,9 +377,13 @@ Four rules apply to every case:
     the run, or that an assumption about GitHub is wrong. Look at the drafts
     for the tag on the Releases page and do not re-run until you understand
     it. Two drafts can also both come from this run: one from an earlier
-    attempt whose draft the list never showed (the next failure), and one from
-    the re-run. In that case delete one of the two by hand, so that exactly
-    one remains, and use **Re-run failed jobs**.
+    attempt whose draft the job did not see, and one from the re-run. The
+    unseen draft can come from an attempt in which the list never showed the
+    draft (the next failure), in which the list could not be read on the last
+    attempt (the third failure), or in which the command that creates the
+    draft failed after GitHub had stored the draft. In that case delete one of
+    the two by hand, so that exactly one remains, and use **Re-run failed
+    jobs**.
   - The list never shows the draft. The message begins `The list of releases
     did not show the new draft for v<version>`. Nothing was uploaded. In
     `publish` mode the draft may exist. Wait a few minutes, check that the
@@ -345,6 +409,29 @@ Four rules apply to every case:
     v<version>`. The upload is not tried again, because its failure may not be
     lag. In `publish` mode the draft is left in place: **Re-run failed jobs**
     replaces it. A rehearsal deletes its draft in the clean-up step.
+  - The draft, read by its id after the upload, is not as uploaded. Each
+    message says `Nothing was pushed to NuGet.org` and says that a rehearsal
+    deletes its draft in the clean-up step. In `publish` mode the draft is left
+    in place; look at it on the Releases page before you re-run:
+    - `Could not read the draft` (after 12 attempts): GitHub may not have
+      answered. If the Releases page shows the draft with all the assets, use
+      **Re-run failed jobs**, which replaces it.
+    - `still lacks assets this run uploaded` (after 12 attempts): the upload
+      ended, but the draft does not list every file. The upload may have gone
+      to another release for the tag; look for one on the Releases page and do
+      not re-run until you understand it.
+    - `is no longer the draft for v<version> at this run's commit`, or `holds
+      asset names that this run did not upload`: someone published, moved or
+      changed the draft during the run. This is not lag, so the step fails at
+      once. Do not re-run until you understand it. If the draft now targets
+      another commit, a re-run stops in the classification; delete the draft
+      by hand (case 1). If the Release is now published, a re-run is expected
+      not to replace it: it compares only the asset names (case 8), then
+      pushes to NuGet.org, moves the floating tag where one tracks the version
+      and, for a stable version, publishes to the Marketplace. First compare
+      each asset's `digest` with the run's artefacts, as in case 4.
+    - `has no usable id`: a defect in the workflow. Do not re-run before it is
+      understood.
 
 The cases:
 
@@ -372,12 +459,47 @@ The cases:
    After GitHub's 30-day limit for re-runs, publish the draft by hand (its target
    is the tested commit) and run **Move floating convenience tag** by hand. For a
    stable version, also publish the `.vsix` from the draft to the Marketplace.
-4. **The publication step refused the tag** (the log of `Publish the draft release`
-   says that the tag `now resolves to` another commit and that `nothing was
-   published`). Someone made the tag after the run started. The packages are
-   already on NuGet.org and the draft is not published. Find out who made the tag
-   and why before you delete or move it. Once the tag is gone, or points at the
-   tested commit, **Re-run failed jobs** is expected to publish the draft.
+4. **The publication step refused the tag or the draft.** The packages are
+   already on NuGet.org and nothing was published to GitHub Releases. Read the
+   log of `Publish the draft release`:
+   - It says that the tag `now resolves to` another commit and that `nothing was
+     published`. Someone made the tag after the run started. Find out who made
+     the tag and why before you delete or move it. Once the tag is gone, or
+     points at the tested commit, **Re-run failed jobs** is expected to publish
+     the draft.
+   - It says something about the draft. The step read the draft by its id
+     just before the publishing call, with the same check as after the upload
+     (see the last rule above), making a failed read or a read with missing
+     assets up to 12 times in all, 5 seconds apart. Each message says
+     `Nothing was published to GitHub Releases` and points here. Look at the
+     Releases page before you re-run:
+     - `Could not read the draft` (after 12 attempts): GitHub may not have
+       answered. If the Releases page shows the draft unchanged, use **Re-run
+       failed jobs**.
+     - `has no usable id`: a defect in the workflow, not a change to the
+       draft. Do not re-run before it is understood.
+     - `is no longer the draft for v<version> at this run's commit`, `holds
+       asset names that this run did not upload`, or `still lacks assets this
+       run uploaded`: the draft changed after the upload. Someone published
+       it, moved it to another tag or commit, or changed its assets. Find out
+       what changed before you re-run.
+
+     If the draft is still a draft at the tested commit, **Re-run failed
+     jobs** is expected to replace it, upload the assets again, skip the
+     packages already on NuGet.org and check the draft again. If the draft now
+     targets another commit, the re-run stops in the classification; delete
+     the draft by hand and continue as for a draft that is gone. If the draft
+     is gone, the re-run is refused as in case 7; the packages came from this
+     run, so make a draft by hand as the third rule above describes, and then
+     use **Re-run failed jobs**. If the Release is now published, the re-run
+     is expected to compare only its asset names (case 8), and then to move
+     the floating tag and, for a stable version, to publish to the
+     Marketplace. So if someone else published it, first check its assets
+     against this run's: compare each asset's `digest`
+     (`gh api repos/tomas-rampas/vouchfx/releases/tags/v<version> --jq '.assets[] | [.name,.digest] | @tsv'`)
+     with the run's artefacts, or verify them as described in
+     [Verifying artifacts](#verifying-artifacts). Re-run only if they match.
+     This check has not run on GitHub yet.
 5. **Verification failed because the tag is elsewhere** (the log says the tag does
    not point at the tested commit; the step fails at once, without waiting). The
    Release is already published and the packages are already on NuGet.org. The
@@ -402,7 +524,8 @@ The cases:
    **Re-run failed jobs**. If the tag still does not exist, the classification
    stops with `A published Release for 'v<version>' exists but its tag cannot
    be found.` Do not re-run again, and move nothing by hand, before you know
-   why the Release has no tag.
+   why the Release has no tag. If the tag points at another commit, follow
+   case 5.
 7. **No draft and no Release, but a package of the version is on NuGet.org.** In
    `publish` mode the classification fails with a message that the package is
    already on NuGet.org and that no draft or Release exists for the tag. Before
@@ -429,15 +552,19 @@ The cases:
    differ. A re-run fails in the same way until that changes. Only the asset
    names are compared, not their contents.
 9. **A re-run of an old `publish` run, or a stable patch of an older line, is
-   refused.** For a stable version with no published Release yet (state `none` or
-   `draft`), the classification fails with a message that begins `Refusing to
-   publish` if a published stable Release with a higher version exists, because
-   the version "would be marked Latest in its place". So an old failed run cannot
-   be re-run after a newer stable release, and a stable patch of an older line
-   cannot be released after a newer stable one. Pre-releases are not affected, and
-   neither is a run whose Release is already published. If the draft of an older
-   stable version must still be released, decide by hand whether it may be marked
-   Latest; the workflow does not do it.
+   refused.** A stable version is refused if a published stable Release with a
+   higher version exists, because the version "would be marked Latest in its
+   place". The message begins `Refusing to publish` and ends by naming the fix:
+   release a stable version above the newest one. `prepare` applies this rule
+   to a new `publish` dispatch, before anything is built, so a stable patch of
+   an older line cannot be released after a newer stable one. The
+   classification in `publish-release` applies the same rule again when no
+   Release is published yet (state `none` or `draft`), so an old failed run
+   cannot be re-run after a newer stable release. Pre-releases are not
+   affected, and neither is a run whose Release is already published. If the
+   draft of an older stable version must still be released, decide by hand
+   whether it may be marked Latest; the workflow does not do it. The check in
+   `prepare` has not run on GitHub yet.
 10. **A Marketplace or floating-tag failure.** See the cases below.
 
 ### Floating tag cases
@@ -489,7 +616,8 @@ end successfully with a warning that names the floating tag and the newer releas
 it is on. It moved nothing. That is expected when an older release run's
 `move-floating-tag` job finishes, or is re-run, after a newer release in the same
 line has moved the tag. A stable patch of an older minor line (a `v1.3.z` after
-`v1.4.0`) is refused before publication; see case 9 above. No action is needed.
+`v1.4.0`) is refused by `prepare`, before the build; see case 9 above. No action
+is needed.
 To put the tag on the older release anyway, use the manual run.
 
 **A release found defective after it was published.** If a release passed its
@@ -550,8 +678,8 @@ creates a tag or a published Release, and neither pushes a package.
    **Run workflow**.
 2. Choose the branch to check. Set `mode` to `validate` and `version` to the next
    release version followed by `-validate.N`, for example `1.5.0-validate.1`
-   (there is no default; see the `prepare` checks above for why `0.0.0-test`
-   does not work). Leave `commit` empty.
+   (there is no default; `prepare` refuses a `0.0.0-` version such as
+   `0.0.0-test`, see its checks above). Leave `commit` empty.
 3. The run calls the Docker integration lane (it took about 75 minutes in CI; see
    [The Docker integration gate](#the-docker-integration-gate)), builds all
    artifacts (nupkg, per-RID tarballs, SBOM, VSIX, MSI, deb, pkg) and runs the
@@ -583,7 +711,9 @@ publishing job without releasing anything.
 4. The job creates a draft Release and reads the list of releases back until it
    shows the draft, up to 12 times, 5 seconds apart (the list can lag behind
    the creation). It waits in the same way until the release tool finds the
-   draft by its tag, then uploads the assets to it once. It runs the NuGet
+   draft by its tag, then uploads the assets to it once. It then reads the
+   draft by its id, in the same way, until the draft lists every uploaded
+   asset name, as a `publish` run does before its NuGet pushes. It runs the NuGet
    login (the token exchange; no package is pushed) and deletes the draft in
    the step `Rehearsal — delete the draft release`. That step is written to run
    also when an earlier step failed or the run was cancelled.
@@ -630,7 +760,8 @@ Releases page, or rehearse the next number (for example `1.5.0-rehearsal.2`).
 This flow has run on GitHub in all three modes, but not every path of it has.
 The first `validate` run, on `main`, passed the request check, the TLS lanes,
 the Docker lane and the builds, and failed the packaged-tool smoke test because
-its version, `0.0.0-test`, was below a provider's minimum engine version. A
+its version, `0.0.0-test`, was below a provider's minimum engine version.
+`prepare` now refuses such a version before the build. A
 second `validate` run on `main`, with a version of the form
 `1.5.0-validate.1`, was green. The first `rehearse` run, on
 `main`, reached the publishing job and failed in the read-back of the new
@@ -703,8 +834,8 @@ have shown the ticked ones.
 - [x] Uploading assets to the draft by tag name works, and the asset names are
   unique.
 - [x] The NuGet token exchange succeeds in the `release` environment before the
-  policy on NuGet.org names the environment. This rests on the record of the
-  policy in this document, not on the run.
+  policy on NuGet.org names the environment. The run shows the exchange; that
+  the policy named no environment rests on the table in this document.
 - [ ] The NuGet token exchange succeeds in the `release` environment after the
   policy on NuGet.org names the environment (see
   [NuGet.org publish](#nugetorg-publish-trusted-publishing)).
@@ -750,6 +881,31 @@ The first stable release must also show:
   configured by then.
 - [ ] `move-floating-tag` moves `v1`.
 
+The checks below were added after the first pre-release. The contract tests run
+them with fixture commands; none has run on GitHub yet. The next runs are
+expected to show:
+
+- [ ] `prepare` refuses, in any mode, a version with an upper-case letter in its
+  pre-release (for example `1.5.0-RC.1`) and a version that starts with
+  `0.0.0-`, with a message that names the form to use, and no other job runs.
+- [ ] `prepare` refuses a `publish` dispatch of a stable version below a
+  published stable Release (for example `1.4.1` once `v1.5.0` is published),
+  with a message that names the fix, and no other job runs. It accepts the
+  versions it accepted before: `1.5.0`, `1.5.0-rc.1`, `1.5.1-rehearsal.1` in
+  `rehearse`, and `1.5.0-validate.1` in `validate`.
+- [ ] In a `publish` run, the step that pushes to NuGet.org passes its new
+  refusal (mode `publish`, a version that is not reserved) and pushes as before.
+- [ ] In a `rehearse` or `publish` run, the read of the draft by its id after
+  the upload finds the draft, at the tested commit, with the asset names this
+  run uploaded. Its log says `is the draft for v<version> at this run's commit,
+  with the <N> uploaded assets, on attempt <A> of 12` (40 assets for a release
+  with cosign bundles). The next rehearsal can show this, and how many
+  attempts GitHub needs after an upload; correct this document if `A` is
+  higher than 1.
+- [ ] In a `publish` run, the read of the draft by its id just before the
+  publishing call logs the same line, and the publication follows.
+- [ ] `publish-release` ends well within its limit of 30 minutes.
+
 ---
 
 ## Artifact inventory
@@ -759,6 +915,12 @@ Each release attaches the following files:
 | File | Description |
 |------|-------------|
 | `vouchfx.<ver>.nupkg` | dotnet global tool (primary distribution) |
+| `Vouchfx.Sdk.<ver>.nupkg` | Provider SDK library (the frozen v1 provider contract) |
+| `Vouchfx.Sdk.Testing.<ver>.nupkg` | Test harness library for providers built outside this repository |
+| `Vouchfx.Engine.Abstractions.<ver>.nupkg` | Engine abstractions library |
+| `Vouchfx.Engine.Authoring.<ver>.nupkg` | Engine authoring library (YAML parser and AST builder) |
+| `Vouchfx.Engine.Compilation.<ver>.nupkg` | Engine compilation library |
+| `<id>.<ver>.snupkg` | Symbol package for each of the five libraries above (the tool package has none) |
 | `vouchfx-<ver>-linux-x64.tar.gz` | Self-contained archive, Linux x64 |
 | `vouchfx-<ver>-win-x64.tar.gz` | Self-contained archive, Windows x64 |
 | `vouchfx-<ver>-osx-x64.tar.gz` | Self-contained archive, macOS x64 |
@@ -771,6 +933,12 @@ Each release attaches the following files:
 | `*.cosign.bundle` | cosign keyless signature bundle per artifact |
 | `*.nupkg.asc` | GPG detached signature for the nupkg (if `GPG_SIGNING_KEY` provisioned) |
 | `*.deb.asc` | GPG detached signature for the .deb (if `GPG_SIGNING_KEY` provisioned) |
+
+Without the GPG signatures that makes 20 files: six packages, five symbol
+packages, four archives, three installers, the SBOM and the `.vsix`. In a
+`publish` run each of them has a cosign bundle, so 40 assets are uploaded. The
+first pre-release made by the current flow had exactly these 40 assets and no
+GPG signature.
 
 ---
 
@@ -1113,7 +1281,9 @@ run cannot show the state of the policy; this document recorded it as the table
 shows. Two steps remain for the owner:
 
 1. On NuGet.org, check that the policy is as the table shows, and add the
-   Environment `release` to it.
+   Environment `release` to it. If the policy already names an environment,
+   first correct the table and the rehearse check-list in
+   [First runs](#first-runs-what-only-github-can-show).
 2. Run another rehearsal (see [Checking a candidate](#checking-a-candidate-validate-and-rehearse))
    and confirm that the same step succeeds. Whether the exchange succeeds once
    the policy names the environment has not been seen.
