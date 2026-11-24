@@ -109,15 +109,18 @@ To release:
    job. In the log of `publish-release`, the step
    `Verify the tag and the published release` is expected to end with
    `Verified: v<version> is at <commit> and its Release is published.` Check
-   that the packages are on NuGet.org.
+   that the packages are on NuGet.org. After a pre-release, also read the
+   `Full Changelog` link at the end of the Release notes: for the first
+   pre-release GitHub started the generated notes at the wrong release (see
+   [First runs](#first-runs-what-only-github-can-show)).
 8. Work through the [documentation checklist](#release-time-documentation-checklist).
 
 A newer run does not cancel an existing run (`cancel-in-progress: false`);
 manual cancellation remains possible. Only a `rehearse` or `publish` run on
 `main` uses the shared concurrency group `release-publish`, so two of those never
-run at once, and GitHub keeps at most one waiting run in a group: a third
+run at once, and GitHub keeps at most one pending run in a group: a third
 `rehearse` or `publish` dispatch on `main` is expected to replace the one still
-waiting. Every other run has a group of its own. That includes a `validate` run
+pending. Every other run has a group of its own. That includes a `validate` run
 and a `rehearse` or `publish` dispatch from another branch, which `prepare`
 refuses, so neither can take the place of a waiting release run.
 
@@ -150,7 +153,8 @@ in the run pushes a tag with git: the tag appears when the draft is published.
 Attestations, cosign signatures and the GPG signature of the package are made
 only in `publish` mode, because each is a permanent public record.
 
-Everything above is expected behaviour. None of it has run on GitHub yet; see
+The first pre-release made by this flow went through these steps in this order
+on GitHub. For what that run showed and what is still to show, see
 [First runs](#first-runs-what-only-github-can-show).
 
 ### The Docker integration gate
@@ -617,7 +621,8 @@ Releases page, or rehearse the next number (for example `1.5.0-rehearsal.2`).
 
 ### First runs: what only GitHub can show
 
-Only part of this flow has run on GitHub. The first `validate` run, on `main`,
+This flow has run on GitHub in all three modes, but not every path of it has.
+The first `validate` run, on `main`,
 passed the request check, the TLS lanes, the Docker lane and the builds, and
 failed the packaged-tool smoke test because its version, `0.0.0-test`, was below
 a provider's minimum engine version. A second `validate` run on `main`, with a
@@ -633,7 +638,23 @@ and the NuGet login passed. The clean-up deleted the draft, the list showed
 nothing for the tag on the first read after the deletion, and no tag was left.
 The run cannot show the state of the policy on NuGet.org. The table in
 [NuGet.org publish](#nugetorg-publish-trusted-publishing) recorded no
-environment in the policy at the time of that run. `publish` mode has not run.
+environment in the policy at the time of that run. The first `publish` run, on
+`main`, was for a pre-release and was green. The list showed the new draft on
+the second read, and the release tool found it on the first. The run uploaded 40
+files (the 20 release files and a cosign bundle for each), pushed six packages
+and five symbol packages to NuGet.org, and published the draft, which created
+the tag at the tested commit. The check after publication read the tag and the
+Release on the first attempt. The Release was marked as a pre-release, and the
+newest stable release stayed "latest". The Marketplace job checked the `.vsix`
+and published nothing, because the Marketplace takes no pre-release version, and
+`move-floating-tag` moved nothing. One thing was wrong: the generated part of
+the notes started at an older stable release, not at the newest one, so it also
+listed pull requests that the newest stable release had already shipped. The run
+does not name the starting release; GitHub chooses it, and for the tag of a
+pre-release it chose wrongly. A request by hand to GitHub's endpoint for
+generated notes, for a stable tag name at the same commit, started at the newest
+stable release, so the notes of a stable release are expected to start at the
+right one.
 Before the second rehearsal, a check by hand with a maintainer's token, not the
 job's token, showed the same lag (nothing listed 1.4 seconds after the creation,
 the draft listed 4 seconds after it), the full commit as the draft's target, the
@@ -681,31 +702,35 @@ have shown the ticked ones.
 - [ ] Whether the inputs, the approval and the earlier attempt's artefacts
   carry over on **Re-run failed jobs**.
 
-The first real release (ideally a pre-release) must show the items below. A
-pre-release needs its own version heading in `CHANGELOG.md` and its own
-`VouchfxEngineVersion` fallback in the release pull request; the stable release
-that follows needs another.
+The first real release must show the items below. It was a pre-release, and it
+has shown the ticked ones. A pre-release needs its own version heading in
+`CHANGELOG.md` and its own `VouchfxEngineVersion` fallback in the release pull
+request; the stable release that follows needs another.
 
-- [ ] All packages are pushed.
-- [ ] Publishing the draft creates the tag at the tested commit.
-- [ ] How many reads the check after publication needed. Its log says
-  `on attempt N of 12`. No rehearsal runs this check.
-- [ ] The Release is marked "latest" only for a stable version.
-- [ ] The notes are the `CHANGELOG.md` section followed by the generated notes.
-- [ ] The cosign signing identity reads `release.yml@refs/heads/main`, with the
+- [x] All packages are pushed.
+- [x] Publishing the draft creates the tag at the tested commit.
+- [x] How many reads the check after publication needed. Its log says
+  `on attempt N of 12`. No rehearsal runs this check. In the first pre-release N
+  was 1. Correct this figure if a later run shows a higher one.
+- [x] A pre-release is not marked "latest".
+- [x] The notes are the `CHANGELOG.md` section followed by the generated notes.
+- [ ] The generated notes start at the release before this one. For the first
+  pre-release they started at an older stable release.
+- [x] The cosign signing identity reads `release.yml@refs/heads/main`, with the
   trigger `workflow_dispatch`.
-- [ ] The stricter commands in [Verifying artifacts](#verifying-artifacts) pass
+- [x] The stricter commands in [Verifying artifacts](#verifying-artifacts) pass
   on an artefact of the release: `gh attestation verify` with `--signer-workflow`,
   `--source-ref` and `--source-digest`, and `cosign verify-blob` with
   `--certificate-identity`, `--certificate-github-workflow-trigger` and
-  `--certificate-github-workflow-sha`. They have not been run against a real
-  release yet. If one of them fails, correct this document.
-- [ ] No attestation exists for the artefacts of a `validate` or `rehearse` run.
-- [ ] The `move-floating-tag` job runs. For a pre-release that no floating tag
-  tracks (for example `1.5.0-rc.1`) it is expected to move nothing.
+  `--certificate-github-workflow-sha`.
+- [x] No attestation exists for the artefacts of a `validate` or `rehearse` run.
+  This was checked for the SBOM and the `.vsix` of one run of each mode.
+- [x] The `move-floating-tag` job runs. For a pre-release that no floating tag
+  tracks (for example `1.5.0-rc.1`) it moves nothing.
 
 The first stable release must also show:
 
+- [ ] The Release is marked "latest".
 - [ ] The Marketplace job publishes the extension (where its token is
   configured), and `move-floating-tag` moves `v1`.
 
@@ -779,10 +804,10 @@ A pass is expected to show that `release.yml` ran on `main` at that commit and
 attested the file. Only `publish` runs attest, so that run was a `publish` run.
 It does not show that this run is the one that released the file: a `publish`
 run that failed after `sign-and-attest` attested its artefacts too, and a later
-run at the same commit may have released other files. This command has not been
-run against a real release yet, because none exists; the first real release is
-the check (see [First runs](#first-runs-what-only-github-can-show)). For a
-release made before the current flow, no stricter `gh` form is documented here.
+run at the same commit may have released other files. This command passes for a
+package of the first pre-release made by the current flow, and fails for it when
+another commit is given. For a release made before the current flow, no stricter
+`gh` form is documented here.
 
 ### Verify cosign keyless signature
 
@@ -840,10 +865,15 @@ cosign verify-blob vouchfx.1.2.3.nupkg \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-The stricter commands are expected to work. Their flags were checked against the
-`gh` manual and the cosign v3.1.4 reference, but they have not been run against a
-real release yet, because none exists made by the current flow. The first real
-release is the check; it is on the [first-runs checklist](#first-runs-what-only-github-can-show).
+The stricter command for the current flow passes, with cosign 3.0.2, for a
+package of the first pre-release made by that flow. It fails for it when another
+commit or another trigger is given, and so does the command with the tag
+identity. The command for a release made before the current flow has not been
+run against such a release.
+
+The bundles are in the new Sigstore bundle format. cosign 3 reads that format by
+default. cosign 2.4.1 needs the extra option `--new-bundle-format`; without it,
+it stops with `bundle does not contain cert for verification`.
 
 ### Verify GPG signature (nupkg, when provisioned)
 
