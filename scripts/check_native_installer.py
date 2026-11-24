@@ -45,6 +45,18 @@ def validate_version(version):
             "Expected a release version without shell syntax or build metadata")
 
 
+def debian_version(version):
+    """The Version field that release.yml writes into the .deb for this release version.
+
+    A stable release is X.Y.Z. A pre-release is X.Y.Z~<pre-release>, with each
+    hyphen inside the pre-release written as "." (a hyphen would start a Debian
+    revision). dpkg sorts "~" before the end of the string, so a pre-release is
+    below its stable release.
+    """
+    core, separator, pre = version.partition("-")
+    return f"{core}~{pre.replace('-', '.')}" if separator else core
+
+
 def assert_cli_version(output, version):
     text = output.strip()
     require(text == version or re.fullmatch(re.escape(version) + r"\+[0-9A-Za-z.-]+", text) is not None,
@@ -129,7 +141,7 @@ class Journey:
         self.assert_absent(root, link)
         registered = self.run(["dpkg-query", "--show", "--showformat=${binary:Package}\n"]).stdout.splitlines()
         require(not any(name.split(":", 1)[0] == "vouchfx" for name in registered), "Debian vouchfx registration exists or remains")
-        for field, value in (("Package", "vouchfx"), ("Version", version.split("-", 1)[0]), ("Architecture", "amd64")):
+        for field, value in (("Package", "vouchfx"), ("Version", debian_version(version)), ("Architecture", "amd64")):
             actual = self.run(["dpkg-deb", "--field", package, field]).stdout.strip()
             require(actual == value, f"Wrong Debian {field}: {actual!r}")
         installed = False

@@ -34,6 +34,58 @@ class NativeInstallerPolicyTests(unittest.TestCase):
             with self.subTest(version=version), self.assertRaises(checker.InvalidJourney):
                 checker.validate_version(version)
 
+    # Release version -> the Debian Version field release.yml writes for it.
+    DEBIAN_VERSIONS = {
+        "1.5.0": "1.5.0",
+        "1.5.0-rc.1": "1.5.0~rc.1",
+        "1.5.0-rc-1": "1.5.0~rc.1",
+        "1.5.0-x-y.2-z": "1.5.0~x.y.2.z",
+        "1.5.1-rehearsal.1": "1.5.1~rehearsal.1",
+        "1.5.0-validate.1": "1.5.0~validate.1",
+    }
+
+    def test_debian_version_marks_a_pre_release_with_a_tilde_and_keeps_a_stable_version(self):
+        for version, expected in self.DEBIAN_VERSIONS.items():
+            with self.subTest(version=version):
+                checker.validate_version(version)
+                self.assertEqual(expected, checker.debian_version(version))
+                # Debian policy: an upstream version without a revision holds only
+                # alphanumerics, ".", "+" and "~", and starts with a digit.
+                self.assertRegex(expected, r"^[0-9][0-9A-Za-z.+~]*$")
+
+    def linux_fields(self, version, fields):
+        """Run `linux()` with inert commands up to the install, which stops it."""
+        with tempfile.TemporaryDirectory() as temporary:
+            journey = checker.Journey(Path(temporary) / "evidence")
+            calls = []
+            def inert_run(arguments, **_kwargs):
+                calls.append(arguments)
+                if arguments[:2] == ["dpkg-deb", "--field"]:
+                    return mock.Mock(returncode=0, stdout=fields[arguments[3]] + "\n")
+                if "--install" in arguments:
+                    raise checker.InvalidJourney("inert install reached")
+                return mock.Mock(returncode=0, stdout="")
+            with mock.patch.object(journey, "assert_absent"), mock.patch.object(journey, "run", side_effect=inert_run):
+                with self.assertRaises(checker.InvalidJourney) as raised:
+                    journey.linux("candidate.deb", Path("inert-publish"), version)
+            return str(raised.exception), calls
+
+    def test_debian_fields_must_match_the_release_version_before_install(self):
+        for version, expected in self.DEBIAN_VERSIONS.items():
+            with self.subTest(version=version):
+                message, calls = self.linux_fields(
+                    version, {"Package": "vouchfx", "Version": expected, "Architecture": "amd64"})
+                self.assertEqual("inert install reached", message)
+                self.assertFalse(any("--purge" in arguments for arguments in calls))
+        # The form of the first pre-release, and the full version, are refused.
+        for version, wrong in (("1.5.0-rc.1", "1.5.0"), ("1.5.0-rc.1", "1.5.0-rc.1"), ("1.5.0-rc-1", "1.5.0~rc-1"),
+                               ("1.5.0", "1.5.0~")):
+            with self.subTest(version=version, wrong=wrong):
+                message, calls = self.linux_fields(
+                    version, {"Package": "vouchfx", "Version": wrong, "Architecture": "amd64"})
+                self.assertIn("Wrong Debian Version", message)
+                self.assertFalse(any("--install" in arguments for arguments in calls))
+
     def test_receipt_excludes_shared_directories_from_removal(self):
         text = "usr\nusr/local\nusr/local/bin\nusr/local/lib\nusr/local/bin/vouchfx\nusr/local/lib/vouchfx\nusr/local/lib/vouchfx/vouchfx\n"
         self.assertEqual({checker.MAC_LINK, checker.MAC_ROOT, checker.MAC_ROOT / "vouchfx"}, checker.mac_receipt_paths(text))

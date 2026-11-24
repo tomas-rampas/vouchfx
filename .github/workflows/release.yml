@@ -1387,6 +1387,11 @@ jobs:
 
       # Build the MSI from the skeleton + harvested fragment.
       # -d Version= injects the version; MSI requires W.X.Y (no pre-release suffix).
+      # So a pre-release MSI has the number of its stable release (1.5.0-rc.1
+      # gives 1.5.0). Windows Installer compares only the first three fields,
+      # so a fourth field cannot tell them apart. vouchfx.wxs sets
+      # AllowSameVersionUpgrades: an MSI of the same number replaces the
+      # installed one. The file name keeps the full version.
       - name: Build MSI (wix build)
         run: |
           $msiVersion = $env:VERSION -replace '-.*$', ''
@@ -1517,8 +1522,19 @@ jobs:
 
           installed_kb=$(du -sk "$pkgroot/usr" | awk '{print $1}')
 
-          # Strip pre-release suffix: dpkg version must be M.N.P[-epoch].
-          deb_version="${v%%-*}"
+          # The Debian Version field. A stable release is X.Y.Z. A pre-release
+          # is X.Y.Z~<pre-release> (1.5.0-rc.1 gives 1.5.0~rc.1): dpkg sorts
+          # "~" before the end of the string, so 1.5.0~rc.1 is below 1.5.0 and
+          # the stable package is an upgrade of its pre-releases. A hyphen in
+          # the Version field starts the Debian revision, so a hyphen inside
+          # the pre-release becomes "." (1.5.0-rc-1 gives 1.5.0~rc.1). The file
+          # name keeps the full version. scripts/check_native_installer.py
+          # expects the same value (debian_version).
+          deb_version="$v"
+          if [[ "$v" == *-* ]]; then
+            pre="${v#*-}"
+            deb_version="${v%%-*}~${pre//-/.}"
+          fi
 
           cat > "$pkgroot/DEBIAN/control" <<EOF
           Package: vouchfx
