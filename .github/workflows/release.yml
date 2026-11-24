@@ -26,9 +26,12 @@
 #            publish             `main` only, with `commit` equal to the run's
 #                                commit. The real release.
 #   version  The semver to build, without a leading "v" (e.g. 1.5.0, 1.5.0-rc.1).
-#            It becomes the engine version of the packaged tool. rehearse needs
-#            X.Y.Z-rehearsal.N. publish refuses a pre-release whose first
-#            identifier is `rehearsal` or `validate`, and any 0.0.0- version.
+#            It becomes the engine version of the packaged tool. Every mode
+#            refuses upper-case letters in the pre-release and any 0.0.0-
+#            version. validate takes the next release version followed by
+#            -validate.N. rehearse needs X.Y.Z-rehearsal.N. publish refuses a
+#            pre-release whose first identifier is `rehearsal` or `validate`,
+#            and a stable version below a published stable Release.
 #   commit   The full SHA of the commit to release; required by rehearse and
 #            publish. It must equal the run's commit (the head of `main` when the
 #            run started), which catches a typo or a `main` that has moved on.
@@ -171,7 +174,7 @@ on:
           - rehearse
           - publish
       version:
-        description: "Version without the leading v. publish: the release version. rehearse: X.Y.Z-rehearsal.N. validate: any version the smoke tests accept, for example the next release version followed by -validate.1. The version becomes the engine version of the packaged tool, so one below the providers' minimum engine version (such as 0.0.0-test) fails the packaged-tool smoke test."
+        description: "Version without the leading v. publish: the release version. rehearse: X.Y.Z-rehearsal.N. validate: the next release version followed by -validate.N, for example 1.5.0-validate.1. Every mode refuses upper-case letters in the pre-release and any 0.0.0- version (below every provider's minimum engine version)."
         required: true
         type: string
       commit:
@@ -205,13 +208,15 @@ jobs:
   # Checks the dispatch request before anything is built, and is the single
   # source of the version and tag for every later job. In every mode: `version`
   # is strict semver (MAJOR.MINOR.PATCH, optional pre-release led by "-" whose
-  # numeric parts have no leading zero, no "+build", no "."-led suffix). In
-  # rehearse and publish: the run is on refs/heads/main of tomas-rampas/vouchfx,
-  # `commit` is the run's own commit, and the tag, a published Release and
-  # every NuGet package ID of this version are all absent. In publish:
-  # CHANGELOG.md and Directory.Build.props are prepared for the version, and
-  # the CHANGELOG.md section for it can be used as release notes. It reads with
-  # the job token only; no secrets, no environment.
+  # numeric parts have no leading zero, no "+build", no "."-led suffix), its
+  # pre-release has no upper-case letter, and it does not start with 0.0.0-.
+  # In rehearse and publish: the run is on refs/heads/main of
+  # tomas-rampas/vouchfx, `commit` is the run's own commit, and the tag, a
+  # published Release and every NuGet package ID of this version are all
+  # absent. In publish: a stable version is not below a published stable
+  # Release, CHANGELOG.md and Directory.Build.props are prepared for the
+  # version, and the CHANGELOG.md section for it can be used as release notes.
+  # It reads with the job token only; no secrets, no environment.
   # ===========================================================================
   prepare:
     name: Check the release request
@@ -260,11 +265,35 @@ jobs:
           number='(0|[1-9][0-9]*)'
           part='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
           semver="^${number}\.${number}\.${number}(-${part}(\.${part})*)?$"
+          # The value is printed in shell-quoted form (`printf '%q'`), so that a
+          # newline in it cannot start a line of its own, which the runner
+          # would read as a workflow command.
           if [[ ! "$VERSION" =~ $semver ]]; then
-            echo "::error::Refusing to release: version '$VERSION' is not MAJOR.MINOR.PATCH with an optional '-' pre-release."
+            echo "::error::Refusing to release: version $(printf '%q' "$VERSION") is not MAJOR.MINOR.PATCH with an optional '-' pre-release (the value is shown shell-quoted)."
             exit 1
           fi
           tag="v$VERSION"
+
+          # Upper-case letters in the pre-release are refused in every mode.
+          # The .NET tool store keeps the version in lower case: on Linux with
+          # the .NET 10 SDK, a probe tool packed as 1.0.0-RC.1 was installed
+          # under .store/<tool>/1.0.0-rc.1/. The packaged-tool smoke test and
+          # the Linux preflight build that path from the version as given, so
+          # on Linux they are expected to look in the wrong place and fail
+          # after the build. NuGet compares versions without regard to case,
+          # so the lower-case form loses nothing. Only the pre-release can
+          # hold letters once the version is strict semver.
+          if [[ "$VERSION" != "${VERSION,,}" ]]; then
+            echo "::error::Refusing '$VERSION': its pre-release has upper-case letters. Use '${VERSION,,}' instead. The .NET tool store keeps the version in lower case, so the smoke tests would fail after the build."
+            exit 1
+          fi
+          # 0.0.0- versions are refused in every mode. They are below every
+          # provider's minimum engine version, so the packaged-tool smoke test
+          # would fail them after the build.
+          if [[ "$VERSION" == 0.0.0-* ]]; then
+            echo "::error::Refusing '$VERSION': a 0.0.0- version is below every provider's minimum engine version, so the packaged-tool smoke test would fail it after the build. For validate use the next release version followed by -validate.N, for example 1.5.0-validate.1; for rehearse, the next release version followed by -rehearsal.N."
+            exit 1
+          fi
 
           # A rehearsal makes a draft with placeholder notes. If its clean-up
           # failed, the draft would stay. Only a version with a -rehearsal.N
@@ -274,13 +303,11 @@ jobs:
             echo "::error::A rehearsal must use a version of the form X.Y.Z-rehearsal.N (for example the next release version followed by -rehearsal.1), not '$VERSION'."
             exit 1
           fi
-          # Publish also refuses 0.0.0- versions, the earlier forms for
-          # validation and rehearsal. They are also below every provider's
-          # minimum engine version, so the smoke tests would fail them.
+          # Publish refuses the forms for validation and rehearsal.
           if [[ "$MODE" == "publish" ]]; then
             pre="${VERSION#*-}"
-            if [[ "$VERSION" == 0.0.0-* || ( "$VERSION" == *-* && "$pre" =~ ^(rehearsal|validate)(\.|$) ) ]]; then
-              echo "::error::Refusing to publish '$VERSION': versions with a -rehearsal or -validate pre-release, and versions that start with 0.0.0-, are reserved for rehearsal and validation."
+            if [[ "$VERSION" == *-* && "$pre" =~ ^(rehearsal|validate)(\.|$) ]]; then
+              echo "::error::Refusing to publish '$VERSION': versions with a -rehearsal or -validate pre-release are reserved for rehearsal and validation."
               exit 1
             fi
           fi
@@ -291,7 +318,7 @@ jobs:
               exit 1
             fi
             if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ || "$COMMIT" != "$GITHUB_SHA" ]]; then
-              echo "::error::Input commit '$COMMIT' must be the full SHA of this run's commit, $GITHUB_SHA (the head of main when the run started)."
+              echo "::error::Input commit $(printf '%q' "$COMMIT") must be the full SHA of this run's commit, $GITHUB_SHA (the head of main when the run started; the value is shown shell-quoted)."
               exit 1
             fi
             if [[ "$GITHUB_REPOSITORY" != "tomas-rampas/vouchfx" ]]; then
@@ -315,6 +342,24 @@ jobs:
             if grep -Fxq -- "$tag" <<<"$published"; then
               echo "::error::A published Release for '$tag' already exists."
               exit 1
+            fi
+            # The rule that `publish-release` applies again in its step
+            # `Classify the release state`, for a late re-run. The block between
+            # the two marker lines is the same text in both steps; a contract
+            # test compares them.
+            if [[ "$MODE" == "publish" && "$VERSION" != *-* ]]; then
+              # BEGIN rule: a stable version is not below a published stable Release
+              # A stable Release is marked "Latest". Publishing an older stable
+              # version would take "Latest" from a newer one, so it is refused.
+              # `sort -V` orders plain X.Y.Z versions numerically. A pre-release
+              # is never marked "Latest". `published` lists the tags of the
+              # published Releases, one per line.
+              highest="$(awk '/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { print substr($0, 2) }' <<<"$published" | sort -V | tail -n 1)"
+              if [[ -n "$highest" && "$(printf '%s\n%s\n' "$highest" "$VERSION" | sort -V | tail -n 1)" != "$VERSION" ]]; then
+                echo "::error::Refusing to publish 'v$VERSION': the published Release 'v$highest' is a higher stable version, and 'v$VERSION' would be marked Latest in its place. Release a stable version above $highest instead (see RELEASING.md, case 9)."
+                exit 1
+              fi
+              # END rule
             fi
 
             for id in vouchfx Vouchfx.Sdk Vouchfx.Sdk.Testing Vouchfx.Engine.Abstractions Vouchfx.Engine.Authoring Vouchfx.Engine.Compilation; do
@@ -1695,11 +1740,14 @@ jobs:
   #   2. Create the draft (target: the run's full commit SHA, never a branch)
   #      and upload the assets. An earlier draft at this commit is deleted and
   #      made again, so its notes, title, pre-release flag and assets all come
-  #      from this run. For a Release already published, its asset names must
-  #      equal this run's, and nothing is uploaded.
+  #      from this run. After the upload, the draft is read by its id (still a
+  #      draft, at the run's commit, with the uploaded asset names). For a
+  #      Release already published, its asset names must equal this run's,
+  #      and nothing is uploaded.
   #   3. NuGet login (token exchange).
   #   4. Rehearse mode: delete the draft and stop.
-  #   5. Publish mode: push the packages, publish the draft (which is expected
+  #   5. Publish mode: push the packages, read the draft again by its id
+  #      (the same check as after the upload), publish it (which is expected
   #      to create the tag at the run's commit), then check that the tag
   #      resolves to the run's commit and the Release is no longer a draft.
   # NuGet goes before publication of the Release: it is the step most likely to
@@ -1714,6 +1762,10 @@ jobs:
     needs: [prepare, docker-integration, tls-transport, build-dotnet, sign-and-attest, smoke-test-packaged-tool, smoke-test-distribution-platforms]
     if: inputs.mode != 'validate' && github.ref == 'refs/heads/main' && github.repository == 'tomas-rampas/vouchfx'
     environment: release
+    # A bound on a call that hangs; the default is 360 minutes. The wait for
+    # approval of the environment comes before the job starts and does not
+    # count. The limit is many times the longest run of this job so far.
+    timeout-minutes: 30
 
     permissions:
       contents: write   # create, upload to, publish and delete the Release
@@ -1729,7 +1781,7 @@ jobs:
       TAG:     ${{ needs.prepare.outputs.tag }}
       # GitHub's list of releases can lag behind a write by a second or more
       # (seen in the first rehearsal: the list showed no draft just after the
-      # draft was created). The steps that read the list or the tag straight
+      # draft was created). The steps that read the list, a release or the tag
       # after a write try this many times in all, this many seconds apart: about
       # a minute at most. The steps that use these two values check them first
       # (a whole number from 1 to 99 and one from 0 to 99). The contract tests
@@ -1809,16 +1861,24 @@ jobs:
             exit 1
           fi
 
-          # A stable Release is marked "Latest". Publishing an older stable
-          # version (for example from a late re-run of an old run) would take
-          # "Latest" from a newer one, so it is refused. `sort -V` orders plain
-          # X.Y.Z versions numerically. A pre-release is never marked "Latest".
+          # `prepare` applies the same rule before the build. It is checked
+          # again here for a late re-run of an old run, after a newer stable
+          # release. The block between the two marker lines is the same text
+          # in both steps; a contract test compares them.
           if [[ "$MODE" == "publish" && "$VERSION" != *-* && ( "$state" == "none" || "$state" == "draft" ) ]]; then
-            highest="$(awk -F'\t' '$2 == "false" && $1 ~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { print substr($1, 2) }' <<<"$releases" | sort -V | tail -n 1)"
+            published="$(awk -F'\t' '$2 == "false" { print $1 }' <<<"$releases")"
+            # BEGIN rule: a stable version is not below a published stable Release
+            # A stable Release is marked "Latest". Publishing an older stable
+            # version would take "Latest" from a newer one, so it is refused.
+            # `sort -V` orders plain X.Y.Z versions numerically. A pre-release
+            # is never marked "Latest". `published` lists the tags of the
+            # published Releases, one per line.
+            highest="$(awk '/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { print substr($0, 2) }' <<<"$published" | sort -V | tail -n 1)"
             if [[ -n "$highest" && "$(printf '%s\n%s\n' "$highest" "$VERSION" | sort -V | tail -n 1)" != "$VERSION" ]]; then
-              echo "::error::Refusing to publish '$TAG': the published Release 'v$highest' is a higher stable version, and '$TAG' would be marked Latest in its place."
+              echo "::error::Refusing to publish 'v$VERSION': the published Release 'v$highest' is a higher stable version, and 'v$VERSION' would be marked Latest in its place. Release a stable version above $highest instead (see RELEASING.md, case 9)."
               exit 1
             fi
+            # END rule
           fi
 
           # This job makes the draft before it pushes to NuGet.org, so packages
@@ -1915,7 +1975,10 @@ jobs:
       # front of them). `attempted=true` is written just before the create call:
       # that call can fail after GitHub stored the draft, so it tells the
       # rehearsal clean-up that a draft may exist. `created=true` tells it that
-      # this step made a draft.
+      # this step made a draft. `new_draft_id` is the id of the new draft, once
+      # the release tool has found it. After the upload this step reads the
+      # draft by that id until it holds the uploaded assets, before any NuGet
+      # push; the publication step reads it again by that id.
       - name: Create the draft release and upload the assets
         id: create
         env:
@@ -2008,9 +2071,9 @@ jobs:
           # Read the new draft back before anything is uploaded or pushed. The
           # classification can compare a draft's target with this run's commit
           # only on a later attempt. This proves the round trip in a rehearsal,
-          # before any NuGet push. That GitHub returns the full SHA for a draft
-          # made with a full SHA as its target is expected, not observed (the
-          # first rehearsal never got that far). That the list of releases lags
+          # before any NuGet push. GitHub returns the full SHA for a draft made
+          # with a full SHA as its target (seen in the second rehearsal and in
+          # the first release). That the list of releases lags
           # behind the create is observed: it showed no draft just after the
           # create. So the read is tried again, up to RELEASE_READ_ATTEMPTS
           # times, while the list fails or shows nothing for the tag. The
@@ -2056,7 +2119,7 @@ jobs:
             if [[ "$readback_listed" != "true" ]]; then
               echo "::error::Could not read the releases back after creating the draft for $TAG. Nothing was uploaded and nothing was pushed to NuGet.org."
             else
-              echo "::error::The list of releases did not show the new draft for $TAG after $RELEASE_READ_ATTEMPTS attempts. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode the draft may exist: wait a few minutes, check that the Releases page lists one draft for $TAG, then \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the clean-up step."
+              echo "::error::The list of releases did not show the new draft for $TAG after $RELEASE_READ_ATTEMPTS attempts. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode the draft may exist: wait a few minutes, check that the Releases page lists exactly one draft for $TAG, then \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the clean-up step."
             fi
             exit 1
           fi
@@ -2093,14 +2156,82 @@ jobs:
             break
           done
           if [[ "$view_done" != "true" ]]; then
-            echo "::error::The tool did not find the draft for $TAG after $RELEASE_READ_ATTEMPTS attempts, although the list of releases shows it. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode the draft is left in place: wait a few minutes, check that the Releases page lists one draft for $TAG, then \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the clean-up step."
+            echo "::error::The tool did not find the draft for $TAG after $RELEASE_READ_ATTEMPTS attempts, although the list of releases shows it. Nothing was uploaded and nothing was pushed to NuGet.org. In publish mode the draft is left in place: wait a few minutes, check that the Releases page lists exactly one draft for $TAG, then \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the clean-up step."
             exit 1
           fi
+          echo "new_draft_id=$readback_id" >> "$GITHUB_OUTPUT"
           echo "Uploading ${#files[@]} files to the draft $TAG..."
           if ! gh release upload "$TAG" "${files[@]}" --clobber; then
             echo "::error::The upload to the draft for $TAG failed. Nothing was pushed to NuGet.org. In publish mode the draft is left in place: \"Re-run failed jobs\" replaces it. A rehearsal deletes its draft in the clean-up step."
             exit 1
           fi
+          # Read the draft by its id once the upload has ended, in both modes and
+          # before any NuGet push, so that a failure here costs nothing. The step
+          # `Publish the draft release` runs the same check again just before the
+          # publishing call. The block between the two marker lines is the same
+          # text in both steps; a contract test compares them.
+          new_draft_id="$readback_id"
+          recovery="Nothing was pushed to NuGet.org. In publish mode the draft is left in place: look at it on the Releases page before you use \"Re-run failed jobs\" (see RELEASING.md); it replaces a draft, not a published Release. A rehearsal deletes its draft in the clean-up step."
+          # BEGIN check: the draft holds the assets this run uploaded
+          # The draft is read by its id: it must still be the draft for the tag,
+          # at this run's commit, with the asset name of each file this run
+          # uploaded and no other. A read that fails, or asset names that are
+          # a strict subset of the uploaded ones, may be lag, so the read is
+          # tried again up to RELEASE_READ_ATTEMPTS times. Another tag, draft
+          # flag or target, or a name this run did not upload, is not lag: it
+          # stops at once. `files`, `new_draft_id` and `recovery` are set
+          # before this block.
+          if [[ ! "$new_draft_id" =~ ^[0-9]+$ ]]; then
+            echo "::error::The draft for $TAG has no usable id ('$new_draft_id'), so it cannot be read again. This is a defect in the workflow: do not re-run before it is understood. $recovery"
+            exit 1
+          fi
+          uploaded="$(printf '%s\n' "${files[@]##*/}" | sort)"
+          expected="$TAG"$'\t'"true"$'\t'"$GITHUB_SHA"
+          draft_checked=false
+          draft_problem="not-checked"
+          for ((attempt = 1; attempt <= RELEASE_READ_ATTEMPTS; attempt++)); do
+            if [[ "$attempt" -gt 1 ]]; then
+              sleep "$RELEASE_READ_DELAY_SECONDS"
+            fi
+            if ! current="$(gh api "repos/${GH_REPO}/releases/${new_draft_id}" --jq '([.tag_name, (.draft | tostring), .target_commitish] | @tsv), .assets[].name')"; then
+              draft_problem="unreadable"
+              continue
+            fi
+            found="$(head -n 1 <<<"$current")"
+            if [[ "$found" != "$expected" ]]; then
+              echo "::error::Release $new_draft_id is no longer the draft for $TAG at this run's commit: it reads (tag, draft flag, target) '${found//$'\t'/ }' where '${expected//$'\t'/ }' was expected. $recovery"
+              exit 1
+            fi
+            assets="$(tail -n +2 <<<"$current" | sort)"
+            if [[ "$assets" == "$uploaded" ]]; then
+              draft_checked=true
+              echo "Release $new_draft_id is the draft for $TAG at this run's commit, with the ${#files[@]} uploaded assets, on attempt $attempt of $RELEASE_READ_ATTEMPTS."
+              break
+            fi
+            # Each asset name that is not one of the uploaded names, counted
+            # as often as it is listed beyond the uploaded ones.
+            foreign="$(awk 'NR == FNR { if ($0 != "") wanted[$0]++; next } $0 != "" && !(wanted[$0]-- > 0)' <(printf '%s\n' "$uploaded") <(printf '%s\n' "$assets"))"
+            if [[ -n "$foreign" ]]; then
+              echo "::error::The draft $new_draft_id for $TAG holds asset names that this run did not upload ($(grep -c . <<<"$foreign") of them). $recovery"
+              exit 1
+            fi
+            draft_problem="assets-missing"
+          done
+          if [[ "$draft_checked" != "true" ]]; then
+            case "$draft_problem" in
+              unreadable)
+                echo "::error::Could not read the draft $new_draft_id for $TAG on the last of $RELEASE_READ_ATTEMPTS attempts. $recovery"
+                ;;
+              assets-missing)
+                echo "::error::The draft $new_draft_id for $TAG still lacks assets this run uploaded after $RELEASE_READ_ATTEMPTS attempts: it has $(grep -c . <<<"$assets" || true) of the ${#files[@]} asset names. $recovery"
+                ;;
+              *)
+                echo "::error::Nothing was checked: no attempt read the draft $new_draft_id for $TAG. $recovery"
+                ;;
+            esac
+            exit 1
+          fi
+          # END check
           echo "Done."
 
       # Exchange the single-use GitHub OIDC token for a short-lived
@@ -2234,6 +2365,16 @@ jobs:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
           set -euo pipefail
+          # A second line of defence behind `prepare` and this step's `if`:
+          # only publish mode pushes, and never a version reserved for
+          # validation or rehearsal (a -rehearsal or -validate pre-release, in
+          # any letter case, or a 0.0.0- version).
+          reserved_pre="${VERSION#*-}"
+          reserved_pre="${reserved_pre,,}"
+          if [[ "$MODE" != "publish" || "$VERSION" == 0.0.0-* || ( "$VERSION" == *-* && "$reserved_pre" =~ ^(rehearsal|validate)(\.|$) ) ]]; then
+            echo "::error::Refusing to push mode '$MODE', version '$VERSION': only publish mode pushes, and never a version reserved for validation or rehearsal. Nothing was pushed to NuGet.org."
+            exit 1
+          fi
           # Non-fatal per package: glob order pushes the five Vouchfx.* SDK
           # packages BEFORE vouchfx, and a first-time 403 on a new ID (policy
           # scope, prefix squat) must not hold the primary CLI publish hostage.
@@ -2284,14 +2425,27 @@ jobs:
       # draft is expected to create the lightweight tag at the draft's target,
       # this run's commit; the next step checks it. Only a stable version is
       # marked "latest". On a re-run after publication there is nothing to do.
+      # Just before the publishing call, the draft that the upload step found
+      # is read again by its id: it must still be a draft for the tag, at this
+      # run's commit, with the asset names this run uploaded. That read is
+      # tried again within the job's read bounds, which this step checks
+      # first, before any call. The publishing call itself still names the
+      # tag: it is the call the first release used, and a call by id cannot
+      # be tried before the next real release.
       - name: Publish the draft release
         if: inputs.mode == 'publish'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           STATE: ${{ steps.state.outputs.state }}
+          NEW_DRAFT_ID: ${{ steps.create.outputs.new_draft_id }}
         run: |
           set -euo pipefail
+          recovery="Nothing was published to GitHub Releases. The packages of $VERSION may already be on NuGet.org: see RELEASING.md, case 4."
+          if [[ ! "${RELEASE_READ_ATTEMPTS:-}" =~ ^[1-9][0-9]?$ || ! "${RELEASE_READ_DELAY_SECONDS:-}" =~ ^[0-9]{1,2}$ ]]; then
+            echo "::error::The read bounds are not usable: RELEASE_READ_ATTEMPTS is '${RELEASE_READ_ATTEMPTS:-}' (a whole number from 1 to 99 is needed) and RELEASE_READ_DELAY_SECONDS is '${RELEASE_READ_DELAY_SECONDS:-}' (a whole number from 0 to 99 is needed). $recovery"
+            exit 1
+          fi
           case "$STATE" in
             published)
               echo "The Release $TAG is already published."
@@ -2316,6 +2470,79 @@ jobs:
             echo "::error::Tag '$TAG' now resolves to $tag_sha, not to this run's commit $GITHUB_SHA; nothing was published."
             exit 1
           fi
+          # Read the draft again by its id. The pushes took time, and the
+          # release can change in that time. This narrows the window; it does
+          # not close it. The asset names are those of the files the upload
+          # step sent, found the same way. The step that made the draft ran the
+          # same check after its upload. The block between the two marker
+          # lines is the same text in both steps; a contract test compares
+          # them.
+          mapfile -d '' files < <(find release-upload/ signing-material/ -type f ! -name signing-mode -print0 | sort -z)
+          if [[ "${#files[@]}" -eq 0 ]]; then
+            echo "::error::No release files were found. $recovery"
+            exit 1
+          fi
+          new_draft_id="$NEW_DRAFT_ID"
+          # BEGIN check: the draft holds the assets this run uploaded
+          # The draft is read by its id: it must still be the draft for the tag,
+          # at this run's commit, with the asset name of each file this run
+          # uploaded and no other. A read that fails, or asset names that are
+          # a strict subset of the uploaded ones, may be lag, so the read is
+          # tried again up to RELEASE_READ_ATTEMPTS times. Another tag, draft
+          # flag or target, or a name this run did not upload, is not lag: it
+          # stops at once. `files`, `new_draft_id` and `recovery` are set
+          # before this block.
+          if [[ ! "$new_draft_id" =~ ^[0-9]+$ ]]; then
+            echo "::error::The draft for $TAG has no usable id ('$new_draft_id'), so it cannot be read again. This is a defect in the workflow: do not re-run before it is understood. $recovery"
+            exit 1
+          fi
+          uploaded="$(printf '%s\n' "${files[@]##*/}" | sort)"
+          expected="$TAG"$'\t'"true"$'\t'"$GITHUB_SHA"
+          draft_checked=false
+          draft_problem="not-checked"
+          for ((attempt = 1; attempt <= RELEASE_READ_ATTEMPTS; attempt++)); do
+            if [[ "$attempt" -gt 1 ]]; then
+              sleep "$RELEASE_READ_DELAY_SECONDS"
+            fi
+            if ! current="$(gh api "repos/${GH_REPO}/releases/${new_draft_id}" --jq '([.tag_name, (.draft | tostring), .target_commitish] | @tsv), .assets[].name')"; then
+              draft_problem="unreadable"
+              continue
+            fi
+            found="$(head -n 1 <<<"$current")"
+            if [[ "$found" != "$expected" ]]; then
+              echo "::error::Release $new_draft_id is no longer the draft for $TAG at this run's commit: it reads (tag, draft flag, target) '${found//$'\t'/ }' where '${expected//$'\t'/ }' was expected. $recovery"
+              exit 1
+            fi
+            assets="$(tail -n +2 <<<"$current" | sort)"
+            if [[ "$assets" == "$uploaded" ]]; then
+              draft_checked=true
+              echo "Release $new_draft_id is the draft for $TAG at this run's commit, with the ${#files[@]} uploaded assets, on attempt $attempt of $RELEASE_READ_ATTEMPTS."
+              break
+            fi
+            # Each asset name that is not one of the uploaded names, counted
+            # as often as it is listed beyond the uploaded ones.
+            foreign="$(awk 'NR == FNR { if ($0 != "") wanted[$0]++; next } $0 != "" && !(wanted[$0]-- > 0)' <(printf '%s\n' "$uploaded") <(printf '%s\n' "$assets"))"
+            if [[ -n "$foreign" ]]; then
+              echo "::error::The draft $new_draft_id for $TAG holds asset names that this run did not upload ($(grep -c . <<<"$foreign") of them). $recovery"
+              exit 1
+            fi
+            draft_problem="assets-missing"
+          done
+          if [[ "$draft_checked" != "true" ]]; then
+            case "$draft_problem" in
+              unreadable)
+                echo "::error::Could not read the draft $new_draft_id for $TAG on the last of $RELEASE_READ_ATTEMPTS attempts. $recovery"
+                ;;
+              assets-missing)
+                echo "::error::The draft $new_draft_id for $TAG still lacks assets this run uploaded after $RELEASE_READ_ATTEMPTS attempts: it has $(grep -c . <<<"$assets" || true) of the ${#files[@]} asset names. $recovery"
+                ;;
+              *)
+                echo "::error::Nothing was checked: no attempt read the draft $new_draft_id for $TAG. $recovery"
+                ;;
+            esac
+            exit 1
+          fi
+          # END check
           latest=(--latest)
           if [[ "$VERSION" == *-* ]]; then
             latest=(--latest=false)
