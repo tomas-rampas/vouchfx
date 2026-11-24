@@ -626,8 +626,13 @@ version of the form `1.5.0-validate.1`, was green. The first `rehearse` run, on
 draft: GitHub's list of releases lags behind a write, and it showed no draft
 about a second after the draft was made. The clean-up step then found the draft
 and deleted it, and the list showed nothing for the tag on the first read after
-the deletion. The job now waits for the list for up to about a minute. The
-upload and the NuGet login have not run, and `publish` mode has not run. A
+the deletion. The job now waits for the list for up to about a minute. A second
+`rehearse` run, on `main`, was green. The list showed the new draft on the
+second read, and the release tool found it on the first. The upload of 20 files
+and the NuGet login passed. The clean-up deleted the draft, the list showed
+nothing for the tag on the first read after the deletion, and no tag was left.
+The policy on NuGet.org did not name the `release` environment at the time of
+that run. `publish` mode has not run. Before the second rehearsal, a
 check by hand with a maintainer's token, not the job's token, showed the same
 lag (nothing listed 1.4 seconds after the creation, the draft listed 4 seconds
 after it), the full commit as the draft's target, the release tool finding the
@@ -646,25 +651,30 @@ feature branch, is still to do.
   `move-floating-tag` show as skipped.
 - [ ] The same three points hold in a run from a feature branch.
 
-The first `rehearse` run, on `main`, must show:
+A `rehearse` run, on `main`, must show the points below. The two runs so far
+have shown the ticked ones.
 
 - [x] The run waits for approval of the `release` environment, and
   self-approval works.
 - [x] The job token can list draft releases. The state check and the clean-up
   depend on it.
 - [x] Creating the draft with the commit as its target creates no tag.
-- [ ] The draft is read back as the only draft for the tag, with the full
+- [x] The draft is read back as the only draft for the tag, with the full
   commit as its target, once the list shows it (the step fails otherwise).
-- [ ] The release tool finds the new draft by its tag, with the id that was
+- [x] The release tool finds the new draft by its tag, with the id that was
   read back.
-- [ ] Uploading assets to the draft by tag name works, and the asset names are
+- [x] Uploading assets to the draft by tag name works, and the asset names are
   unique.
-- [ ] The NuGet token exchange succeeds in the `release` environment, both
-  before and after the policy on NuGet.org gains the environment (see
+- [x] The NuGet token exchange succeeds in the `release` environment before the
+  policy on NuGet.org names the environment.
+- [ ] The NuGet token exchange succeeds in the `release` environment after the
+  policy on NuGet.org names the environment (see
   [NuGet.org publish](#nugetorg-publish-trusted-publishing)).
 - [x] The rehearsal draft is deleted, also after a failed step.
-- [ ] How many reads each wait needed. The log of each wait says
-  `on attempt N of 12`; note the highest N here.
+- [x] How many reads each wait needed. The log of each wait says
+  `on attempt N of 12`. The highest N so far is 2, for the read-back of the new
+  draft; the other waits succeeded on the first read. Correct this figure if a
+  later run shows a higher one.
 - [ ] Whether the inputs, the approval and the earlier attempt's artefacts
   carry over on **Re-run failed jobs**.
 
@@ -675,6 +685,8 @@ that follows needs another.
 
 - [ ] All packages are pushed.
 - [ ] Publishing the draft creates the tag at the tested commit.
+- [ ] How many reads the check after publication needed. Its log says
+  `on attempt N of 12`. No rehearsal runs this check.
 - [ ] The Release is marked "latest" only for a stable version.
 - [ ] The notes are the `CHANGELOG.md` section followed by the generated notes.
 - [ ] The cosign signing identity reads `release.yml@refs/heads/main`, with the
@@ -1047,14 +1059,13 @@ following settings:
 
 The table shows the policy as it is today. **The policy does not name an
 environment yet, and the publishing job now runs in the environment `release`.**
-The owner adds the environment to the policy between two rehearsals:
+A rehearsal with the policy as the table shows it has passed the step
+`NuGet login (OIDC → short-lived API key)`. Two steps remain for the owner:
 
-1. Run a rehearsal (see [Checking a candidate](#checking-a-candidate-validate-and-rehearse))
-   with the policy as it is, and note whether the step `NuGet login (OIDC → short-lived API key)`
-   succeeds. Whether the exchange succeeds before the policy names the
-   environment has not been seen.
-2. On NuGet.org, add the Environment `release` to the policy.
-3. Run a second rehearsal and confirm that the same step succeeds.
+1. On NuGet.org, add the Environment `release` to the policy.
+2. Run another rehearsal (see [Checking a candidate](#checking-a-candidate-validate-and-rehearse))
+   and confirm that the same step succeeds. Whether the exchange succeeds once
+   the policy names the environment has not been seen.
 
 Until then, the workflow's own conditions are what keep a `validate` run from
 reaching NuGet: the job `publish-release`, which holds the login and the push,
