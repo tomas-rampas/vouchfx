@@ -20,7 +20,7 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 import urllib.request
 
@@ -249,25 +249,96 @@ def _fetch_json(url: str, headers: dict[str, str] | None = None) -> object:
         return json.loads(resp.read().decode("utf-8"))
 
 
+_SEMVER_RE = re.compile(r"^v?(\d+(?:\.\d+){0,3})(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$", re.ASCII)
+
+
+def _semver_key(version: str) -> tuple | None:
+    """Sort key for a semantic version, or None when it does not parse.
+
+    Follows semantic-versioning precedence: the numeric core compares as
+    numbers (1.10.0 above 1.9.0), and a pre-release sorts below its release
+    (1.5.0 above 1.5.0-rc.1). Build metadata after ``+`` is ignored. A leading
+    ``v`` (a Git tag) is accepted.
+    """
+    m = _SEMVER_RE.match(version.strip())
+    if not m:
+        return None
+    try:
+        core = [int(part) for part in m.group(1).split(".")]
+        core += [0] * (4 - len(core))
+        pre = m.group(2)
+        if pre is None:
+            return (tuple(core), 1, ())
+        # Numeric identifiers sort below alphanumeric ones; a longer list wins a tie.
+        ids = tuple((0, int(i), "") if i.isdigit() else (1, 0, i) for i in pre.split("."))
+    except ValueError:  # a numeric part past Python's integer-string limit
+        return None
+    return (tuple(core), 0, ids)
+
+
+def _is_prerelease(version: str) -> bool:
+    return "-" in version.strip().split("+", 1)[0]
+
+
+def newest_version(versions: Iterable[str], prerelease_flags: dict[str, bool] | None = None) -> str:
+    """Pick the version the sites should call current.
+
+    The newest stable version once at least one stable version exists; a
+    pre-release only when none does (the state before 1.0). Input order does
+    not matter, except between entries of equal precedence, where the first
+    wins. ``prerelease_flags`` lets a source that marks pre-releases
+    itself (GitHub's ``prerelease`` flag) force a version to count as one.
+    Entries that do not parse as a semantic version are ignored. Raises
+    ValueError when nothing usable is left, so a caller falls back to the
+    last known-good value. The returned value has surrounding whitespace
+    removed.
+
+    scripts/check_docs_drift.py holds a stdlib-only copy of this rule (that
+    script installs nothing). scripts/site-tools/tests/test_check_docs_drift.py
+    runs one table of cases against both copies, so a change to one copy that
+    alters its answer on any of those cases fails.
+    """
+    flags = prerelease_flags or {}
+    parsed = [(key, v.strip(), flags.get(v, False)) for v in versions if (key := _semver_key(v)) is not None]
+    stable = [(k, v) for k, v, flagged in parsed if not (_is_prerelease(v) or flagged)]
+    pool = stable or [(k, v) for k, v, _ in parsed]
+    if not pool:
+        raise ValueError("no usable version in the list")
+    return max(pool, key=lambda kv: kv[0])[1]
+
+
 def _fetch_engine_release() -> str:
     headers = {"User-Agent": _USER_AGENT, "Accept": "application/vnd.github+json"}
     token = os.environ.get("GITHUB_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    releases = _fetch_json("https://api.github.com/repos/tomas-rampas/vouchfx/releases", headers)
-    # Deliberately keeps pre-releases (the whole alpha series IS the release
-    # line today); only drafts are skipped. Do not add a prerelease filter.
-    return next(r["tag_name"] for r in releases if not r.get("draft"))  # type: ignore[union-attr]
+    # per_page=100: the rule needs the newest stable release to be in the page,
+    # and a long run of pre-releases could crowd it out of a default 30-entry page.
+    releases = _fetch_json("https://api.github.com/repos/tomas-rampas/vouchfx/releases?per_page=100", headers)
+    return _newest_release_tag(releases)  # type: ignore[arg-type]
+
+
+def _newest_release_tag(releases: list[dict]) -> str:
+    """Newest stable release tag; a pre-release only when no stable one exists.
+
+    Drafts are skipped. It agrees with GitHub's "latest" release while stable
+    releases are published in version order. GitHub's "latest" never points at
+    a pre-release, and the landing page links to /releases/latest beside the
+    version it names. Do not keep pre-releases once a stable release exists.
+    """
+    tags = [r["tag_name"] for r in releases if not r.get("draft")]
+    flags = {r["tag_name"]: bool(r.get("prerelease")) for r in releases if not r.get("draft")}
+    return newest_version(tags, flags)
 
 
 def _fetch_sdk_version() -> str:
     data = _fetch_json("https://api.nuget.org/v3-flatcontainer/vouchfx.sdk/index.json")
-    return data["versions"][-1]  # type: ignore[index]
+    return newest_version(data["versions"])  # type: ignore[index]
 
 
 def _fetch_community_jsonrpc_version() -> str:
     data = _fetch_json("https://api.nuget.org/v3-flatcontainer/vouchfx.community.jsonrpc/index.json")
-    return data["versions"][-1]  # type: ignore[index]
+    return newest_version(data["versions"])  # type: ignore[index]
 
 
 def _fetch_community_provider_count() -> str:

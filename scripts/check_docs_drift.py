@@ -170,14 +170,59 @@ def _latest_registry_count(data: object) -> str:
     return str(len(data))
 
 
+# The version choice below is a stdlib-only copy of `newest_version` in
+# scripts/site-tools/src/vouchfx_site_tools/__init__.py (this script installs
+# nothing). The sites name the newest stable version once one exists, and a
+# pre-release only before the first stable version. The parity test in
+# scripts/site-tools/tests/test_check_docs_drift.py runs one table of cases
+# against both copies, so a change to one copy that alters its answer on any of
+# those cases fails.
+_SEMVER_RE = re.compile(r"^v?(\d+(?:\.\d+){0,3})(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$", re.ASCII)
+
+
+def _semver_key(version: str) -> tuple | None:
+    m = _SEMVER_RE.match(version.strip())
+    if not m:
+        return None
+    try:
+        core = [int(part) for part in m.group(1).split(".")]
+        core += [0] * (4 - len(core))
+        pre = m.group(2)
+        if pre is None:
+            return (tuple(core), 1, ())
+        ids = tuple((0, int(i), "") if i.isdigit() else (1, 0, i) for i in pre.split("."))
+    except ValueError:  # a numeric part past Python's integer-string limit
+        return None
+    return (tuple(core), 0, ids)
+
+
+def newest_version(versions: list[str], prerelease_flags: dict[str, bool] | None = None) -> str:
+    """Newest stable version; a pre-release only when no stable one exists."""
+    flags = prerelease_flags or {}
+    parsed = [(key, v.strip(), flags.get(v, False)) for v in versions if (key := _semver_key(v)) is not None]
+    stable = [(k, v) for k, v, flagged in parsed if "-" not in v.split("+", 1)[0] and not flagged]
+    pool = stable or [(k, v) for k, v, _ in parsed]
+    if not pool:
+        raise ValueError("no usable version in the list")
+    return max(pool, key=lambda kv: kv[0])[1]
+
+
+def _newest_release_tag(releases: list[dict]) -> str:
+    published = [r for r in releases if not r.get("draft")]
+    return newest_version(
+        [r["tag_name"] for r in published],
+        {r["tag_name"]: bool(r.get("prerelease")) for r in published},
+    )
+
+
 # Same four sources fact injection uses (build_site.py): (fact key, source URL, extractor).
+# per_page=100: the newest stable release must be in the one page that is read.
 FACT_SOURCES = [
-    ("engine_release", "https://api.github.com/repos/tomas-rampas/vouchfx/releases",
-     lambda d: next(r["tag_name"] for r in d if not r.get("draft"))),
+    ("engine_release", "https://api.github.com/repos/tomas-rampas/vouchfx/releases?per_page=100", _newest_release_tag),
     ("sdk_version", "https://api.nuget.org/v3-flatcontainer/vouchfx.sdk/index.json",
-     lambda d: d["versions"][-1]),
+     lambda d: newest_version(d["versions"])),
     ("community_jsonrpc_version", "https://api.nuget.org/v3-flatcontainer/vouchfx.community.jsonrpc/index.json",
-     lambda d: d["versions"][-1]),
+     lambda d: newest_version(d["versions"])),
     ("community_provider_count",
      "https://raw.githubusercontent.com/tomas-rampas/vouchfx-providers/main/registry/community-providers.json",
      _latest_registry_count),
