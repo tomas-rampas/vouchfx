@@ -596,8 +596,9 @@ class DockerIntegrationReusableWorkflowTests(unittest.TestCase):
         self.assertEqual("./.github/workflows/docker-integration.yml", self.caller["uses"])
         self.assertEqual("build", self.caller["needs"])
         self.assertEqual(DOCKER_JOB_IF, self.caller["if"])
-        tls = self.build["jobs"]["tls-transport"]["with"]["reviewed_sha"]
-        self.assertEqual({"reviewed_sha": tls}, self.caller["with"])
+        # The job runs only on schedule and workflow_dispatch, which carry no pull
+        # request, so the run's own commit is the only value it can pass.
+        self.assertEqual({"reviewed_sha": "${{ github.sha }}"}, self.caller["with"])
         self.assertNotIn("secrets", self.caller)
 
     def test_gate_carries_the_required_name_and_fails_on_failure_or_cancellation(self):

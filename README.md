@@ -482,6 +482,10 @@ cosign verify-blob vouchfx.1.0.0.nupkg \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
+The cosign bundles are in the new Sigstore bundle format. cosign 3 reads it by default. cosign 2.4.1
+needs the extra option `--new-bundle-format`; without it, it stops with
+`bundle does not contain cert for verification`.
+
 These two commands show that some workflow run in this repository (`gh`), or some run of
 `release.yml` on any branch or tag (`cosign`), made the file. They do not show which ref or commit it
 was built from. [RELEASING.md](https://github.com/tomas-rampas/vouchfx/blob/main/RELEASING.md#verifying-artifacts)

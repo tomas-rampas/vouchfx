@@ -169,6 +169,27 @@ public sealed class YamlKeyAliasGuardTests
             BuildRepeatedScalarKeys(100_000, 10) + "---\n" + BuildRepeatedScalarKeys(100_000, 10), out _));
     }
 
+    // The cap is inclusive. One use of an alias inside one key is charged its value length + 1,
+    // so a value of MaxKeyAliasText - 1 characters lands exactly on the cap and is accepted,
+    // and one more character is the first refused length.
+    [Fact]
+    public void TryFindRefusedKeyAlias_ScalarTextExactlyAtTheCap_IsAcceptedAndOneMoreIsRefused()
+    {
+        var atCap = (int)YamlKeyAliasGuard.MaxKeyAliasText - 1;
+        Assert.Equal(1_048_575, atCap);
+
+        Assert.False(YamlKeyAliasGuard.TryFindRefusedKeyAlias(BuildSingleScalarKey(atCap), out _));
+
+        Assert.True(YamlKeyAliasGuard.TryFindRefusedKeyAlias(BuildSingleScalarKey(atCap + 1), out var refusal));
+        Assert.Equal(YamlKeyAliasGuard.RefusalKind.KeyAliasTextBudget, refusal.Kind);
+        Assert.Equal("a", refusal.Anchor);
+        Assert.Equal(2, refusal.Line);
+        Assert.Equal(3, refusal.Column);
+    }
+
+    private static string BuildSingleScalarKey(int valueLength) =>
+        "a: &a " + new string('x', valueLength) + "\n[ *a ]: 1\n";
+
     // YamlDotNet hashes a scalar's tag together with its value, so a short value under a long
     // tag costs as much to hash at every use as a long value: the cap counts the tag too. Each
     // use below is charged 1 (the value) + 100,000 (the tag) + 1, so ten uses fit under the cap

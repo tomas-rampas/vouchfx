@@ -140,7 +140,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- NuGet audit suppression for ONE advisory (ZEB-33): GHSA-f7vh-h5g3-7jrh,
+    <!-- NuGet audit suppression for ONE advisory: GHSA-f7vh-h5g3-7jrh,
          high severity, a macOS Aspire dashboard cookie leak via a YARP link. It affects
          Aspire.Hosting and Aspire.Hosting.AppHost below 13.6.5, and 13.6.5 is the only patched
          release; the pin is 13.4.6 (Directory.Packages.props). Without this item NuGet audit

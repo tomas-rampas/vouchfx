@@ -7,8 +7,8 @@
 # repository provides several actions - github/codeql-action supplies both init and
 # analyze - one upstream release is split across separate pull requests, and such a
 # request can rewrite a SIBLING action's version comment without touching its SHA.
-# PR #323 did exactly that: it relabelled the analyze pin as v4.37.4 while leaving it
-# on the v4.37.3 commit. A pin whose comment misdescribes what it pins defeats the
+# One such pull request did exactly that: it relabelled the analyze pin as v4.37.4
+# while leaving it on the v4.37.3 commit. A pin whose comment misdescribes what it pins defeats the
 # reason for pinning, since that comment is the only human-readable statement of what
 # the SHA is. Actions sharing a repository are therefore grouped below, so one upstream
 # release lands as one commit.
@@ -58,23 +58,24 @@ updates:
     # Add a directory when a project outside the solution sets a version itself.
     # Dependabot alerts, and so security updates, already covered the example through the
     # dependency graph; this entry adds version updates for it.
-    # Check on the first weekly run: a separate grouped pull request for the example's
-    # directory is expected (see the groups note below), and its update should edit only
-    # ComposeOrders.csproj and leave the central Npgsql PackageVersion untouched.
+    # Seen on the first run after this directory was added: one grouped pull request
+    # covered both directories. It edited Directory.Packages.props and
+    # examples/compose-orders/app/ComposeOrders.csproj together (see the groups note
+    # below), raised the example's own Npgsql in ComposeOrders.csproj only, and left the
+    # central Npgsql PackageVersion untouched.
     directories:
       - "/"
       - "/examples/compose-orders/app"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    # Collapse each week's MINOR and PATCH version updates into ONE pull request per
-    # directory (fewer PRs to triage, and any paired-pin / NU1109 fix-up is paid once per
-    # directory per week). With several directories, a group is expected to produce a
-    # separate pull request for each directory unless `group-by: dependency-name` is set,
-    # which GitHub's Dependabot options reference describes as one pull request per
-    # dependency across all the directories; that would defeat the weekly batching, so it
-    # is not set. Aspire.Hosting.* ships in lockstep, so it is grouped on its own so a
-    # partial Aspire bump never lands.
+    # Collapse each week's MINOR and PATCH version updates into ONE pull request per group
+    # (fewer PRs to triage, and any paired-pin / NU1109 fix-up is paid once per week). With
+    # several directories, the first run showed that a group makes one pull request across
+    # all the directories, not one per directory. `group-by: dependency-name` is not set:
+    # GitHub's Dependabot options reference describes it as one pull request per dependency
+    # across all the directories, which would defeat the weekly batching. Aspire.Hosting.*
+    # ships in lockstep, so it is grouped on its own so a partial Aspire bump never lands.
     # Security updates are not affected by `groups` unless `applies-to: security-updates`
     # is set, so these groups never batch an advisory fix: any security update that is
     # raised comes as its own PR. Whether a hold in the ignore list also stops one is a
@@ -94,12 +95,11 @@ updates:
     # packages' dependency ranges refuse. AWSSDK.Core is pinned centrally and no project
     # references it directly: if a grouped update fails restore with NU1109 on AWSSDK.Core,
     # raise that pin in Directory.Packages.props on the same branch.
-    # open-pull-requests-limit stays at 5, and the limit is shared by both directories: the
-    # groups take up to three slots for "/" and may take one more for the example, so two
-    # slots may be left for individual majors when only the three for "/" are open. The
-    # example has few packages, and no AWSSDK or Aspire package. Most majors are held below,
-    # so few are expected at once. Security updates have their own separate limit (10 open pull
-    # requests) and are not queued behind these.
+    # open-pull-requests-limit stays at 5, and the limit is shared by both directories. The
+    # three groups take up to three slots, so at least two slots are left for individual
+    # majors. The example has few packages, and no AWSSDK or Aspire package. Most majors are
+    # held below, so few are expected at once. Security updates have their own separate
+    # limit (10 open pull requests) and are not queued behind these.
     groups:
       aspire:
         patterns:
@@ -162,10 +162,10 @@ updates:
       # Npgsql majors above 8 are held: Npgsql 10 reads PostgreSQL date/time as
       # DateOnly/TimeOnly through non-generic reads, which would change db-assert.postgres
       # comparisons, and validates the TLS chain against the provided root CA only. Held
-      # pending a dedicated upgrade with date/time and TLS-chain regression tests
-      # (see PR #662). The Docker-backed pins (real-server rendering and the TLS matrix) run only
-      # in the daily Docker lane, so a driver-upgrade branch must run that lane by manual
-      # dispatch before it is merged.
+      # pending a dedicated upgrade with date/time and TLS-chain regression tests. The
+      # Docker-backed pins (real-server rendering and the TLS matrix) run only in the daily
+      # Docker lane, so a driver-upgrade branch must run that lane by manual dispatch before
+      # it is merged.
       - dependency-name: "Npgsql"
         update-types: ["version-update:semver-major"]
       # System.Text.Json versions with the .NET release. Its major stays held although the
