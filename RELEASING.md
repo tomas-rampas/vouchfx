@@ -910,16 +910,18 @@ expected to show:
 The installers of a pre-release changed after the first pre-release (see
 [Secondary: self-contained executables and installers](#secondary-self-contained-executables-and-installers)).
 The contract tests run the `.deb` build step with a fixture `dpkg-deb`, and a
-local container check installed packages built by that step; the MSI with
-`AllowSameVersionUpgrades` has not been built or installed anywhere yet. The
-next runs are expected to show:
+local container check installed packages built by that step. A `validate` run
+from the branch of that change, with the version `1.5.0-validate.1`, has shown
+the two ticked items; the last one is still to show:
 
-- [ ] In a `validate` run, `build-msi` builds the MSI with
-  `AllowSameVersionUpgrades`, with no new warning in the `wix build` log, and
-  its install check passes.
-- [ ] In a `validate` run, the `.deb` of the version given (for example
-  `1.5.0-validate.1`) carries `Version: 1.5.0~validate.1`, and its install
-  check passes; its file name keeps the full version.
+- [x] In a `validate` run, `build-msi` builds the MSI with
+  `AllowSameVersionUpgrades`, with no warning in the `wix build` log, and its
+  install check passes. The run used WiX 4.0.6; the install log names
+  `ProductVersion = 1.5.0`, and the MSI was installed on the runner and
+  removed again.
+- [x] In a `validate` run, the `.deb` of the version given carries
+  `Version: 1.5.0~validate.1`, and its install check passes; its file name
+  keeps the full version (`vouchfx-1.5.0-validate.1-linux-x64.deb`).
 - [ ] The first stable release after the change: the stable MSI replaces an
   installed pre-release MSI of the same number, leaving one entry in
   **Installed apps** and one PATH entry. No job of the release workflow
@@ -1206,8 +1208,9 @@ release version (`vouchfx-1.5.0-rc.1-linux-x64.deb`,
   message. The WiX build (the `wix` .NET tool, 4.0.x in this workflow) does
   not run the ICE validation, so ICE61's warning about removing an equal
   version is not expected in the build log; the WiX 4.0.6 compiler source has
-  no warning for the attribute. The `build-msi` job of a `validate` run is the
-  first place the build and its install check can show this.
+  no warning for the attribute. The `build-msi` job of a `validate` run has
+  shown the build, with no warning, and the install check of one MSI (see
+  First runs); it does not install one MSI over another.
 
 **Single-file executables are NOT produced** (e.g. `PublishSingleFile=true`
 is not used).  The Roslyn compiler in the engine uses `Assembly.Location` to
