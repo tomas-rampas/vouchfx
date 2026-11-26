@@ -139,12 +139,24 @@ To release:
    the last of them, the tool package, about 17 minutes after its push. After
    each release, also read the `Full Changelog` link at the end of the Release
    notes. It should start at the newest earlier stable release. For the first
-   pre-release GitHub started it at an older stable release, and GitHub is
-   expected to do the same for the next pre-release (see
-   [First runs](#first-runs-what-only-github-can-show)). If the link starts at
-   another release, correct the generated part of the notes on the Release
-   page by hand. A request to GitHub's endpoint for generated notes that names
-   the starting tag (`previous_tag_name`) returns the right text.
+   pre-release GitHub chose where the notes start, and it started them at an
+   older stable release (see
+   [First runs](#first-runs-what-only-github-can-show)). The run now names the
+   starting tag: the highest published stable Release (a tag of the form
+   `vX.Y.Z`, not a draft) whose `X.Y.Z` is below the `X.Y.Z` of the version.
+   `1.5.0`, `1.5.0-rc.2` and `1.5.0-rehearsal.3` all start at `v1.4.0` when
+   that is the highest such Release. A pre-release is never the start, and
+   neither is a stable Release of the same or a higher number. When there is no
+   such Release, the run names none, and GitHub chooses. The notes are
+   expected to start at the named tag; this has not yet been seen on GitHub.
+   The step `Create the draft release and upload the assets` logs
+   `The generated notes start at v<tag>` (or that it passes no starting tag)
+   and, near its end, the draft's `Full Changelog` line. It writes a warning,
+   and the run goes on, when that line does not link `compare/v<tag>...`. If
+   the link starts at another release, correct the generated part of the notes
+   on the Release page by hand. A request to GitHub's endpoint for generated
+   notes that names the starting tag (`previous_tag_name`) returns the right
+   text.
 8. Work through the [documentation checklist](#release-time-documentation-checklist).
 
 A newer run does not cancel an existing run (`cancel-in-progress: false`);
@@ -433,6 +445,15 @@ Four rules apply to every case:
       artefacts, as in case 4, and re-run only if they match.
     - `has no usable id`: a defect in the workflow. Do not re-run before it is
       understood.
+- **The starting tag of the notes is checked before anything is changed.** The
+  same step checks the starting tag that the classification chose, before it
+  deletes an earlier draft or makes a new one. A value that is not of the form
+  `vX.Y.Z` stops the step with `The starting tag for the generated notes is …
+  not of the form vX.Y.Z`: a defect in the workflow, with nothing deleted,
+  created or uploaded. Do not re-run before it is understood. Reading the
+  draft's notes for the `Full Changelog` line, at the end of the step, never
+  stops it: a failed read or a line that does not link the starting tag is
+  only a warning.
 
 The cases:
 
@@ -798,12 +819,16 @@ until one is.
 One thing was wrong in that run: the generated part of the notes started at an
 older stable release, not at the newest one, so it also listed pull requests
 that the newest stable release had already shipped. The run does not name the
-starting release; GitHub chooses it, and for the tag of a pre-release it chose
+starting release; GitHub chose it, and for the tag of a pre-release it chose
 wrongly. Requests by hand to GitHub's endpoint for generated notes, at the same
 commit, started at the same older release for other pre-release tag names, and
-at the newest stable release for stable tag names. So the notes of a pre-release
-are expected to start at the wrong release again, and the notes of a stable
-release at the right one.
+at the newest stable release for stable tag names. Since then the run names the
+starting tag (`--notes-start-tag`): the highest published stable Release below
+the version's `X.Y.Z`, for a stable version, a pre-release and a rehearsal alike
+(see step 7 of "To release" in
+[How to trigger a release](#how-to-trigger-a-release)). So the notes of both a
+pre-release and a stable release are expected to start at the newest earlier
+stable release. No run has shown this yet.
 
 The contract tests (`scripts/ci/test_release_workflow.py`) check the workflow
 file and run its step scripts with fixture commands; they cannot show the points
@@ -860,7 +885,10 @@ request; the stable release that follows needs another.
   was 1. Correct this figure if a later run shows a higher one.
 - [x] A pre-release is not marked "latest".
 - [x] The notes are the `CHANGELOG.md` section followed by the generated notes.
-  The generated notes started at the wrong release, as described above.
+  The generated notes started at the wrong release, as described above. The
+  run named no starting tag then; it does now, and the next release is
+  expected to show that the notes start at the named tag (see the checks
+  added after the first pre-release, below).
 - [x] The cosign signing identity reads `release.yml@refs/heads/main`, with the
   trigger `workflow_dispatch`.
 - [x] The stricter commands in [Verifying artifacts](#verifying-artifacts) pass
@@ -877,7 +905,9 @@ The first stable release must also show:
 
 - [ ] The Release is marked "latest".
 - [ ] The generated notes start at the newest earlier stable release, not at a
-  pre-release or an older stable release.
+  pre-release or an older stable release. The run names that release as the
+  starting tag, so this is expected; the next pre-release is expected to show
+  the same.
 - [ ] The Marketplace job publishes the extension, if its token has been
   configured by then.
 - [ ] `move-floating-tag` moves `v1`.
@@ -906,6 +936,15 @@ expected to show:
 - [ ] In a `publish` run, the read of the draft by its id just before the
   publishing call logs the same line, and the publication follows.
 - [ ] `publish-release` ends well within its limit of 30 minutes.
+- [ ] In a `rehearse` or `publish` run, the step
+  `Create the draft release and upload the assets` logs
+  `The generated notes start at v<tag> (--notes-start-tag).`, with `v<tag>` the
+  highest published stable Release below the version's `X.Y.Z`, and near its
+  end the draft's line `Full Changelog line of the draft <id>: **Full
+  Changelog**: …/compare/v<tag>...v<version>`, with no warning. A rehearsal can
+  show this before a release, because its draft is deleted when it ends. The
+  `gh` release tool documents `--notes-start-tag`, but how GitHub treats it for
+  a draft whose tag does not exist yet has not been seen.
 
 The installers of a pre-release changed after the first pre-release (see
 [Secondary: self-contained executables and installers](#secondary-self-contained-executables-and-installers)).
