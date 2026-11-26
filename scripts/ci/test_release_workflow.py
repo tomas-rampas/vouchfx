@@ -713,8 +713,11 @@ FILTERS = {
 FINAL_READ_FILTER = "([.tag_name, (.draft | tostring), .target_commitish] | @tsv), .assets[].name"
 
 def body_of(r):
-    # The body as GitHub is expected to store it: the notes file's text, then the
+    # The body as it is expected to be stored: the notes file's text, then the
     # generated notes, which end with the `Full Changelog` line made at creation.
+    # With `--notes-start-tag`, `gh` asks for the generated notes itself and joins
+    # them to the file's text with one newline. Without it GitHub builds the notes,
+    # and the first pre-release showed two newlines between the two parts.
     # `body-read.json` scripts the answer instead: "fail", or the whole body.
     scripted = d / "body-read.json"
     if scripted.exists():
@@ -724,8 +727,9 @@ def body_of(r):
         return answer
     if not r.get("generated"):
         return r["body"]
-    return (r["body"] + "\\n\\n## What's Changed\\n* **Full Changelog**: a pull request title by @someone in "
-            "https://github.com/" + os.environ["GH_REPO_EXPECTED"] + "/pull/1\\n\\n\\n" + r["generated"])
+    join = "\\n" if r.get("notes_start_tag") else "\\n\\n"
+    return (r["body"] + join + "## What's Changed\\n* **Full Changelog**: a pull request title by @someone in "
+            "https://github.com/" + os.environ["GH_REPO_EXPECTED"] + "/pull/1\\n\\n" + r["generated"])
 
 ID_FILTERS = {
     "[.tag_name, (.draft | tostring), .target_commitish] | @tsv":
@@ -2861,7 +2865,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
         create = self.create_call(result)
         self.assertIn(f" --generate-notes --notes-start-tag {start}", create)
         self.assertEqual(1, create.count("--notes-start-tag"), create)
-        self.assertIn(f"The generated notes start at {start} (--notes-start-tag).\n", result["log"])
+        self.assertIn(f"Passing --notes-start-tag {start} to the release tool's create call.\n", result["log"])
         self.assertIn(f"Full Changelog line of the draft 101: **Full Changelog**: "
                       f"https://github.com/{REPOSITORY}/compare/{start}...v{version}\n", result["log"])
         self.assertNotIn("::warning::", result["log"])
@@ -2871,11 +2875,13 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertEqual("", result["outputs"]["state"].get("notes_start_tag"), result["log"])
         self.assertNotIn("--notes-start-tag", self.create_call(result))
         self.assertIn(self.NO_START.format(f"v{version}") + "\n", result["log"])
-        self.assertNotIn("The generated notes start at", result["log"])
+        self.assertNotIn("Passing --notes-start-tag", result["log"])
         self.assertNotIn("::warning::", result["log"])
 
     def test_notes_start_at_the_highest_stable_release_below_a_stable_pre_release_or_rehearsal_version(self):
-        for mode, version in (("publish", "1.5.0"), ("publish", "1.5.0-rc.2"), ("rehearse", "1.5.0-rehearsal.3")):
+        # `1.5.0-rc-1` has a hyphen in its pre-release: X.Y.Z ends at the first hyphen.
+        for mode, version in (("publish", "1.5.0"), ("publish", "1.5.0-rc.2"), ("publish", "1.5.0-rc-1"),
+                              ("rehearse", "1.5.0-rehearsal.3")):
             with self.subTest(version=version):
                 result = self.run_job(mode=mode, version=version, releases=self.NOTES_RELEASES)
                 self.assertNotesStartAt(result, version, "v1.4.0")
@@ -2908,7 +2914,11 @@ class PublishReleaseScriptTests(unittest.TestCase):
                     release("v1.4.9", True, rid=5), release("v1.4.8-rc.1", False, rid=6),
                     release("v1.5.0-rc.1", False, rid=7), release("v1.4.5.1", False, rid=8),
                     release("v01.4.6", False, rid=9), release("1.4.7", False, rid=10))
-        self.assertNotesStartAt(self.run_job(version="1.5.0-rc.2", releases=releases), "1.5.0-rc.2", "v1.4.0")
+        # With v1.5.0 published, `1.5.0-rc-1` shows that X.Y.Z ends at the first
+        # hyphen: `1.5.0-rc` would sort after 1.5.0 and choose v1.5.0.
+        for version in ("1.5.0-rc.2", "1.5.0-rc-1"):
+            with self.subTest(version=version):
+                self.assertNotesStartAt(self.run_job(version=version, releases=releases), version, "v1.4.0")
 
     def test_no_earlier_stable_release_leaves_the_notes_start_option_out_and_says_so(self):
         # GitHub then chooses where the notes start (here an older tag), and that is
@@ -2944,10 +2954,26 @@ class PublishReleaseScriptTests(unittest.TestCase):
                     self.assertNotIn("attempted", result["outputs"]["create"])
 
     def test_notes_that_do_not_start_at_the_passed_tag_are_warned_about_and_the_run_goes_on(self):
-        elsewhere = f"### Added\n\n- Feature.\n\n**Full Changelog**: https://github.com/{REPOSITORY}/compare/v1.2.1...v1.5.0-rc.2"
+        github = f"https://github.com/{REPOSITORY}"
+        elsewhere = f"### Added\n\n- Feature.\n\n**Full Changelog**: {github}/compare/v1.2.1...v1.5.0-rc.2"
+        # A line of the CHANGELOG part that names the right start, before GitHub's
+        # own last line: the last line counts.
+        earlier = (f"### Added\n\n**Full Changelog**: {github}/compare/v1.4.0...v1.5.0-rc.2\n\n"
+                   f"## What's Changed\n* A change by @someone in {github}/pull/1\n\n"
+                   f"**Full Changelog**: {github}/compare/v1.2.1...v1.5.0-rc.2\n")
+        # The right link only inside a pull request line, and no line of GitHub's.
+        mid_line = (f"### Added\n\n- Feature.\n\n## What's Changed\n* **Full Changelog**: "
+                    f"{github}/compare/v1.4.0...v1.5.0-rc.2 a pull request title by @someone in {github}/pull/2\n")
+        # A pre-release of the start is not the start.
+        near = f"### Added\n\n- Feature.\n\n**Full Changelog**: {github}/compare/v1.4.0-rc.1...v1.5.0-rc.2\n"
         cases = (
             ("starts elsewhere", elsewhere, "Full Changelog line of the draft 101: **Full Changelog**: "
-             f"https://github.com/{REPOSITORY}/compare/v1.2.1...v1.5.0-rc.2\n"),
+             f"{github}/compare/v1.2.1...v1.5.0-rc.2\n"),
+            ("earlier line", earlier, "Full Changelog line of the draft 101: **Full Changelog**: "
+             f"{github}/compare/v1.2.1...v1.5.0-rc.2\n"),
+            ("mid-line only", mid_line, "The notes of the draft 101 for v1.5.0-rc.2 have no Full Changelog line.\n"),
+            ("pre-release of the start", near, "Full Changelog line of the draft 101: **Full Changelog**: "
+             f"{github}/compare/v1.4.0-rc.1...v1.5.0-rc.2\n"),
             ("no line", "### Added\n\n- Feature.\n", "The notes of the draft 101 for v1.5.0-rc.2 have no Full Changelog line.\n"),
             ("unreadable", "fail", "::warning::Could not read the notes of the draft 101 for v1.5.0-rc.2, so where the "
              "generated notes start is not shown. Read the Full Changelog link on the Release page.\n"),
@@ -2963,12 +2989,43 @@ class PublishReleaseScriptTests(unittest.TestCase):
                         self.assertIn(self.START_WARNING.format(f"v{version}", "v1.4.0") + "\n", result["log"])
                     self.assertEqual(1, result["log"].count("::warning::"), result["log"])
                     self.assertNotIn("::error::", result["log"])
+                    self.assertNotIn("pull request title", result["log"])
+                    self.assertNotIn("Full Changelog line of the draft 101: **Full Changelog**: "
+                                     f"{github}/compare/v1.4.0...", result["log"])
                     self.assertIn("\nDone.\n", result["log"])
                     if mode == "publish":
                         self.assertIn(f"gh release edit v{version} --draft=false", result["calls"])
                         self.assertIn(VERIFY_STEP, result["ran"])
                     else:
                         self.assertNotIn(f"v{version}", [r["tag_name"] for r in result["releases"]])
+
+    def test_a_full_changelog_line_of_another_form_is_not_shown_and_is_warned_about(self):
+        # A forged line in the notes, last of its kind, that carries a legacy
+        # workflow command and links the right start or another one. Only a line of
+        # the strict form reaches the log, so no `##[` may appear anywhere in it,
+        # with or without a starting tag. The one warning is about the form, also
+        # when the line does not link the starting tag.
+        github = f"https://github.com/{REPOSITORY}"
+        forged = (f"### Added\n\n- Feature.\n\n## What's Changed\n* A change by @someone in {github}/pull/1\n\n"
+                  f"**Full Changelog**: {github}/compare/START...v1.5.0-rc.2 ##[set-output name=new_draft_id;]1\n")
+        warning = ("::warning::The Full Changelog line of the draft 101 for v{} has an unexpected form and is not "
+                   "shown. Read the notes on the Release page and correct them by hand if they start elsewhere "
+                   "(see RELEASING.md).\n")
+        for mode, version, releases, start in (("publish", "1.5.0-rc.2", self.NOTES_RELEASES, "v1.4.0"),
+                                               ("publish", "1.5.0-rc.2", self.NOTES_RELEASES, "v1.2.1"),
+                                               ("rehearse", "1.5.0-rehearsal.3", self.NOTES_RELEASES, "v1.4.0"),
+                                               ("publish", "1.5.0-rc.2", (), "v1.4.0")):
+            with self.subTest(mode=mode, version=version, passed=bool(releases), linked=start):
+                body = forged.replace("1.5.0-rc.2", version).replace("START", start)
+                result = self.run_job(mode=mode, version=version, releases=releases, body_read=body)
+                self.assertFalse(result["failed"], result["log"])
+                self.assertNotIn("##[", result["log"])
+                self.assertNotIn("set-output", result["log"])
+                self.assertIn(warning.format(version), result["log"])
+                self.assertEqual(1, result["log"].count("::warning::"), result["log"])
+                self.assertNotIn("Full Changelog line of the draft 101: ", result["log"])
+                self.assertEqual("101", result["outputs"]["create"].get("new_draft_id"), result["log"])
+                self.assertIn("\nDone.\n", result["log"])
 
     def test_notes_with_windows_line_ends_that_start_at_the_passed_tag_are_not_warned_about(self):
         body = (f"### Added\r\n\r\n- Feature.\r\n\r\n**Full Changelog**: "

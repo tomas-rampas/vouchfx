@@ -90,8 +90,11 @@ stable Release of the same or a higher number. With no such Release the option i
 left out. A starting tag that is not of the form `vX.Y.Z` stops the step before
 anything is deleted or created, and a draft whose `Full Changelog` line does not
 link the starting tag, or whose notes cannot be read, gives a warning and the run
-goes on. The fixture `gh` makes that line as GitHub is expected to; how GitHub
-treats `--notes-start-tag` is not tested. The test image has no `gh`
+goes on. A `Full Changelog` line of another form, such as a forged line with a
+workflow command, is not shown and gives a warning. The fixture `gh` makes that
+line as GitHub is expected to, and joins the notes file and the generated notes
+as `gh` does; how GitHub treats the request that `gh` makes for
+`--notes-start-tag` is not tested. The test image has no `gh`
 or `jq` here either: the fixture `gh` emulates nine `--jq` filters (three list
 filters, three reads of one release by its id, one of them for its notes, the tag
 endpoint's `.draft` and `.assets[].name`, and the release tool's view of the
