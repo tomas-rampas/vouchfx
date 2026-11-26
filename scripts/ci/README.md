@@ -82,10 +82,23 @@ NuGet with no draft; a tag or draft at another commit; and a failed push that
 leaves only the draft. They cover the read-back of a new draft (another target, a
 second draft, an unreadable list), release files that are missing or share a
 name, and the clean-up of a rehearsal draft, also after a
-failed step, including its second list of the releases. The test image has no `gh`
-or `jq` here either: the fixture `gh` emulates eight `--jq` filters (three list
-filters, two reads of one release by its id, the tag endpoint's `.draft` and
-`.assets[].name`, and the release tool's view of the draft). A call that the
+failed step, including its second list of the releases. They cover the starting
+tag of the generated notes: the classification chooses the highest published
+stable Release below the version's `X.Y.Z` for a stable version, a pre-release and
+a rehearsal version, in `sort -V` order, and never a draft, a pre-release or a
+stable Release of the same or a higher number. With no such Release the option is
+left out. A starting tag that is not of the form `vX.Y.Z` stops the step before
+anything is deleted or created, and a draft whose `Full Changelog` line does not
+link the starting tag, or whose notes cannot be read, gives a warning and the run
+goes on. A `Full Changelog` line of another form, such as a forged line with a
+workflow command, is not shown and gives a warning. The fixture `gh` makes that
+line as GitHub is expected to, and joins the notes file and the generated notes
+as `gh` does when it passes the option, and as GitHub did without it; how GitHub treats the request that `gh` makes for
+`--notes-start-tag` is not tested. The test image has no `gh`
+or `jq` here either: the fixture `gh` emulates nine `--jq` filters (three list
+filters, three reads of one release by its id, one of them for its notes, the tag
+endpoint's `.draft` and `.assets[].name`, and the release tool's view of the
+draft). A call that the
 fixtures do not know is recorded and fails the test. The real `gh` and the jq
 expressions are not run.
 

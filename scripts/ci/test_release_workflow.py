@@ -1,5 +1,6 @@
 """Release workflow contract and its actual step scripts, run with fixtures; no publication."""
 
+import itertools
 import json
 import os
 from pathlib import Path
@@ -58,7 +59,8 @@ PUBLISH_RELEASE_STEPS = [
     ("Download .pkg installer", {"name", "uses", "with"}, None),
     ("List release artifacts", {"name", "run"}, None),
     ("Create the draft release and upload the assets", {"name", "id", "env", "run"},
-     {**GH_STATE_ENV, "DRAFT_ID": "${{ steps.state.outputs.draft_id }}"}),
+     {**GH_STATE_ENV, "DRAFT_ID": "${{ steps.state.outputs.draft_id }}",
+      "NOTES_START_TAG": "${{ steps.state.outputs.notes_start_tag }}"}),
     ("NuGet login (OIDC → short-lived API key)", {"name", "id", "uses", "with"}, None),
     ("Rehearsal — delete the draft release", {"name", "if", "env", "run"},
      {**GH_ENV, "CREATED": "${{ steps.create.outputs.created }}",
@@ -109,12 +111,13 @@ PUBLISH_RELEASE_GH_FORMS = {
     "gh api repos/${GH_REPO}/releases/${DRAFT_ID} --jq [.tag_name, (.draft | tostring), .target_commitish] | @tsv",
     "gh api repos/${GH_REPO}/releases/${new_draft_id} --jq "
     "([.tag_name, (.draft | tostring), .target_commitish] | @tsv), .assets[].name",
+    "gh api repos/${GH_REPO}/releases/${new_draft_id} --jq .body",
     "gh api -X DELETE repos/${GH_REPO}/releases/${DRAFT_ID}",
     "gh api -X DELETE repos/${GH_REPO}/releases/${id}",
     "gh api repos/${GH_REPO}/releases/tags/${TAG} --jq .assets[].name",
     "gh api repos/${GH_REPO}/releases/tags/${TAG} --jq .draft",
     "gh release create $TAG --draft --target $GITHUB_SHA --title $TAG --notes-file $notes --generate-notes "
-    "${prerelease[@]}",
+    "${notes_start[@]} ${prerelease[@]}",
     # `gh_forms` reads an unquoted comma as a word of its own: the field list is
     # `databaseId,isDraft,targetCommitish` in the workflow.
     "gh release view $TAG --json databaseId , isDraft , targetCommitish --jq "
@@ -449,7 +452,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         command = re.search(r"gh release create (?:[^\n]*\\\n)*[^\n]*", create).group(0)
         self.assertIn('--draft ', command)
         self.assertIn('--target "$GITHUB_SHA"', command)
-        self.assertIn('--notes-file "$notes" --generate-notes', command)
+        self.assertIn('--notes-file "$notes" --generate-notes "${notes_start[@]}" "${prerelease[@]}"', command)
         self.assertNotRegex(command, r"--draft=|--latest|--verify-tag")
         edit = re.search(r"gh release edit [^\n]*", steps[PUBLISH_STEP]["run"]).group(0)
         self.assertIn('--draft=false --target "$GITHUB_SHA"', edit)
@@ -701,18 +704,41 @@ FILTERS = {
     ".[] | [.tag_name, (.draft | tostring), (.id | tostring)] | @tsv":
         lambda rs: [tsv(r["tag_name"], json.dumps(r["draft"]), str(r["id"])) for r in rs],
 }
-# The two filters the workflow uses to read a release by its id: before the
-# deletion of an earlier draft, and to check the draft's assets after the upload
+# The three filters the workflow uses to read a release by its id: before the
+# deletion of an earlier draft, to read the new draft's notes, and to check the
+# draft's assets after the upload
 # and again just before the publication (that one also lists the asset names,
 # one per line, after the first line). GitHub lists the assets in an order of its
 # own, which is not the order of `sort`, so this read lists them in the reverse of
 # the order they are stored in (sorted, as an upload stores them).
 FINAL_READ_FILTER = "([.tag_name, (.draft | tostring), .target_commitish] | @tsv), .assets[].name"
+
+def body_of(r):
+    # The body as it is expected to be stored: the notes file's text, then the
+    # generated notes, which end with the `Full Changelog` line made at creation.
+    # With `--notes-start-tag`, `gh` asks for the generated notes itself and joins
+    # them to the file's text with one newline. Without it GitHub builds the notes,
+    # and the first pre-release showed two newlines between the two parts.
+    # `body-read.json` scripts the answer instead: "fail", or the whole body.
+    scripted = d / "body-read.json"
+    if scripted.exists():
+        answer = json.loads(scripted.read_text(encoding="utf-8"))
+        if answer == "fail":
+            sys.exit(1)
+        return answer
+    if not r.get("generated"):
+        return r["body"]
+    join = "\\n" if r.get("notes_start_tag") else "\\n\\n"
+    return (r["body"] + join + "## What's Changed\\n* **Full Changelog**: a pull request title by @someone in "
+            "https://github.com/" + os.environ["GH_REPO_EXPECTED"] + "/pull/1\\n\\n" + r["generated"])
+
 ID_FILTERS = {
     "[.tag_name, (.draft | tostring), .target_commitish] | @tsv":
         lambda r: [tsv(r["tag_name"], json.dumps(r["draft"]), r["target_commitish"])],
     FINAL_READ_FILTER:
         lambda r: [tsv(r["tag_name"], json.dumps(r["draft"]), r["target_commitish"])] + list(reversed(r["assets"])),
+    # The read of the new draft's notes, for the `Full Changelog` line.
+    ".body": lambda r: [body_of(r)],
 }
 # The one filter the workflow uses with `gh release view`.
 VIEW_FILTERS = {
@@ -861,10 +887,22 @@ elif args[:2] == ["release", "create"]:
     # whatever `--target` said. `create-adds-draft` makes a second draft for the tag.
     target = ((d / "create-target").read_text(encoding="utf-8") if (d / "create-target").exists()
               else flag("--target") or "main")
+    # `--notes-start-tag` takes a value. Without it GitHub chooses where the generated
+    # notes start: `github-start-tag` holds its choice, and with no such file the
+    # line links the tag's commits, as for a first release.
+    start = flag("--notes-start-tag")
+    if "--notes-start-tag" in args and (start is None or start.startswith("-")):
+        unexpected(95)
+    if start is None and (d / "github-start-tag").exists():
+        start = (d / "github-start-tag").read_text(encoding="utf-8")
+    link = "compare/" + start + "..." + args[2] if start else "commits/" + args[2]
+    generated = ("**Full Changelog**: https://github.com/" + os.environ["GH_REPO_EXPECTED"] + "/" + link
+                 if "--generate-notes" in args else "")
     releases.append({"id": max([r["id"] for r in releases] + [100]) + 1, "tag_name": args[2],
                      "draft": "--draft" in args, "target_commitish": target,
                      "prerelease": "--prerelease" in args, "title": flag("--title"),
                      "generate_notes": "--generate-notes" in args,
+                     "notes_start_tag": flag("--notes-start-tag"), "generated": generated,
                      "body": Path(flag("--notes-file")).read_text(encoding="utf-8"), "assets": []})
     with open(d / "bodies", "a", encoding="utf-8") as bodies:
         bodies.write(releases[-1]["body"])
@@ -940,7 +978,8 @@ class Fixture:
     def __init__(self, scratch, tags=(), releases=(), nuget=(), markers=(), changelog="1.5.0", props="1.5.0",
                  late_tags=None, changelog_text=None, list_fails_after=None, late_releases=None,
                  create_target=None, list_overrides=None, ls_overrides=None, tag_endpoint_fails_until=None,
-                 view_fails_first=None, view_answer=None, draft_reads=None):
+                 view_fails_first=None, view_answer=None, draft_reads=None, body_read=None,
+                 github_start_tag=None):
         self.root = Path(scratch)
         self.dir = self.root / "fixture"
         self.bin = self.dir / "bin"
@@ -979,6 +1018,10 @@ class Fixture:
             (self.dir / "view-answer.json").write_text(json.dumps(view_answer), encoding="utf-8")
         if draft_reads is not None:
             (self.dir / "draft-reads.json").write_text(json.dumps(list(draft_reads)), encoding="utf-8")
+        if body_read is not None:
+            (self.dir / "body-read.json").write_text(json.dumps(body_read), encoding="utf-8")
+        if github_start_tag is not None:
+            (self.dir / "github-start-tag").write_text(github_start_tag, encoding="utf-8")
         if tag_endpoint_fails_until is not None:
             (self.dir / "tag-endpoint-fails-until").write_text(str(tag_endpoint_fails_until), encoding="utf-8")
         if list_fails_after is not None:
@@ -1464,6 +1507,7 @@ class PublishReleaseScriptTests(unittest.TestCase):
             table = {"${{ github.token }}": "fixture", "${{ github.repository }}": REPOSITORY,
                      "${{ steps.state.outputs.state }}": outputs["state"].get("state", ""),
                      "${{ steps.state.outputs.draft_id }}": outputs["state"].get("draft_id", ""),
+                     "${{ steps.state.outputs.notes_start_tag }}": outputs["state"].get("notes_start_tag", ""),
                      "${{ steps.create.outputs.created }}": outputs["create"].get("created", ""),
                      "${{ steps.create.outputs.attempted }}": outputs["create"].get("attempted", ""),
                      "${{ steps.create.outputs.new_draft_id }}": outputs["create"].get("new_draft_id", ""),
@@ -2794,6 +2838,213 @@ class PublishReleaseScriptTests(unittest.TestCase):
         self.assertTrue(result["failed"])
         self.assertIn("made for another mode", result["log"])
         self.assertNotIn("gh release create", result["calls"])
+
+    # The starting tag of the generated notes. The classification chooses it from
+    # the releases it lists; the create step passes it with `--notes-start-tag`.
+    # Published stable Releases below 1.5.0, the highest being v1.4.0, and releases
+    # that are never the start: a draft and a pre-release above v1.4.0, and a
+    # pre-release of 1.5.0 itself.
+    NOTES_RELEASES = (release("v1.2.1", False, rid=1), release("v1.4.0", False, rid=2),
+                      release("v1.3.9", False, rid=3), release("v1.4.1", True, rid=4),
+                      release("v1.4.2-rc.1", False, rid=5), release("v1.5.0-rc.1", False, rid=6))
+    NO_START = "No published stable Release is below {}, so no starting tag is passed: GitHub chooses where the " \
+               "generated notes start."
+    START_WARNING = ("::warning::The notes of the draft for {0} were made with --notes-start-tag {1}, but their "
+                     "Full Changelog line does not link compare/{1}... Read the notes on the Release page and correct "
+                     "them by hand if they start elsewhere (see RELEASING.md).")
+
+    def create_call(self, result):
+        calls = [line for line in result["calls"].splitlines() if line.startswith("gh release create ")]
+        self.assertEqual(1, len(calls), result["calls"])
+        return calls[0]
+
+    def assertNotesStartAt(self, result, version, start):
+        self.assertFalse(result["failed"], result["log"])
+        self.assertEqual(start, result["outputs"]["state"].get("notes_start_tag"), result["log"])
+        # One line per output: a second line would not be a starting tag GitHub could use.
+        self.assertEqual({"state", "draft_id", "notes_start_tag"}, set(result["outputs"]["state"]), result["log"])
+        create = self.create_call(result)
+        self.assertIn(f" --generate-notes --notes-start-tag {start}", create)
+        self.assertEqual(1, create.count("--notes-start-tag"), create)
+        self.assertIn(f"Passing --notes-start-tag {start} to the release tool's create call.\n", result["log"])
+        self.assertIn(f"Full Changelog line of the draft 101: **Full Changelog**: "
+                      f"https://github.com/{REPOSITORY}/compare/{start}...v{version}\n", result["log"])
+        self.assertNotIn("::warning::", result["log"])
+
+    def assertNoNotesStart(self, result, version):
+        self.assertFalse(result["failed"], result["log"])
+        self.assertEqual("", result["outputs"]["state"].get("notes_start_tag"), result["log"])
+        self.assertNotIn("--notes-start-tag", self.create_call(result))
+        self.assertIn(self.NO_START.format(f"v{version}") + "\n", result["log"])
+        self.assertNotIn("Passing --notes-start-tag", result["log"])
+        self.assertNotIn("::warning::", result["log"])
+
+    def test_notes_start_at_the_highest_stable_release_below_a_stable_pre_release_or_rehearsal_version(self):
+        # `1.5.0-rc-1` has a hyphen in its pre-release: X.Y.Z ends at the first hyphen.
+        for mode, version in (("publish", "1.5.0"), ("publish", "1.5.0-rc.2"), ("publish", "1.5.0-rc-1"),
+                              ("rehearse", "1.5.0-rehearsal.3")):
+            with self.subTest(version=version):
+                result = self.run_job(mode=mode, version=version, releases=self.NOTES_RELEASES)
+                self.assertNotesStartAt(result, version, "v1.4.0")
+                # The notes are read after the draft check, before anything else
+                # happens: the NuGet login in a rehearsal, the push in publish mode.
+                self.calls_in_order(result, "gh release create ", "gh release upload ", FINAL_READ_FILTER_TEXT,
+                                    ID_READ + "101 --jq .body\n",
+                                    "dotnet nuget push" if mode == "publish" else "gh api -X DELETE")
+                self.assertEqual(1, result["calls"].count(" --jq .body\n"), result["calls"])
+                if mode == "publish":
+                    self.assertIn("gh release edit v" + version + " --draft=false", result["calls"])
+                    self.assertEqual("### Added\n\n- Feature for " + version + ".\n",
+                                     next(r for r in result["releases"] if r["id"] == 101)["body"])
+                else:
+                    self.assertNotIn(f"v{version}", [r["tag_name"] for r in result["releases"]])
+
+    def test_notes_start_follows_the_version_order_of_sort_v(self):
+        # A text sort would put v1.9.x above v1.10.0.
+        releases = (release("v1.9.0", False, rid=1), release("v1.10.0", False, rid=2),
+                    release("v1.2.0", False, rid=3), release("v1.9.10", False, rid=4))
+        for version, start in (("2.0.0", "v1.10.0"), ("1.10.0-rc.1", "v1.9.10"), ("1.9.10-rc.1", "v1.9.0")):
+            with self.subTest(version=version):
+                self.assertNotesStartAt(self.run_job(version=version, releases=releases), version, start)
+
+    def test_notes_never_start_at_a_draft_a_pre_release_or_a_stable_release_of_the_same_or_a_higher_number(self):
+        # Only the strict vX.Y.Z form of a published Release counts: not a draft, a
+        # pre-release, a tag with four numbers, a leading zero or no `v`.
+        releases = (release("v1.4.0", False, rid=1), release("v1.5.0", False, rid=2),
+                    release("v1.5.1", False, rid=3), release("v2.0.0", False, rid=4),
+                    release("v1.4.9", True, rid=5), release("v1.4.8-rc.1", False, rid=6),
+                    release("v1.5.0-rc.1", False, rid=7), release("v1.4.5.1", False, rid=8),
+                    release("v01.4.6", False, rid=9), release("1.4.7", False, rid=10))
+        # With v1.5.0 published, `1.5.0-rc-1` shows that X.Y.Z ends at the first
+        # hyphen: `1.5.0-rc` would sort after 1.5.0 and choose v1.5.0.
+        for version in ("1.5.0-rc.2", "1.5.0-rc-1"):
+            with self.subTest(version=version):
+                self.assertNotesStartAt(self.run_job(version=version, releases=releases), version, "v1.4.0")
+
+    def test_no_earlier_stable_release_leaves_the_notes_start_option_out_and_says_so(self):
+        # GitHub then chooses where the notes start (here an older tag), and that is
+        # not warned about: the run named no starting tag.
+        only_later = (release("v1.4.0", True, rid=1), release("v1.4.1-rc.1", False, rid=2),
+                      release("v1.5.0", False, rid=3), release("v2.0.0", False, rid=4))
+        for mode, version, releases, github_start in (("publish", "1.5.0", (), None),
+                                                      ("publish", "1.5.0-rc.2", only_later, "v1.2.1"),
+                                                      ("rehearse", "1.5.0-rehearsal.3", only_later, None)):
+            with self.subTest(version=version):
+                result = self.run_job(mode=mode, version=version, releases=releases, github_start_tag=github_start)
+                self.assertNoNotesStart(result, version)
+                link = f"compare/{github_start}...v{version}" if github_start else f"commits/v{version}"
+                self.assertIn(f"Full Changelog line of the draft 101: **Full Changelog**: "
+                              f"https://github.com/{REPOSITORY}/{link}\n", result["log"])
+
+    def test_a_malformed_notes_start_tag_is_refused_before_anything_is_deleted_or_created(self):
+        draft = release("v1.5.0", True, rid=42)
+        for value in ("v1.4", "1.4.0", "v1.4.0-rc.1", "v01.4.0", "v1.4.0.1", "v1.4.0 ", " v1.4.0", "--latest",
+                      "v1.4.0\n::error::injected"):
+            for state, fixture in (("none", {}), ("draft", {"releases": [draft], "nuget": ["vouchfx 1.5.0"]})):
+                with self.subTest(value=value, state=state):
+                    result = self.run_job(step_env={CREATE_STEP: {"NOTES_START_TAG": value}}, **fixture)
+                    self.assertTrue(result["failed"], result["log"])
+                    self.assertEqual(CREATE_STEP, result["ran"][-1])
+                    self.assertIn(f"::error::The starting tag for the generated notes is {shlex_bash_quote(value)} "
+                                  "(shown shell-quoted), not of the form vX.Y.Z. This is a defect in the workflow. "
+                                  "Nothing was deleted, created or uploaded by this step.", result["log"])
+                    self.assertFalse(any(line.startswith("::error::injected") for line in result["log"].splitlines()))
+                    for absent in (ID_READ, "-X DELETE", "gh release create", "gh release upload", "dotnet"):
+                        self.assertNotIn(absent, result["calls"])
+                    self.assertEqual(fixture.get("releases", []), result["releases"])
+                    self.assertNotIn("attempted", result["outputs"]["create"])
+
+    def test_notes_that_do_not_start_at_the_passed_tag_are_warned_about_and_the_run_goes_on(self):
+        github = f"https://github.com/{REPOSITORY}"
+        elsewhere = f"### Added\n\n- Feature.\n\n**Full Changelog**: {github}/compare/v1.2.1...v1.5.0-rc.2"
+        # A line of the CHANGELOG part that names the right start, before GitHub's
+        # own last line: the last line counts.
+        earlier = (f"### Added\n\n**Full Changelog**: {github}/compare/v1.4.0...v1.5.0-rc.2\n\n"
+                   f"## What's Changed\n* A change by @someone in {github}/pull/1\n\n"
+                   f"**Full Changelog**: {github}/compare/v1.2.1...v1.5.0-rc.2\n")
+        # The right link only inside a pull request line, and no line of GitHub's.
+        mid_line = (f"### Added\n\n- Feature.\n\n## What's Changed\n* **Full Changelog**: "
+                    f"{github}/compare/v1.4.0...v1.5.0-rc.2 a pull request title by @someone in {github}/pull/2\n")
+        # A pre-release of the start is not the start.
+        near = f"### Added\n\n- Feature.\n\n**Full Changelog**: {github}/compare/v1.4.0-rc.1...v1.5.0-rc.2\n"
+        cases = (
+            ("starts elsewhere", elsewhere, "Full Changelog line of the draft 101: **Full Changelog**: "
+             f"{github}/compare/v1.2.1...v1.5.0-rc.2\n"),
+            ("earlier line", earlier, "Full Changelog line of the draft 101: **Full Changelog**: "
+             f"{github}/compare/v1.2.1...v1.5.0-rc.2\n"),
+            ("mid-line only", mid_line, "The notes of the draft 101 for v1.5.0-rc.2 have no Full Changelog line.\n"),
+            ("pre-release of the start", near, "Full Changelog line of the draft 101: **Full Changelog**: "
+             f"{github}/compare/v1.4.0-rc.1...v1.5.0-rc.2\n"),
+            ("no line", "### Added\n\n- Feature.\n", "The notes of the draft 101 for v1.5.0-rc.2 have no Full Changelog line.\n"),
+            ("unreadable", "fail", "::warning::Could not read the notes of the draft 101 for v1.5.0-rc.2, so where the "
+             "generated notes start is not shown. Read the Full Changelog link on the Release page.\n"),
+        )
+        for mode, version in (("publish", "1.5.0-rc.2"), ("rehearse", "1.5.0-rehearsal.3")):
+            for label, body, logged in cases:
+                with self.subTest(mode=mode, case=label):
+                    body = body if body == "fail" else body.replace("1.5.0-rc.2", version)
+                    result = self.run_job(mode=mode, version=version, releases=self.NOTES_RELEASES, body_read=body)
+                    self.assertFalse(result["failed"], result["log"])
+                    self.assertIn(logged.replace("1.5.0-rc.2", version), result["log"])
+                    if label != "unreadable":
+                        self.assertIn(self.START_WARNING.format(f"v{version}", "v1.4.0") + "\n", result["log"])
+                    self.assertEqual(1, result["log"].count("::warning::"), result["log"])
+                    self.assertNotIn("::error::", result["log"])
+                    self.assertNotIn("pull request title", result["log"])
+                    self.assertNotIn("Full Changelog line of the draft 101: **Full Changelog**: "
+                                     f"{github}/compare/v1.4.0...", result["log"])
+                    self.assertIn("\nDone.\n", result["log"])
+                    if mode == "publish":
+                        self.assertIn(f"gh release edit v{version} --draft=false", result["calls"])
+                        self.assertIn(VERIFY_STEP, result["ran"])
+                    else:
+                        self.assertNotIn(f"v{version}", [r["tag_name"] for r in result["releases"]])
+
+    def test_a_full_changelog_line_of_another_form_is_not_shown_and_is_warned_about(self):
+        # A forged line in the notes, last of its kind, that carries a legacy
+        # workflow command and links the right start or another one. Only a line of
+        # the strict form reaches the log, so no `##[` may appear anywhere in it,
+        # with or without a starting tag. The one warning is about the form, also
+        # when the line does not link the starting tag. The command comes after a
+        # space, or with no white space at all: the form allows a fixed set of
+        # characters, and does not merely refuse white space.
+        github = f"https://github.com/{REPOSITORY}"
+        forged = (f"### Added\n\n- Feature.\n\n## What's Changed\n* A change by @someone in {github}/pull/1\n\n"
+                  f"**Full Changelog**: {github}/compare/START...v1.5.0-rc.2SUFFIX\n")
+        suffixes = (" ##[set-output name=new_draft_id;]1", "##[error]set-output")
+        warning = ("::warning::The Full Changelog line of the draft 101 for v{} has an unexpected form and is not "
+                   "shown. Read the notes on the Release page and correct them by hand if they start elsewhere "
+                   "(see RELEASING.md).\n")
+        cases = (("publish", "1.5.0-rc.2", self.NOTES_RELEASES, "v1.4.0"),
+                 ("publish", "1.5.0-rc.2", self.NOTES_RELEASES, "v1.2.1"),
+                 ("rehearse", "1.5.0-rehearsal.3", self.NOTES_RELEASES, "v1.4.0"),
+                 ("publish", "1.5.0-rc.2", (), "v1.4.0"))
+        for (mode, version, releases, start), suffix in itertools.product(cases, suffixes):
+            with self.subTest(mode=mode, version=version, passed=bool(releases), linked=start, suffix=suffix):
+                body = forged.replace("1.5.0-rc.2", version).replace("START", start).replace("SUFFIX", suffix)
+                result = self.run_job(mode=mode, version=version, releases=releases, body_read=body)
+                self.assertFalse(result["failed"], result["log"])
+                self.assertNotIn("##[", result["log"])
+                self.assertNotIn("set-output", result["log"])
+                self.assertIn(warning.format(version), result["log"])
+                self.assertEqual(1, result["log"].count("::warning::"), result["log"])
+                self.assertNotIn("Full Changelog line of the draft 101: ", result["log"])
+                self.assertEqual("101", result["outputs"]["create"].get("new_draft_id"), result["log"])
+                self.assertIn("\nDone.\n", result["log"])
+
+    def test_notes_with_windows_line_ends_that_start_at_the_passed_tag_are_not_warned_about(self):
+        body = (f"### Added\r\n\r\n- Feature.\r\n\r\n**Full Changelog**: "
+                f"https://github.com/{REPOSITORY}/compare/v1.4.0...v1.5.0-rc.2\r\n")
+        result = self.run_job(version="1.5.0-rc.2", releases=self.NOTES_RELEASES, body_read=body)
+        self.assertNotesStartAt(result, "1.5.0-rc.2", "v1.4.0")
+        self.assertNotIn("\r", result["log"])
+
+
+def shlex_bash_quote(value):
+    """`value` as Bash's `printf '%q'` shows it, for the values the tests use."""
+    if "\n" in value:
+        return "$'" + value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'"
+    return re.sub(r"([^A-Za-z0-9_./=:@%+,-])", r"\\\1", value)
 
 
 class ReleaseSbomTests(unittest.TestCase):

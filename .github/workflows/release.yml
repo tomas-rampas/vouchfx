@@ -1752,14 +1752,16 @@ jobs:
   #      other commit than this run's fails the job. In publish mode, when no
   #      Release is published yet, it also fails when a higher stable version
   #      is already published (for a stable version), and, when nothing exists,
-  #      when a package of this version is already on NuGet.org.
-  #   2. Create the draft (target: the run's full commit SHA, never a branch)
-  #      and upload the assets. An earlier draft at this commit is deleted and
-  #      made again, so its notes, title, pre-release flag and assets all come
-  #      from this run. After the upload, the draft is read by its id (still a
-  #      draft, at the run's commit, with the uploaded asset names). For a
-  #      Release already published, its asset names must equal this run's,
-  #      and nothing is uploaded.
+  #      when a package of this version is already on NuGet.org. It also
+  #      chooses the starting tag of the generated notes.
+  #   2. Create the draft (target: the run's full commit SHA, never a branch;
+  #      the generated notes are asked to start at the tag chosen in step 1,
+  #      when there is one) and upload the assets. An earlier draft at this
+  #      commit is deleted and made again, so its notes, title, pre-release
+  #      flag and assets all come from this run. After the upload, the draft
+  #      is read by its id (still a draft, at the run's commit, with the
+  #      uploaded asset names). For a Release already published, its asset
+  #      names must equal this run's, and nothing is uploaded.
   #   3. NuGet login (token exchange).
   #   4. Rehearse mode: delete the draft and stop.
   #   5. Publish mode: push the packages, read the draft again by its id
@@ -1820,8 +1822,10 @@ jobs:
 
       # Reads the tag with git and the releases (drafts included, which needs
       # this job's contents: write) with the API. Writes `state`: none, draft or
-      # published, and `draft_id` for a draft. A rehearsal needs a clean slate,
-      # so that its clean-up step can only ever delete the draft this job made.
+      # published, `draft_id` for a draft, and `notes_start_tag`, the starting
+      # tag of the generated notes (empty when there is none). A rehearsal
+      # needs a clean slate, so that its clean-up step can only ever delete the
+      # draft this job made.
       # The id comes before the target in each line: the target may be empty,
       # and `read` with a tab separator would merge two tabs in a row.
       - name: Classify the release state
@@ -1917,8 +1921,26 @@ jobs:
             done
           fi
 
-          echo "state=$state" >> "$GITHUB_OUTPUT"
-          echo "draft_id=$draft_id" >> "$GITHUB_OUTPUT"
+          # The starting tag of GitHub's generated notes: the tag of the highest
+          # published stable Release whose X.Y.Z is strictly below this
+          # version's X.Y.Z. `1.5.0`, `1.5.0-rc.2` and `1.5.0-rehearsal.3` all
+          # start at `v1.4.0` when that is the highest such Release. A draft, a
+          # pre-release and a stable Release of the same or a higher number are
+          # never chosen. Stable means the strict `vX.Y.Z` pattern of the rule
+          # above, and `sort -V` orders the plain X.Y.Z versions as there. This
+          # version's X.Y.Z joins the sorted list, and the line before its first
+          # copy is the answer. Empty when there is none: the create step then
+          # names no starting tag. Without one, GitHub chooses where the notes
+          # start, and for the first pre-release it chose an older stable
+          # Release than the newest one.
+          core="${VERSION%%-*}"
+          notes_start_tag="$({ awk -F'\t' '$2 == "false" && $1 ~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { print substr($1, 2) }' <<<"$releases"; printf '%s\n' "$core"; } | sort -V | awk -v core="$core" 'done { next } $0 == core { if (previous != "") print "v" previous; done = 1; next } { previous = $0 }')"
+
+          {
+            echo "state=$state"
+            echo "draft_id=$draft_id"
+            echo "notes_start_tag=$notes_start_tag"
+          } >> "$GITHUB_OUTPUT"
           echo "Release state for $TAG: $state (mode $MODE, commit $GITHUB_SHA)"
 
       - name: Download nupkg
@@ -1988,7 +2010,14 @@ jobs:
       # is expected to create the tag at the tested commit. Notes: the
       # CHANGELOG.md section for the version, then GitHub's generated notes
       # (`--notes-file` with `--generate-notes`: the file's text is put in
-      # front of them). `attempted=true` is written just before the create call:
+      # front of them). The generated notes are asked to start at
+      # `NOTES_START_TAG`, which the classification chose
+      # (`--notes-start-tag`); when it is empty, the option is left out. With
+      # the option, `gh` asks GitHub for the generated notes in a separate
+      # request before the create call, and puts them after the file's text.
+      # The step prints the draft's `Full Changelog` line at its end, when it
+      # has the expected form, as evidence of where the notes start.
+      # `attempted=true` is written just before the create call:
       # that call can fail after GitHub stored the draft, so it tells the
       # rehearsal clean-up that a draft may exist. `created=true` tells it that
       # this step made a draft. `new_draft_id` is the id of the new draft, once
@@ -2002,6 +2031,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           STATE: ${{ steps.state.outputs.state }}
           DRAFT_ID: ${{ steps.state.outputs.draft_id }}
+          NOTES_START_TAG: ${{ steps.state.outputs.notes_start_tag }}
         run: |
           set -euo pipefail
           if [[ ! "${RELEASE_READ_ATTEMPTS:-}" =~ ^[1-9][0-9]?$ || ! "${RELEASE_READ_DELAY_SECONDS:-}" =~ ^[0-9]{1,2}$ ]]; then
@@ -2025,11 +2055,13 @@ jobs:
             exit 1
           fi
 
-          # The notes and the pre-release flag are made before any earlier draft
-          # is deleted, so that a failure here leaves that draft in place. A
-          # published Release needs neither.
+          # The notes, the pre-release flag and the starting tag of the
+          # generated notes are made and checked before any earlier draft is
+          # deleted, so that a failure here leaves that draft in place. A
+          # published Release needs none of them.
           notes="$RUNNER_TEMP/release-notes.md"
           prerelease=()
+          notes_start=()
           if [[ "$STATE" == "none" || "$STATE" == "draft" ]]; then
             if [[ "$MODE" == "publish" ]]; then
               python3 scripts/release_metadata.py notes --changelog CHANGELOG.md --version "$VERSION" > "$notes"
@@ -2038,6 +2070,17 @@ jobs:
             fi
             if [[ "$VERSION" == *-* ]]; then
               prerelease=(--prerelease)
+            fi
+            # The classification chose the starting tag of the generated notes,
+            # or none when no stable Release is below this version.
+            if [[ -z "$NOTES_START_TAG" ]]; then
+              echo "No published stable Release is below $TAG, so no starting tag is passed: GitHub chooses where the generated notes start."
+            elif [[ "$NOTES_START_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              notes_start=(--notes-start-tag "$NOTES_START_TAG")
+              echo "Passing --notes-start-tag $NOTES_START_TAG to the release tool's create call."
+            else
+              echo "::error::The starting tag for the generated notes is $(printf '%q' "$NOTES_START_TAG") (shown shell-quoted), not of the form vX.Y.Z. This is a defect in the workflow. Nothing was deleted, created or uploaded by this step."
+              exit 1
             fi
           fi
 
@@ -2081,7 +2124,7 @@ jobs:
 
           echo "attempted=true" >> "$GITHUB_OUTPUT"
           gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" \
-            --notes-file "$notes" --generate-notes "${prerelease[@]}"
+            --notes-file "$notes" --generate-notes "${notes_start[@]}" "${prerelease[@]}"
           echo "created=true" >> "$GITHUB_OUTPUT"
 
           # Read the new draft back before anything is uploaded or pushed. The
@@ -2248,6 +2291,34 @@ jobs:
             exit 1
           fi
           # END check
+          # Evidence of where the generated notes start, after every check
+          # above has passed. A rehearsal deletes its draft, so its log is the
+          # only record. GitHub ends the generated notes with a line that
+          # begins `**Full Changelog**:` and links `compare/<start>...<tag>`.
+          # The last such line is printed only when it is exactly that line
+          # and a GitHub link made of letters, digits and `._/-`. Any other
+          # text of the body (pull request titles, a forged line) never
+          # reaches the log, so it cannot hold a workflow command, `::` or
+          # `##[`. A line of another form gives a warning and is not shown.
+          # Nothing here fails the step: the draft is already checked.
+          if ! body="$(gh api "repos/${GH_REPO}/releases/${new_draft_id}" --jq '.body')"; then
+            echo "::warning::Could not read the notes of the draft $new_draft_id for $TAG, so where the generated notes start is not shown. Read the Full Changelog link on the Release page."
+          else
+            changelog_line="$(grep -E '^\*\*Full Changelog\*\*: ' <<<"${body//$'\r'/}" | tail -n 1 || true)"
+            changelog_form='^\*\*Full Changelog\*\*: https://github\.com/[A-Za-z0-9._/-]+$'
+            changelog_shown=true
+            if [[ -z "$changelog_line" ]]; then
+              echo "The notes of the draft $new_draft_id for $TAG have no Full Changelog line."
+            elif [[ "$changelog_line" =~ $changelog_form ]]; then
+              echo "Full Changelog line of the draft $new_draft_id: $changelog_line"
+            else
+              changelog_shown=false
+              echo "::warning::The Full Changelog line of the draft $new_draft_id for $TAG has an unexpected form and is not shown. Read the notes on the Release page and correct them by hand if they start elsewhere (see RELEASING.md)."
+            fi
+            if [[ "$changelog_shown" == true && "${#notes_start[@]}" -gt 0 && "$changelog_line" != *"compare/${NOTES_START_TAG}..."* ]]; then
+              echo "::warning::The notes of the draft for $TAG were made with --notes-start-tag $NOTES_START_TAG, but their Full Changelog line does not link compare/${NOTES_START_TAG}... Read the notes on the Release page and correct them by hand if they start elsewhere (see RELEASING.md)."
+            fi
+          fi
           echo "Done."
 
       # Exchange the single-use GitHub OIDC token for a short-lived
