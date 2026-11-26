@@ -93,7 +93,7 @@ link the starting tag, or whose notes cannot be read, gives a warning and the ru
 goes on. A `Full Changelog` line of another form, such as a forged line with a
 workflow command, is not shown and gives a warning. The fixture `gh` makes that
 line as GitHub is expected to, and joins the notes file and the generated notes
-as `gh` does; how GitHub treats the request that `gh` makes for
+as `gh` does when it passes the option, and as GitHub did without it; how GitHub treats the request that `gh` makes for
 `--notes-start-tag` is not tested. The test image has no `gh`
 or `jq` here either: the fixture `gh` emulates nine `--jq` filters (three list
 filters, three reads of one release by its id, one of them for its notes, the tag

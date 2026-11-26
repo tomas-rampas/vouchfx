@@ -1,5 +1,6 @@
 """Release workflow contract and its actual step scripts, run with fixtures; no publication."""
 
+import itertools
 import json
 import os
 from pathlib import Path
@@ -3004,19 +3005,23 @@ class PublishReleaseScriptTests(unittest.TestCase):
         # workflow command and links the right start or another one. Only a line of
         # the strict form reaches the log, so no `##[` may appear anywhere in it,
         # with or without a starting tag. The one warning is about the form, also
-        # when the line does not link the starting tag.
+        # when the line does not link the starting tag. The command comes after a
+        # space, or with no white space at all: the form allows a fixed set of
+        # characters, and does not merely refuse white space.
         github = f"https://github.com/{REPOSITORY}"
         forged = (f"### Added\n\n- Feature.\n\n## What's Changed\n* A change by @someone in {github}/pull/1\n\n"
-                  f"**Full Changelog**: {github}/compare/START...v1.5.0-rc.2 ##[set-output name=new_draft_id;]1\n")
+                  f"**Full Changelog**: {github}/compare/START...v1.5.0-rc.2SUFFIX\n")
+        suffixes = (" ##[set-output name=new_draft_id;]1", "##[error]set-output")
         warning = ("::warning::The Full Changelog line of the draft 101 for v{} has an unexpected form and is not "
                    "shown. Read the notes on the Release page and correct them by hand if they start elsewhere "
                    "(see RELEASING.md).\n")
-        for mode, version, releases, start in (("publish", "1.5.0-rc.2", self.NOTES_RELEASES, "v1.4.0"),
-                                               ("publish", "1.5.0-rc.2", self.NOTES_RELEASES, "v1.2.1"),
-                                               ("rehearse", "1.5.0-rehearsal.3", self.NOTES_RELEASES, "v1.4.0"),
-                                               ("publish", "1.5.0-rc.2", (), "v1.4.0")):
-            with self.subTest(mode=mode, version=version, passed=bool(releases), linked=start):
-                body = forged.replace("1.5.0-rc.2", version).replace("START", start)
+        cases = (("publish", "1.5.0-rc.2", self.NOTES_RELEASES, "v1.4.0"),
+                 ("publish", "1.5.0-rc.2", self.NOTES_RELEASES, "v1.2.1"),
+                 ("rehearse", "1.5.0-rehearsal.3", self.NOTES_RELEASES, "v1.4.0"),
+                 ("publish", "1.5.0-rc.2", (), "v1.4.0"))
+        for (mode, version, releases, start), suffix in itertools.product(cases, suffixes):
+            with self.subTest(mode=mode, version=version, passed=bool(releases), linked=start, suffix=suffix):
+                body = forged.replace("1.5.0-rc.2", version).replace("START", start).replace("SUFFIX", suffix)
                 result = self.run_job(mode=mode, version=version, releases=releases, body_read=body)
                 self.assertFalse(result["failed"], result["log"])
                 self.assertNotIn("##[", result["log"])

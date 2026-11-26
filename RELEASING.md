@@ -154,10 +154,10 @@ To release:
    that it passes no starting tag) and, near its end, the draft's
    `Full Changelog` line. It writes a warning, and the run goes on, when that
    line does not link `compare/v<tag>...`, or has an unexpected form (it is
-   then not shown). If the link starts at another release, or if the notes
-   have no generated part (no `Full Changelog` line), correct the generated
-   part of the notes on the Release page by hand. A request to GitHub's
-   endpoint for generated notes that names the starting tag
+   then not shown). If the link starts at another release, correct the
+   generated part of the notes on the Release page by hand; if the notes have
+   no generated part (no `Full Changelog` line), add it there. A request to
+   GitHub's endpoint for generated notes that names the starting tag
    (`previous_tag_name`) returns the right text.
 8. Work through the [documentation checklist](#release-time-documentation-checklist).
 
@@ -949,7 +949,8 @@ expected to show:
   so its log is the only record. `gh` does not pass `--notes-start-tag` to
   GitHub: it first asks GitHub's endpoint for generated notes (with
   `previous_tag_name` and the run's commit) and makes the draft with that text
-  after the `CHANGELOG.md` section. Hand requests to that endpoint have been
+  after the notes file's text (the `CHANGELOG.md` section in `publish` mode).
+  Hand requests to that endpoint have been
   seen; a run that does this has not.
 
 The installers of a pre-release changed after the first pre-release (see
