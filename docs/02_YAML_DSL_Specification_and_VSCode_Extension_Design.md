@@ -1028,6 +1028,34 @@ The example below uses `db-assert.postgres`. It takes a SQL string with a parame
       billing_account_id: "{billingAccountId}"
 ```
 
+#### `db-assert.postgres` — how a row is compared
+
+`expect.row` is compared against the **first row only**. `expect.rowCount` still counts every row. Each expected column is read with Npgsql's non-generic indexer and compared, ordinally, with the text of that value: `ToString()` under the **process culture** of the `vouchfx` process. SQL `NULL`, a null result and any exception from the read — a column name that is not in the result included — all become the four characters `null`. The spelling `NULL` does not match. A misspelt column therefore passes `column: "null"` and, when a real value was expected, fails with `actual` `null`, which looks the same as SQL `NULL`.
+
+The driver is Npgsql 8.0.9. The text below is what that driver returns for a value read this way, measured under the invariant culture. Invariant-culture dates are month/day/year, so 5 January 2024 is `01/05/2024`, not `05/01/2024`. It is today's behaviour. A later driver major is not expected to keep it: Npgsql 10 reads `date` and `time` as `DateOnly` and `TimeOnly`, which changes the text. These are the spellings an `expect.row` must use; PostgreSQL's own text (`2024-01-05`, `true`, `\xdeadbeef`) does not match.
+
+| Value in the column | Text compared |
+|---|---|
+| `date` `2024-01-05` | `01/05/2024 00:00:00` |
+| `time` `13:45:30.123456` | `13:45:30.1234560` |
+| `timetz` `13:45:30.123456+02` | `01/02/0001 13:45:30 +02:00` |
+| `timestamp` `2024-01-05 13:45:30.123456` | `01/05/2024 13:45:30` |
+| `timestamptz` `2024-01-05 13:45:30.123456+02` | `01/05/2024 11:45:30` |
+| `interval` `1 day 02:03:04.5` | `1.02:03:04.5000000` |
+| `interval` `1 mon 2 days 03:04:05` | `null` (the read throws; indistinguishable from SQL `NULL`) |
+| `numeric` `12.3400` | `12.3400` |
+| `boolean` `true` | `True` |
+| `uuid` | the lowercase guid |
+| `bytea`, `integer[]` | `System.Byte[]`, `System.Int32[]` (the contents are never compared) |
+| `json` | the text as stored, spacing included |
+| `jsonb` | PostgreSQL's canonical JSON text |
+
+`date`, `timestamp`, `timestamptz`, `timetz` and `numeric` follow the process culture, so the same suite can pass on one machine and fail on another. Under `en-US`, the date above is `1/5/2024 12:00:00 AM`; under `en-GB`, `05/01/2024 00:00:00`; under `cs-CZ`, `05.01.2024 0:00:00`, and `12.3400` becomes `12,3400`. Fractional seconds on `timestamp`, `timestamptz` and `timetz` are dropped, so two timestamps that differ only after the whole second compare equal. `timetz` is a `DateTimeOffset` on 1 January of year 1, so the date in the text is not the date you stored. The process time zone does not change any of this text.
+
+The provider sets no session time zone. On the `postgres:18.3` image the managed dependency uses, a connection with no `Timezone` keyword reports `Etc/UTC`. An offset-less `timestamptz` literal is interpreted in the session zone and then compared as the UTC instant; a `timestamp` is not. A `timetz` literal written with a date and no offset takes that zone's offset for that date, including daylight-saving time.
+
+To compare a spelling you choose, project the column to text in the query (`to_char`, `encode(col, 'hex')`) so Npgsql reads a string. The [troubleshooting guide](troubleshooting.md#postgresql-a-row-assertion-fails-or-passes-for-the-wrong-value) walks the failures this produces. Transport security is a separate question: a `postgres` dependency still cannot carry a `security:` block, and the connection string Aspire 13.4.6 builds has no `SSL Mode`. See the [security matrix](security-matrix.md#postgresql-and-the-driver-default).
+
 #### `db-assert.dynamodb` — step fields
 
 Asserts against a DynamoDB item via a single `GetItem` call. The engine provisions a real `dynamodb-local` container for the declared dependency (type `dynamodb`); the connection is a plain container with no HTTP health path of its own — see §3.2's `dynamodb` row and the engine's own EnvironmentMapper documentation for the health-gating choice. `key` is a deliberately simplified flat JSON template, not the low-level DynamoDB wire form: each top-level value becomes an `S`/`N`/`BOOL` attribute at execution time (a JSON string, number, or boolean respectively — nested objects/arrays are rejected, since a primary key cannot contain them).

@@ -25,6 +25,7 @@ This guide covers real failure modes, what they mean, and how to fix them.
 - [Azure Service Bus: entity not declared in dependency config → EnvironmentError](#azure-service-bus-entity-not-declared-in-dependency-config-environmenterror)
 - [Redis: AuthenticationError from the SUT (missing password credential)](#redis-authenticationerror-from-the-sut-missing-password-credential)
 - [SQL Server: slow cold start; EnvironmentError on first pull](#sql-server-slow-cold-start-environmenterror-on-first-pull)
+- [PostgreSQL: a row assertion fails, or passes, for the wrong value](#postgresql-a-row-assertion-fails-or-passes-for-the-wrong-value)
 - [SMTP/Mailpit: mail not found (wrong target key — HTTP API vs. SMTP endpoint)](#smtpmailpit-mail-not-found-wrong-target-key-http-api-vs-smtp-endpoint)
 - [Cross-scenario state bleed on non-reset stores (DynamoDB, MinIO, S3)](#cross-scenario-state-bleed-on-non-reset-stores-dynamodb-minio-s3)
 - [State reset failed (environment error naming a dependency)](#state-reset-failed-environment-error-naming-a-dependency)
@@ -1342,6 +1343,56 @@ SQL Server is a large image (multiple gigabytes) and has a lengthy initialisatio
 3. **Ensure sufficient disk space and memory.** SQL Server requires at least 2 GB RAM and adequate disk space. If your Docker daemon is resource-constrained, increase limits.
 
 4. **Understand the startup sequence.** SQL Server's health check waits for the database engine to be ready, which involves filesystem initialisation. This is non-configurable; the 20-second Aspire window is a hard limit.
+
+---
+
+## PostgreSQL: a row assertion fails, or passes, for the wrong value
+
+**Symptom:**
+
+A `db-assert.postgres` step fails even though `psql` shows the row you expected, or it passes when the stored value is not the one you wrote. The observation names one column:
+
+```text
+{"column":"created_at","expected":"2024-01-05 13:45:30.123456","actual":"01/05/2024 13:45:30"}
+```
+
+Or a column you know is not null is reported as `actual` `null`, and a column that does not exist passes when the expected text is `null`.
+
+**What it means:**
+
+The step compares text, not PostgreSQL's own rendering. On the first row only, each expected column is read with Npgsql 8.0.9's non-generic indexer and compared, ordinally, with `ToString()` under the culture of the `vouchfx` process. SQL `NULL`, a null result and any exception from that read become the text `null`. `expect.rowCount` still counts every row. The spellings, and the cases where two different values compare equal, are in [DSL §5.4](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md).
+
+The failures that look like a wrong row are usually one of these:
+
+1. **The expected text is PostgreSQL's spelling.** `2024-01-05` does not match a `date`. Under the invariant culture the compared text is `01/05/2024 00:00:00`. Under `en-US` it is `1/5/2024 12:00:00 AM`, under `en-GB` `05/01/2024 00:00:00`, and under `cs-CZ` `05.01.2024 0:00:00`. The same suite can pass on one machine and fail on another. `timestamp`, `timestamptz`, `timetz` and `numeric` follow the culture too (`12.3400` is `12,3400` under `cs-CZ`).
+2. **Fractional seconds were stored and then dropped.** `timestamp`, `timestamptz` and `timetz` compare equal for two values that differ only after the whole second. A `timetz` also carries a meaningless date: `13:45:30.123456+02` compares as `01/02/0001 13:45:30 +02:00` under the invariant culture.
+3. **The value cannot be read, so it looks like SQL NULL.** An `interval` with a months part (`1 mon 2 days`) renders as `null`. A misspelt column name does the same, so `missing_column: "null"` passes.
+4. **The CLR type has no useful text.** `bytea` compares as `System.Byte[]` and an `integer[]` as `System.Int32[]`. Any contents pass once that text matches. A boolean `true` compares as `True`, not `true`.
+5. **The session zone changed an offset-less `timestamptz`.** The provider sets no time zone. The managed `postgres:18.3` image reports `Etc/UTC` when the connection string has no `Timezone` keyword. `timestamp` does not follow the session zone. The process time zone does not change the compared text.
+
+**Fix:**
+
+Project the column to text in the query and expect that text. `to_char` and `encode(bytea_column, 'hex')` both come back as strings, so the culture and the CLR rendering no longer choose the spelling. For a `timestamptz` column the conversion below formats the UTC instant:
+
+```yaml
+- id: assert-created
+  type: db-assert.postgres
+  target: orders-db
+  query: |
+    SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') AS created_at
+    FROM orders
+    WHERE id = @id
+  parameters:
+    id: "{orderId}"
+  expect:
+    rowCount: 1
+    row:
+      created_at: "2024-01-05T13:45:30"
+```
+
+Read the observation's `actual` when a step fails and expect that exact text, including culture-specific punctuation, if you would rather keep the typed column. Do not expect `null` as a stand-in for "column absent": assert a value you know is present, and keep `rowCount` for existence.
+
+A TLS failure is a different verdict. The managed connection string has no `SSL Mode`. When a custom image offers TLS, Npgsql accepts the certificate without checking it, and a handshake that does fail is an environment error whose text does not say why. See the [security matrix](security-matrix.md#postgresql-and-the-driver-default).
 
 ---
 

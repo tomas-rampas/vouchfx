@@ -965,6 +965,8 @@ The validator confirms that `target` names a dependency declared as a Postgres i
 }
 ```
 
+The fragment above is illustrative. The provider that ships does not call `GetString` or `ExecuteSingleRowAsync`. It reads each expected column of the first row with the non-generic indexer, compares `ToString()` (or the text `null` when that read returns null or throws) with an ordinal string compare, and counts every row for `rowCount`. DSL §5.4 records the text Npgsql 8.0.9 produces for the common PostgreSQL types.
+
 That is the entire provider. The next provider in line — db-assert.sqlserver, db-assert.oracle, mq-publish.rabbitmq — is the same shape with the technology-specific parts replaced. The architecture has therefore turned the open-ended question “how do we support every database and every broker in the .NET ecosystem?” into a concrete, finite question that a single engineer can answer for one technology in a self-contained pull request.
 
 ## 14. Result Reporting and the Verdict Lifecycle
