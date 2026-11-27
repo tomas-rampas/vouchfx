@@ -148,7 +148,8 @@ To release:
    that is the highest such Release. A pre-release is never the start, and
    neither is a stable Release of the same or a higher number. When there is no
    such Release, the run names none, and GitHub chooses. The notes are
-   expected to start at the named tag; this has not yet been seen on GitHub.
+   expected to start at the named tag; a rehearsal has shown this on GitHub, and
+   a release has not yet.
    The step `Create the draft release and upload the assets` logs
    `Passing --notes-start-tag v<tag> to the release tool's create call.` (or
    that it passes no starting tag) and, near its end, the draft's
@@ -831,7 +832,20 @@ below the version's `X.Y.Z`, for a stable version, a pre-release and a rehearsal
 alike (see step 7 of "To release" in
 [How to trigger a release](#how-to-trigger-a-release)). So the notes of both a
 pre-release and a stable release are expected to start at the highest stable
-release below the version. No run has shown this yet.
+release below the version. The notes of that pre-release were corrected by hand
+on its Release page afterwards: their generated part was replaced with the text
+that GitHub's endpoint gives for the newest stable release as the starting tag.
+
+A third `rehearse` run, on `main`, followed the changes made after that
+pre-release, and was green. It passed `--notes-start-tag v1.4.0`, the highest
+stable Release at the time, and the `Full Changelog` line of its draft linked
+`compare/v1.4.0...v1.5.0-rehearsal.3`, with no warning. So the release tool's own
+request for generated notes works for a tag that does not exist yet. The list
+showed the new draft on the second read, and every other wait succeeded on the
+first read; among them was the new read of the draft by its id after the
+upload, which found the draft with the 20 uploaded assets. The clean-up deleted
+the draft, and no tag was left. The publishing job took less than two minutes.
+No release has shown the starting tag yet.
 
 The contract tests (`scripts/ci/test_release_workflow.py`) check the workflow
 file and run its step scripts with fixture commands; they cannot show the points
@@ -848,7 +862,7 @@ feature branch, is still to do.
   `move-floating-tag` show as skipped.
 - [ ] The same three points hold in a run from a feature branch.
 
-A `rehearse` run, on `main`, must show the points below. The two runs so far
+A `rehearse` run, on `main`, must show the points below. The three runs so far
 have shown the ticked ones.
 
 - [x] The run waits for approval of the `release` environment, and
@@ -870,9 +884,9 @@ have shown the ticked ones.
   [NuGet.org publish](#nugetorg-publish-trusted-publishing)).
 - [x] The rehearsal draft is deleted, also after a failed step.
 - [x] How many reads each wait needed. The log of each wait says
-  `on attempt N of 12`. In the second rehearsal the highest N was 2, for the
-  read-back of the new draft; its other waits succeeded on the first read.
-  Correct this figure if a later run shows a higher one.
+  `on attempt N of 12`. In the second and the third rehearsal the highest N was
+  2, for the read-back of the new draft; their other waits succeeded on the
+  first read. Correct this figure if a later run shows a higher one.
 - [ ] Whether the inputs, the approval and the earlier attempt's artefacts
   carry over on **Re-run failed jobs**.
 
@@ -916,8 +930,8 @@ The first stable release must also show:
 - [ ] `move-floating-tag` moves `v1`.
 
 The checks below were added after the first pre-release. The contract tests run
-them with fixture commands; none has run on GitHub yet. The next runs are
-expected to show:
+them with fixture commands. The third rehearsal has shown the ticked ones on
+GitHub; the next runs are expected to show the rest:
 
 - [ ] `prepare` refuses, in any mode, a version with an upper-case letter in its
   pre-release (for example `1.5.0-RC.1`) and a version that starts with
@@ -929,29 +943,32 @@ expected to show:
   `rehearse`, and `1.5.0-validate.1` in `validate`.
 - [ ] In a `publish` run, the step that pushes to NuGet.org passes its new
   refusal (mode `publish`, a version that is not reserved) and pushes as before.
-- [ ] In a `rehearse` or `publish` run, the read of the draft by its id after
+- [x] In a `rehearse` or `publish` run, the read of the draft by its id after
   the upload finds the draft, at the tested commit, with the asset names this
   run uploaded. Its log says `is the draft for v<version> at this run's commit,
   with the <N> uploaded assets, on attempt <A> of 12` (40 assets for a release
-  with cosign bundles). The next rehearsal can show this, and how many
-  attempts GitHub needs after an upload; correct this document if `A` is
-  higher than 1.
+  with cosign bundles). The third rehearsal showed this with 20 assets, on
+  attempt 1. A `publish` run has not shown it yet; correct this document if a
+  later run needs more attempts.
 - [ ] In a `publish` run, the read of the draft by its id just before the
   publishing call logs the same line, and the publication follows.
-- [ ] `publish-release` ends well within its limit of 30 minutes.
-- [ ] In a `rehearse` or `publish` run, the step
+- [ ] `publish-release` ends well within its limit of 30 minutes. In the third
+  rehearsal it took less than two minutes; a `publish` run also pushes to
+  NuGet.org and publishes the draft.
+- [x] In a `rehearse` or `publish` run, the step
   `Create the draft release and upload the assets` logs
   `Passing --notes-start-tag v<tag> to the release tool's create call.`, with
   `v<tag>` the highest published stable Release below the version's `X.Y.Z`,
   and near its end the draft's line `Full Changelog line of the draft <id>:
-  **Full Changelog**: …/compare/v<tag>...v<version>`, with no warning. A
-  rehearsal can show this before a release; its draft is deleted when it ends,
-  so its log is the only record. `gh` does not pass `--notes-start-tag` to
-  GitHub: it first asks GitHub's endpoint for generated notes (with
-  `previous_tag_name` and the run's commit) and makes the draft with that text
-  after the notes file's text (the `CHANGELOG.md` section in `publish` mode).
-  Hand requests to that endpoint have been
-  seen; a run that does this has not.
+  **Full Changelog**: …/compare/v<tag>...v<version>`, with no warning. The
+  third rehearsal showed this, with `v1.4.0` as the starting tag; its draft was
+  deleted when it ended, so its log is the only record. `gh` does not pass
+  `--notes-start-tag` to GitHub: it first asks GitHub's endpoint for generated
+  notes (with `previous_tag_name` and the run's commit) and makes the draft
+  with that text after the notes file's text (the `CHANGELOG.md` section in
+  `publish` mode). Hand requests to that endpoint had been seen before; the
+  rehearsal is the first run seen to do this. A `publish` run has not shown it
+  yet.
 
 The installers of a pre-release changed after the first pre-release (see
 [Secondary: self-contained executables and installers](#secondary-self-contained-executables-and-installers)).
