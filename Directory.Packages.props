@@ -122,7 +122,7 @@
          connection is one request. A new AWSSDK.* package must stay on the same major. -->
     <PackageVersion Include="AWSSDK.Core" Version="4.1.1.2" />
     <PackageVersion Include="AWSSDK.DynamoDBv2" Version="4.1.0.3" />
-    <PackageVersion Include="AWSSDK.S3" Version="4.1.2" />
+    <PackageVersion Include="AWSSDK.S3" Version="4.1.2.1" />
   </ItemGroup>
   <ItemGroup Label="Avro / schema-registry (S06) — ship in lockstep with Confluent.Kafka">
     <!-- Confluent.SchemaRegistry + Serdes.Avro version-match Confluent.Kafka.
