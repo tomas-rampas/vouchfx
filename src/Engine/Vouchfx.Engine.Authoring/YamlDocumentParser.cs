@@ -98,6 +98,9 @@ public static class YamlDocumentParser
         // their text, and colliding keys can make Load slow with no alias at all.
         // Providers that DO re-materialise a subtree carry their own bound —
         // see HttpRestProvider's MaxBodyNodes (#346).
+        // The nesting limit goes first: both the alias scan and the load recurse or walk the
+        // whole document, and the depth scan stops at the first collection past the limit.
+        YamlDepthGuard.Check(yamlText);
         YamlKeyAliasGuard.Check(yamlText);
 
         YamlStream stream;

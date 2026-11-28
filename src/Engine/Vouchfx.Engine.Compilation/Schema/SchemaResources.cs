@@ -220,6 +220,15 @@ internal static class SchemaResources
     /// </exception>
     internal static JsonDocument ConvertYamlToJsonDocument(string yamlText)
     {
+        // Both steps below recurse once per nested collection and a stack overflow cannot be
+        // caught, so refuse nesting past the limit first. DocumentValidator.Validate checks
+        // before this point too; this check covers the callers that reach the bridge directly
+        // (SchemaComposer.Validate, YamlSchemaValidator.Validate).
+        if (Vouchfx.Engine.Authoring.YamlDepthGuard.TryFindExcessDepth(yamlText, out var depthRefusal))
+        {
+            throw new InvalidOperationException(depthRefusal.Detail());
+        }
+
         // Step 1 — parse YAML to a plain object graph using the type-inferring
         // deserialiser so that untagged integer scalars (e.g. status: 200) are
         // returned as long/int rather than string.

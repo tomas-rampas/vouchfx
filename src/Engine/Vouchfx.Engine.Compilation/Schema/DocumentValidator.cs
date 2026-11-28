@@ -160,6 +160,12 @@ public static class DocumentValidator
     internal static SchemaValidationResult Validate(
         string yamlText, StepKindRegistry registry, SecurityProfileRegistry securityProfileRegistry)
     {
+        // Nesting past the limit overflows the stack in the loads below, which no catch can stop,
+        // and the alias scan walks the whole document: refuse it first. The depth scan stops at
+        // the first collection past the limit (see YamlDepthGuard.TryFindExcessDepth).
+        if (Vouchfx.Engine.Authoring.YamlDepthGuard.TryFindExcessDepth(yamlText, out var depthRefusal))
+            return new SchemaValidationResult(false, new[] { new SchemaValidationError(string.Empty, depthRefusal.Message()) });
+
         // A refused alias inside a mapping key (see YamlKeyAliasGuard.TryFindRefusedKeyAlias)
         // can overflow the stack inside YamlStream.Load, which no catch can stop, or make it
         // hash for exponential or quadratic time. Refuse it first, with the same located text

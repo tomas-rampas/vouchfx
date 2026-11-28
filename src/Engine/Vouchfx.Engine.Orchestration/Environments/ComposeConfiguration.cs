@@ -41,6 +41,8 @@ internal sealed record ComposeConfiguration(
         var bytes = ReadInput(configPath);
         var yaml = new YamlStream();
         var configText = Encoding.UTF8.GetString(bytes);
+        if (Vouchfx.Engine.Authoring.YamlDepthGuard.TryFindExcessDepth(configText, out var depthRefusal))
+            throw new ArgumentException("Compose configuration: invalid YAML at " + depthRefusal.Detail());
         if (Vouchfx.Engine.Authoring.YamlKeyAliasGuard.TryFindRefusedKeyAlias(configText, out var refusal))
             throw new ArgumentException("Compose configuration: invalid YAML at " + refusal.Detail());
         try { yaml.Load(new StringReader(configText)); }
@@ -167,6 +169,8 @@ internal sealed record ComposeConfiguration(
     {
         var manifest = new YamlStream();
         var manifestText = Encoding.UTF8.GetString(bytes);
+        if (Vouchfx.Engine.Authoring.YamlDepthGuard.TryFindExcessDepth(manifestText, out var depthRefusal))
+            throw new ArgumentException("Compose manifest: invalid YAML at " + depthRefusal.Detail());
         if (Vouchfx.Engine.Authoring.YamlKeyAliasGuard.TryFindRefusedKeyAlias(manifestText, out var refusal))
             throw new ArgumentException("Compose manifest: invalid YAML at " + refusal.Detail());
         try { manifest.Load(new StringReader(manifestText)); }

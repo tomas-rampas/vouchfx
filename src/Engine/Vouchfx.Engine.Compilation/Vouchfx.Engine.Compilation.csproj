@@ -71,13 +71,15 @@
     </AssemblyAttribute>
   </ItemGroup>
 
-  <!-- The key-alias pre-scan that guards YamlStream.Load is compiled in as a private (internal)
-       copy of the one source file, the way Runtime links HttpRestBodyConversion. It depends only
-       on YamlDotNet. Compilation and Orchestration both grant InternalsVisibleTo to
-       Vouchfx.Engine.Runtime and its tests, so each exposes its own copy of YamlKeyAliasGuard:
-       the first use of the type from there fails with CS0433 and must pick one assembly. -->
+  <!-- The key-alias and nesting-depth pre-scans that guard YamlStream.Load are each compiled in as
+       a private (internal) copy of the one source file, the way Runtime links
+       HttpRestBodyConversion. They depend only on YamlDotNet. Compilation and Orchestration both
+       grant InternalsVisibleTo to Vouchfx.Engine.Runtime and its tests, so each exposes its own
+       copy of YamlKeyAliasGuard and YamlDepthGuard: the first use of either type from there fails
+       with CS0433 and must pick one assembly. -->
   <ItemGroup>
     <Compile Include="..\Vouchfx.Engine.Authoring\YamlKeyAliasGuard.Scan.cs" Link="Shared\YamlKeyAliasGuard.Scan.cs" />
+    <Compile Include="..\Vouchfx.Engine.Authoring\YamlDepthGuard.Scan.cs" Link="Shared\YamlDepthGuard.Scan.cs" />
   </ItemGroup>
 
   <ItemGroup>
