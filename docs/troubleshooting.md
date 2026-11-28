@@ -567,7 +567,7 @@ When a limit is exceeded, the scenario is marked **Inconclusive** on `run` and *
 
 3. **YAML expands too large during validation?** Reduce YAML aliases and anchors, or split the suite. Anchors and aliases (the `&` and `*` syntax) expand to repeat their target content, and deeply nested or frequently reused anchors can make the expanded JSON exceed 16 Mi characters during validation.
 
-4. **Nested too deep?** Flatten the structure the message points at. A suite never needs nesting near the limit; a refusal usually means a generated or damaged file, for example one with unbalanced `[` or `{`.
+4. **Nested too deep?** Flatten the structure the message points at. A suite never needs nesting near the limit; a refusal usually means a generated or damaged file, for example one with a long run of unclosed `[` or `{`.
 
 ---
 

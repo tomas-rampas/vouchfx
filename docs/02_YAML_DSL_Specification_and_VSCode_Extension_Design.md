@@ -149,11 +149,11 @@ collection, so a document nested tens of thousands of levels deep (a file of not
 enough, and fits well under the 1 MiB document limit) would end the process with a stack overflow,
 which cannot be caught. The check runs before either of them and stops at the first collection past
 the limit, so the time a refusal takes depends on the text before that collection and not on what
-follows it. Aliases are not
-followed when counting: the limit is on the nesting as written. For a suite file, 64 is the ceiling
-at which the text is read, not a depth a suite can use: schema validation separately refuses a
-suite in which any value, a collection or a scalar, sits inside 50 or more nested collections,
-with its own message and no line or column. For a Compose file, 64 is the limit.
+follows it. Aliases are not followed when counting: the limit is on the nesting as written. For a
+suite file, 64 is the ceiling at which the text is read, not a depth a suite can use: schema
+validation separately refuses a suite in which any value, a collection or a scalar, sits inside 50
+or more nested collections, with its own message and no line or column. For a Compose file, 64 is
+the limit.
 
 ### 3.1 The metadata section
 
