@@ -143,6 +143,7 @@
 
   <ItemGroup>
     <Compile Include="..\Shared\GoldenRegenerationPolicyTests.cs" Link="GoldenRegenerationPolicyTests.cs" />
+    <Compile Include="..\Shared\DeepYamlShapes.cs" Link="DeepYamlShapes.cs" />
     <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
   </ItemGroup>
 

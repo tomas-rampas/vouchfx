@@ -118,12 +118,14 @@
     <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
-  <!-- The Compose loaders call YamlStream.Load directly; Authoring's guard is internal, so the
-       key-alias pre-scan source is linked in as a private copy (see Compilation). Both this
-       project and Compilation grant InternalsVisibleTo to Vouchfx.Engine.Runtime and its tests,
-       so the first use of YamlKeyAliasGuard there fails with CS0433 and must pick one assembly. -->
+  <!-- The Compose loaders call YamlStream.Load directly; Authoring's guards are internal, so the
+       key-alias and nesting-depth pre-scan sources are linked in as private copies (see
+       Compilation). Both this project and Compilation grant InternalsVisibleTo to
+       Vouchfx.Engine.Runtime and its tests, so the first use of YamlKeyAliasGuard or
+       YamlDepthGuard there fails with CS0433 and must pick one assembly. -->
   <ItemGroup>
     <Compile Include="..\Vouchfx.Engine.Authoring\YamlKeyAliasGuard.Scan.cs" Link="Shared\YamlKeyAliasGuard.Scan.cs" />
+    <Compile Include="..\Vouchfx.Engine.Authoring\YamlDepthGuard.Scan.cs" Link="Shared\YamlDepthGuard.Scan.cs" />
   </ItemGroup>
 
   <ItemGroup>

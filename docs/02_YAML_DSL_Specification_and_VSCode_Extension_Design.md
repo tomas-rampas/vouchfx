@@ -139,6 +139,22 @@ would otherwise load: for example, `a: &k [1]` followed by `{ ? *k : v }`, an al
 mapping used as a key, or an alias to an anchored sequence nested in a key written out inline
 (`{ ? [ *k ] : v }`).
 
+**A document that nests more than 64 collections is refused before it is loaded.** Sequences and
+mappings, written in block or flow style, count alike, and the count starts again at each document
+of a stream. The collection that would be the 65th open at once is refused at parse time, whether
+or not it has content, with a YAML parse error that states the limit and names the line and column
+of that collection. This applies to suite files, Compose configuration files and the Compose
+manifests they reference. The loader and the schema validator recurse once for each nested
+collection, so a document nested tens of thousands of levels deep (a file of nothing but `[` is
+enough, and fits well under the 1 MiB document limit) would end the process with a stack overflow,
+which cannot be caught. The check runs before either of them and stops at the first collection past
+the limit, so the time a refusal takes depends on the text before that collection and not on what
+follows it. Aliases are not followed when counting: the limit is on the nesting as written. For a
+suite file, 64 is the ceiling at which the text is read, not a depth a suite can use: schema
+validation separately refuses a suite in which any value, a collection or a scalar, sits inside 50
+or more nested collections, with its own message and no line or column. For a Compose file, 64 is
+the limit.
+
 ### 3.1 The metadata section
 
 The metadata section carries information about the test rather than instructions to the engine. Its fields feed reporting dashboards and let the runner select a subset of tests — for example, only those tagged as a smoke test, or only those owned by a particular team. None of it affects execution.

@@ -21,6 +21,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A deeply nested YAML file no longer ends `vouchfx validate` and `vouchfx run` with a stack overflow.** A suite of nothing but nested `[`, 200,000 of them in a file well under the 1 MiB document limit, made the YAML loader recurse until the process died (exit code 134 on Linux and macOS) with no diagnostic; a stack overflow cannot be caught. The engine now refuses, before it loads anything, a document that nests more than 64 collections: sequences and mappings, in block or flow style, counted in each document of a stream. The collection that would be the 65th open at once is refused with an ordinary YAML parse error that states the limit and names the line and column, so both commands exit 4, as they do for any other parse error. The check runs before the loader and the schema validator and stops at the first collection past the limit, so a refusal takes milliseconds and does not depend on what follows that collection. It covers suite files, Compose configuration files and the Compose manifests they reference. For Compose files it refuses documents that nest deeper than 64 collections and would otherwise load. For suite files it refuses nothing that validated before: schema validation already refuses a suite in which any value, a collection or a scalar, sits inside 50 or more nested collections, with its own message, and still does, so 64 is the ceiling at which the file is read and not a depth a suite can use. The deepest suite shipped in this repository nests 7. There is no setting to raise either limit.
+
 ## [1.5.0] — 2026-11-27
 
 1.5.0 is the stable release that follows the pre-release `1.5.0-rc.1`. It contains everything listed in the [1.5.0-rc.1 section of the changelog](https://vouchfx.io/changelog/#150-rc1-2026-11-24), and the changes in this section, which were made after that pre-release.
