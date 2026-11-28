@@ -31,12 +31,18 @@ public sealed class YamlDepthGuardTests
         _ => throw new ArgumentOutOfRangeException(nameof(entry), entry, null),
     };
 
-    private static string DepthMessage(SchemaValidationResult result)
+    private static string DepthMessage(string entry, SchemaValidationResult result)
     {
         Assert.False(result.IsValid);
         var message = Assert.Single(result.Errors).Message;
         Assert.Contains("64", message, StringComparison.Ordinal);
         Assert.Contains(DepthText, message, StringComparison.Ordinal);
+
+        // DocumentValidator.Validate has its own check ahead of the schema bridge's. The two
+        // layers word the refusal differently, so the prefix shows which one answered: without
+        // this, removing the validator's check would leave these rows passing on the bridge's.
+        var expectedPrefix = entry == "document" ? "YAML parse error at line " : "Failed to parse YAML: line ";
+        Assert.StartsWith(expectedPrefix, message, StringComparison.Ordinal);
         return message;
     }
 
@@ -44,7 +50,7 @@ public sealed class YamlDepthGuardTests
     [MemberData(nameof(EntryPoints))]
     public void Validate_65NestedFlowSequences_IsRefusedWithLimitLineAndColumn(string entry)
     {
-        var message = DepthMessage(Run(entry, DeepYamlShapes.ClosedFlowSequences(DeepYamlShapes.Limit + 1)));
+        var message = DepthMessage(entry, Run(entry, DeepYamlShapes.ClosedFlowSequences(DeepYamlShapes.Limit + 1)));
         Assert.Contains("line 1, column 65", message, StringComparison.Ordinal);
     }
 
@@ -52,7 +58,7 @@ public sealed class YamlDepthGuardTests
     [MemberData(nameof(EntryPoints))]
     public void Validate_65NestedBlockMappings_IsRefusedWithLimitLineAndColumn(string entry)
     {
-        var message = DepthMessage(Run(entry, DeepYamlShapes.BlockMappings(DeepYamlShapes.Limit + 1)));
+        var message = DepthMessage(entry, Run(entry, DeepYamlShapes.BlockMappings(DeepYamlShapes.Limit + 1)));
         Assert.Contains("line 65, column 65", message, StringComparison.Ordinal);
     }
 
@@ -80,7 +86,7 @@ public sealed class YamlDepthGuardTests
     public void Validate_SecondDocumentIs65Deep_IsRefused_DepthIsCountedPerDocument(string entry)
     {
         var yaml = "metadata: { name: first }\n---\n" + DeepYamlShapes.ClosedFlowSequences(DeepYamlShapes.Limit + 1);
-        Assert.Contains("line 3, column 65", DepthMessage(Run(entry, yaml)), StringComparison.Ordinal);
+        Assert.Contains("line 3, column 65", DepthMessage(entry, Run(entry, yaml)), StringComparison.Ordinal);
     }
 
     [Theory]
@@ -100,7 +106,7 @@ public sealed class YamlDepthGuardTests
         var clock = Stopwatch.StartNew();
         var result = Run(entry, yaml);
         clock.Stop();
-        DepthMessage(result);
+        DepthMessage(entry, result);
         Assert.True(clock.Elapsed < s_bound, $"refusal took {clock.Elapsed}");
     }
 }

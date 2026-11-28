@@ -211,12 +211,13 @@ internal static class SchemaResources
     /// <param name="yamlText">The raw YAML text to convert.</param>
     /// <returns>A <see cref="JsonDocument"/> representing the parsed document.</returns>
     /// <exception cref="InvalidOperationException">
-    /// Thrown when the YAML document is entirely empty, or when its conversion to JSON
-    /// exceeds the 16 Mi-character budget described above.  Both callers
+    /// Thrown when the text nests more collections than the YAML nesting limit allows
+    /// (checked before either step runs), when the YAML document is entirely empty, or when
+    /// its conversion to JSON exceeds the 16 Mi-character budget described above.  Both callers
     /// (<see cref="SchemaComposer.Validate"/>, <see cref="YamlSchemaValidator.Validate"/>)
     /// already wrap this method in a <c>catch (Exception)</c> that returns
-    /// <c>SchemaValidationResult.Invalid("Failed to parse YAML: …")</c>, so either
-    /// refusal reaches the author as an ordinary located diagnostic.
+    /// <c>SchemaValidationResult.Invalid("Failed to parse YAML: …")</c>, so each
+    /// refusal reaches the author as an ordinary diagnostic.
     /// </exception>
     internal static JsonDocument ConvertYamlToJsonDocument(string yamlText)
     {

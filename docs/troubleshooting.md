@@ -527,6 +527,12 @@ or
 Failed to parse YAML: The YAML document expands to more than 16,777,216 characters (16 Mi) of JSON during schema conversion…
 ```
 
+or
+
+```
+YAML parse error at line 2, column 67: this collection is nested more than 64 levels deep; the limit is 64 nested collections (sequences and mappings, block or flow, counted in each document). Flatten the structure.
+```
+
 **What it means:**
 
 The engine enforces three resource-limit bounds before compilation: a maximum of 64 KiB per `script.csharp` step body (inline `code` or referenced `file:`), 1 MiB per `.e2e.yaml` document, and 16 Mi characters (16,777,216) of JSON output when the YAML is converted during validation. These are sanity bounds to prevent accidentally passing pathologically large files to the compiler, not a defence against deliberate crash or hang attempts — which can occur well under these sizes (e.g. a ~100-character nested string interpolation can hang the parse). The third bound is triggered by YAML anchors and aliases that expand to many copies of repeated content.
@@ -560,6 +566,8 @@ When a limit is exceeded, the scenario is marked **Inconclusive** on `run` and *
    ```
 
 3. **YAML expands too large during validation?** Reduce YAML aliases and anchors, or split the suite. Anchors and aliases (the `&` and `*` syntax) expand to repeat their target content, and deeply nested or frequently reused anchors can make the expanded JSON exceed 16 Mi characters during validation.
+
+4. **Nested too deep?** Flatten the structure the message points at. A suite never needs nesting near the limit; a refusal usually means a generated or damaged file, for example one with unbalanced `[` or `{`.
 
 ---
 

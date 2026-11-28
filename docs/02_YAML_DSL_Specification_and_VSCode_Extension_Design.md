@@ -148,7 +148,8 @@ manifests they reference. The loader and the schema validator recurse once for e
 collection, so a document nested tens of thousands of levels deep (a file of nothing but `[` is
 enough, and fits well under the 1 MiB document limit) would end the process with a stack overflow,
 which cannot be caught. The check runs before either of them and stops at the first collection past
-the limit, so the refusal takes the same short time however long the file is. Aliases are not
+the limit, so the time a refusal takes depends on the text before that collection and not on what
+follows it. Aliases are not
 followed when counting: the limit is on the nesting as written. For a suite file, 64 is the ceiling
 at which the text is read, not a depth a suite can use: schema validation separately refuses a
 suite in which any value, a collection or a scalar, sits inside 50 or more nested collections,

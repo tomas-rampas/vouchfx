@@ -47,6 +47,7 @@ public sealed class YamlDepthLimitCliTests : IDisposable
         Assert.Contains("alias 'k' inside a mapping key", reference.Output, StringComparison.Ordinal);
 
         Assert.Equal(reference.ExitCode, refused.ExitCode);
+        Assert.Equal(4, refused.ExitCode);
         Assert.NotEqual(134, refused.ExitCode);
         Assert.NotEqual(0, refused.ExitCode);
         Assert.Contains(DepthText, refused.Output, StringComparison.Ordinal);
